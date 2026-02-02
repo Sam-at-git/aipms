@@ -1,0 +1,42 @@
+# Documentation
+docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.pytest_cache/
+*.egg-info/
+.eggs/
+
+# Database
+*.db
+
+# Environment
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Node.js
+node_modules/
+dist/
+.npm
+*.log
+
+# Backend data (conversation history)
+backend/data/conversations/
+
+# Lock files (optional, keep if you want reproducible builds)
+# uv.lock
+# package-lock.json

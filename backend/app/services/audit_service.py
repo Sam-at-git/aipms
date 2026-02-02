@@ -1,0 +1,118 @@
+"""
+审计日志服务 - 本体操作层
+管理 SystemLog 对象和审计记录
+"""
+from typing import List, Optional
+from datetime import datetime, date, timedelta
+from sqlalchemy.orm import Session
+from app.models.ontology import SystemLog
+
+
+class AuditService:
+    """审计日志服务"""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def create_log(
+        self,
+        operator_id: int,
+        action: str,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[int] = None,
+        old_value: Optional[str] = None,
+        new_value: Optional[str] = None,
+        ip_address: Optional[str] = None
+    ) -> SystemLog:
+        """创建审计日志"""
+        log = SystemLog(
+            operator_id=operator_id,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            old_value=old_value,
+            new_value=new_value,
+            ip_address=ip_address
+        )
+        self.db.add(log)
+        self.db.commit()
+        self.db.refresh(log)
+        return log
+
+    def get_logs(
+        self,
+        action: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        operator_id: Optional[int] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        limit: int = 100
+    ) -> List[SystemLog]:
+        """获取审计日志列表"""
+        query = self.db.query(SystemLog)
+
+        if action:
+            query = query.filter(SystemLog.action == action)
+        if entity_type:
+            query = query.filter(SystemLog.entity_type == entity_type)
+        if operator_id:
+            query = query.filter(SystemLog.operator_id == operator_id)
+        if start_date:
+            query = query.filter(SystemLog.created_at >= start_date)
+        if end_date:
+            query = query.filter(SystemLog.created_at <= end_date)
+
+        return query.order_by(SystemLog.created_at.desc()).limit(limit).all()
+
+    def get_logs_by_entity(self, entity_type: str, entity_id: int, limit: int = 50) -> List[SystemLog]:
+        """获取特定实体的操作日志"""
+        return self.db.query(SystemLog).filter(
+            SystemLog.entity_type == entity_type,
+            SystemLog.entity_id == entity_id
+        ).order_by(SystemLog.created_at.desc()).limit(limit).all()
+
+    def get_logs_by_operator(self, operator_id: int, days: int = 30) -> List[SystemLog]:
+        """获取特定操作者的日志"""
+        start_date = date.today() - timedelta(days=days)
+        return self.db.query(SystemLog).filter(
+            SystemLog.operator_id == operator_id,
+            SystemLog.created_at >= start_date
+        ).order_by(SystemLog.created_at.desc()).all()
+
+    def get_recent_logs(self, limit: int = 100) -> List[SystemLog]:
+        """获取最近的日志"""
+        return self.db.query(SystemLog).order_by(
+            SystemLog.created_at.desc()
+        ).limit(limit).all()
+
+    def get_log(self, log_id: int) -> Optional[SystemLog]:
+        """获取单条日志详情"""
+        return self.db.query(SystemLog).filter(SystemLog.id == log_id).first()
+
+    def get_action_summary(self, days: int = 30) -> List[dict]:
+        """获取操作统计摘要"""
+        start_date = date.today() - timedelta(days=days)
+
+        from sqlalchemy import func
+
+        results = self.db.query(
+            SystemLog.action,
+            SystemLog.entity_type,
+            func.count(SystemLog.id).label('count')
+        ).filter(
+            SystemLog.created_at >= start_date
+        ).group_by(
+            SystemLog.action,
+            SystemLog.entity_type
+        ).order_by(
+            func.count(SystemLog.id).desc()
+        ).all()
+
+        return [
+            {
+                'action': r.action,
+                'entity_type': r.entity_type,
+                'count': r.count
+            }
+            for r in results
+        ]

@@ -219,6 +219,17 @@ class AIService:
         summary = self.room_service.get_room_status_summary()
         context["room_summary"] = summary
 
+        # 添加可用房型列表（关键：让 LLM 知道有哪些房型）
+        room_types = self.room_service.get_room_types()
+        context["room_types"] = [
+            {
+                "id": rt.id,
+                "name": rt.name,
+                "price": float(rt.base_price)
+            }
+            for rt in room_types
+        ]
+
         # 添加在住客人（最近5位）
         active_stays = self.checkin_service.get_active_stays()
         context["active_stays"] = [
@@ -265,13 +276,17 @@ class AIService:
 
             # ========== 智能参数解析 ==========
 
-            # 解析房型参数
-            if "room_type_id" in params or "room_type_name" in params:
-                room_type_input = params.get("room_type_id") or params.get("room_type_name")
+            # 解析房型参数 - 支持多种键名
+            if "room_type_id" in params or "room_type_name" in params or "room_type" in params:
+                room_type_input = params.get("room_type_id") or params.get("room_type_name") or params.get("room_type")
                 if room_type_input:
                     parse_result = self.param_parser.parse_room_type(room_type_input)
                     if parse_result.confidence >= 0.7:
                         params["room_type_id"] = parse_result.value
+                        # 同时保存房型名称用于显示
+                        room_type = self.room_service.get_room_type(parse_result.value)
+                        if room_type:
+                            params["room_type_name"] = room_type.name
                     else:
                         # 低置信度，需要用户确认
                         action["requires_confirmation"] = True
@@ -995,10 +1010,29 @@ class AIService:
             if action_type == 'create_reservation':
                 from app.models.schemas import ReservationCreate
 
-                # 使用智能参数解析
-                room_type_result = self.param_parser.parse_room_type(
-                    params.get('room_type_id') or params.get('room_type_name')
+                # 使用智能参数解析 - 支持多种参数名
+                room_type_input = (
+                    params.get('room_type_id') or
+                    params.get('room_type_name') or
+                    params.get('room_type')  # LLM 可能使用这个键名
                 )
+
+                # 如果没有房型参数，提示用户选择
+                if not room_type_input:
+                    room_types = self.room_service.get_room_types()
+                    candidates = [
+                        {'id': rt.id, 'name': rt.name, 'price': float(rt.base_price)}
+                        for rt in room_types
+                    ]
+                    return {
+                        'success': False,
+                        'requires_confirmation': True,
+                        'action': 'select_room_type',
+                        'message': '请选择房型',
+                        'candidates': candidates
+                    }
+
+                room_type_result = self.param_parser.parse_room_type(room_type_input)
 
                 # 低置信度处理
                 if room_type_result.confidence < 0.7:

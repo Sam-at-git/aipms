@@ -423,6 +423,28 @@ class LLMService:
   }],
   "context": {"guest_name": "张三", "room_number": "203"}
 }
+
+用户: "请为散客陈先生（电话13512347776）预定大床房，明晚入住，住1天"
+回复: {
+  "message": "请确认预订信息：\n- 客人：陈先生\n- 电话：13512347776\n- 房型：大床房\n- 入住：明晚\n- 退房：后天\n- 天数：1天",
+  "suggested_actions": [{
+    "action_type": "create_reservation",
+    "entity_type": "reservation",
+    "description": "为陈先生创建大床房预订",
+    "requires_confirmation": true,
+    "params": {
+      "guest_name": "陈先生",
+      "guest_phone": "13512347776",
+      "room_type": "大床房",
+      "check_in_date": "明天",
+      "check_out_date": "后天",
+      "adult_count": 1
+    }
+  }],
+  "context": {"room_type_specified": true}
+}
+
+**注意：当用户明确指定了房型（如"大床房"、"标间"、"豪华间"），直接使用 room_type 参数传递房型名称，不需要再次询问。**
 """
 
     def __init__(self):
@@ -535,6 +557,14 @@ class LLMService:
         if context.get("room_summary"):
             rs = context["room_summary"]
             info_parts.append(f"- 总房间: {rs.get('total')}, 空闲: {rs.get('vacant_clean')}, 入住: {rs.get('occupied')}")
+
+        # 添加可用房型信息（关键：让 LLM 知道有哪些房型）
+        if context.get("room_types"):
+            rt_list = ", ".join([
+                f"{rt.get('name')}(ID:{rt.get('id')}, ¥{rt.get('price')})"
+                for rt in context["room_types"]
+            ])
+            info_parts.append(f"- 可用房型: {rt_list}")
 
         if context.get("active_stays"):
             info_parts.append(f"- 在住客人: {len(context['active_stays'])} 位")

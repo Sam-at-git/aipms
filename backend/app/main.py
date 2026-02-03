@@ -5,7 +5,7 @@ AIPMS 主应用入口
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
-from app.routers import auth, rooms, reservations, checkin, checkout, tasks, billing, employees, reports, ai, prices, settings, audit_logs, guests, conversations, undo
+from app.routers import auth, rooms, reservations, checkin, checkout, tasks, billing, employees, reports, ai, prices, settings, audit_logs, guests, conversations, undo, ontology, security
 
 # 创建应用
 app = FastAPI(
@@ -40,6 +40,8 @@ app.include_router(ai.router)
 app.include_router(conversations.router)
 app.include_router(settings.router)
 app.include_router(undo.router)
+app.include_router(ontology.router)
+app.include_router(security.router)
 
 
 @app.on_event("startup")
@@ -51,6 +53,10 @@ def startup():
     # 注册事件处理器
     from app.services.event_handlers import register_event_handlers
     register_event_handlers()
+
+    # 注册告警处理器
+    from app.services.alert_service import register_alert_handlers
+    register_alert_handlers()
 
 
 @app.get("/")

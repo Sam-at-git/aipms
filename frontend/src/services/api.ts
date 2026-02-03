@@ -580,4 +580,168 @@ export const undoApi = {
   }
 }
 
+// ============== 本体视图 ==============
+
+export interface OntologyEntity {
+  name: string
+  description: string
+  attributes: {
+    name: string
+    type: string
+    primary?: boolean
+    values?: string[]
+  }[]
+}
+
+export interface OntologyRelationship {
+  from: string
+  to: string
+  type: string
+  label: string
+}
+
+export interface OntologySchema {
+  entities: OntologyEntity[]
+  relationships: OntologyRelationship[]
+}
+
+export interface OntologyStatistics {
+  entities: Record<string, {
+    total: number
+    by_status?: Record<string, number>
+    by_tier?: Record<string, number>
+    by_role?: Record<string, number>
+    active?: number
+    settled?: number
+    unsettled?: number
+  }>
+}
+
+export interface GraphNode {
+  id: string
+  type: string
+  label: string
+  data: Record<string, any>
+  position?: { x: number; y: number }
+}
+
+export interface GraphEdge {
+  id: string
+  source: string
+  target: string
+  label: string
+}
+
+export interface InstanceGraph {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
+export const ontologyApi = {
+  getSchema: async (): Promise<OntologySchema> => {
+    const res = await api.get('/ontology/schema')
+    return res.data
+  },
+  getStatistics: async (): Promise<OntologyStatistics> => {
+    const res = await api.get('/ontology/statistics')
+    return res.data
+  },
+  getInstanceGraph: async (params?: {
+    center_entity?: string
+    center_id?: number
+    depth?: number
+  }): Promise<InstanceGraph> => {
+    const res = await api.get('/ontology/instance-graph', { params })
+    return res.data
+  }
+}
+
+// ============== 安全管理 ==============
+
+export interface SecurityEvent {
+  id: number
+  event_type: string
+  severity: string
+  timestamp: string
+  source_ip?: string
+  user_id?: number
+  user_name?: string
+  description: string
+  details: Record<string, any>
+  is_acknowledged: boolean
+  acknowledged_by?: number
+  acknowledged_at?: string
+}
+
+export interface SecurityStatistics {
+  total: number
+  unacknowledged: number
+  by_type: Record<string, number>
+  by_severity: Record<string, number>
+  time_range_hours: number
+}
+
+export interface AlertSummary {
+  total_alerts: number
+  critical: number
+  high: number
+  unacknowledged: number
+  time_range_hours: number
+}
+
+export const securityApi = {
+  getEvents: async (params?: {
+    event_type?: string
+    severity?: string
+    user_id?: number
+    hours?: number
+    unacknowledged_only?: boolean
+    limit?: number
+    offset?: number
+  }): Promise<SecurityEvent[]> => {
+    const res = await api.get('/security/events', { params })
+    return res.data
+  },
+  getEvent: async (id: number): Promise<SecurityEvent> => {
+    const res = await api.get(`/security/events/${id}`)
+    return res.data
+  },
+  getStatistics: async (hours?: number): Promise<SecurityStatistics> => {
+    const res = await api.get('/security/statistics', { params: { hours } })
+    return res.data
+  },
+  getAlerts: async (): Promise<SecurityEvent[]> => {
+    const res = await api.get('/security/alerts')
+    return res.data
+  },
+  getAlertSummary: async (): Promise<AlertSummary> => {
+    const res = await api.get('/security/alerts/summary')
+    return res.data
+  },
+  acknowledgeEvent: async (eventId: number): Promise<SecurityEvent> => {
+    const res = await api.post(`/security/events/${eventId}/acknowledge`)
+    return res.data
+  },
+  bulkAcknowledge: async (eventIds: number[]): Promise<{ acknowledged_count: number }> => {
+    const res = await api.post('/security/events/bulk-acknowledge', eventIds)
+    return res.data
+  },
+  getHighSeverityEvents: async (hours?: number, limit?: number): Promise<SecurityEvent[]> => {
+    const res = await api.get('/security/high-severity', { params: { hours, limit } })
+    return res.data
+  },
+  getUserHistory: async (userId: number, days?: number, limit?: number): Promise<SecurityEvent[]> => {
+    const res = await api.get(`/security/user/${userId}/history`, { params: { days, limit } })
+    return res.data
+  },
+  getEventTypes: async (): Promise<{ value: string; label: string }[]> => {
+    const res = await api.get('/security/event-types')
+    return res.data
+  },
+  getSeverityLevels: async (): Promise<{ value: string; label: string }[]> => {
+    const res = await api.get('/security/severity-levels')
+    return res.data
+  }
+}
+
 export default api

@@ -15,6 +15,8 @@ import Settings from './pages/Settings'
 import Prices from './pages/Prices'
 import AuditLogs from './pages/AuditLogs'
 import Customers from './pages/Customers'
+import Ontology from './pages/Ontology'
+import SecurityDashboard from './pages/SecurityDashboard'
 
 // 受保护路由
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -80,6 +82,8 @@ export default function App() {
         <Route path="employees" element={<Employees />} />
         <Route path="reports" element={<Reports />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="ontology" element={<Ontology />} />
+        <Route path="security" element={<SecurityDashboard />} />
       </Route>
     </Routes>
   )
@@ -89,7 +93,8 @@ export default function App() {
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, BedDouble, CalendarCheck, Users, ClipboardList,
-  DollarSign, UserCog, BarChart3, LogOut, Menu, MessageSquare, Settings as SettingsIcon, Tag, FileText, UserCircle
+  DollarSign, UserCog, BarChart3, LogOut, Menu, MessageSquare, Settings as SettingsIcon, Tag, FileText, UserCircle,
+  Database, Shield
 } from 'lucide-react'
 import { useUIStore } from './store'
 
@@ -103,6 +108,8 @@ const navItems = [
   { path: '/billing', icon: DollarSign, label: '账单管理', roles: ['manager', 'receptionist'] },
   { path: '/prices', icon: Tag, label: '价格管理', roles: ['manager'] },
   { path: '/audit-logs', icon: FileText, label: '审计日志', roles: ['manager'] },
+  { path: '/ontology', icon: Database, label: '本体视图', roles: ['manager'] },
+  { path: '/security', icon: Shield, label: '安全管理', roles: ['manager'] },
   { path: '/employees', icon: UserCog, label: '员工管理', roles: ['manager'] },
   { path: '/reports', icon: BarChart3, label: '统计报表', roles: ['manager'] },
   { path: '/settings', icon: SettingsIcon, label: '系统设置', roles: ['manager'] },

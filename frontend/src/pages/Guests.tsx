@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Search, LogOut, RefreshCw, CreditCard } from 'lucide-react'
 import { checkinApi, checkoutApi, billingApi } from '../services/api'
-import Modal, { ModalFooter } from '../components/Modal'
+import Modal from '../components/Modal'
+import { UndoButton } from '../components/UndoButton'
 import { useUIStore } from '../store'
 import type { StayRecord, Bill } from '../types'
 
@@ -111,13 +112,16 @@ export default function Guests() {
       {/* 头部 */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">在住客人</h1>
-        <button
-          onClick={loadData}
-          className="flex items-center gap-2 px-3 py-2 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors"
-        >
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          刷新
-        </button>
+        <div className="flex gap-3">
+          <UndoButton onUndoSuccess={loadData} />
+          <button
+            onClick={loadData}
+            className="flex items-center gap-2 px-3 py-2 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors"
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            刷新
+          </button>
+        </div>
       </div>
 
       {/* 搜索 */}

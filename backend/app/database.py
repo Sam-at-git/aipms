@@ -29,4 +29,5 @@ def get_db():
 def init_db():
     """初始化数据库表"""
     from app.models import ontology  # noqa
+    from app.models import snapshots  # noqa - 操作快照和配置历史表
     Base.metadata.create_all(bind=engine)

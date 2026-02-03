@@ -1,22 +1,27 @@
 """
 房间服务 - 本体操作层
 管理 Room 和 RoomType 对象
+支持事件发布：房间状态变更时发布事件
 """
-from typing import List, Optional
-from datetime import date
+from typing import List, Optional, Callable
+from datetime import date, datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.ontology import Room, RoomType, RoomStatus, StayRecord, StayRecordStatus
 from app.models.schemas import (
     RoomCreate, RoomUpdate, RoomTypeCreate, RoomTypeUpdate, RoomStatusUpdate
 )
+from app.services.event_bus import event_bus, Event
+from app.models.events import EventType, RoomStatusChangedData
 
 
 class RoomService:
     """房间服务"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, event_publisher: Callable[[Event], None] = None):
         self.db = db
+        # 支持依赖注入事件发布器，便于测试
+        self._publish_event = event_publisher or event_bus.publish
 
     # ============== 房型操作 ==============
 
@@ -152,7 +157,8 @@ class RoomService:
         self.db.refresh(room)
         return room
 
-    def update_room_status(self, room_id: int, status: RoomStatus) -> Room:
+    def update_room_status(self, room_id: int, status: RoomStatus,
+                           changed_by: int = None, reason: str = "") -> Room:
         """更新房间状态"""
         room = self.get_room(room_id)
         if not room:
@@ -162,9 +168,29 @@ class RoomService:
         if room.status == RoomStatus.OCCUPIED and status != RoomStatus.OCCUPIED:
             raise ValueError("入住中的房间不能手动更改状态，请通过退房操作")
 
+        old_status = room.status
         room.status = status
+        room_number = room.room_number
+
         self.db.commit()
         self.db.refresh(room)
+
+        # 发布房间状态变更事件
+        if old_status != status:
+            self._publish_event(Event(
+                event_type=EventType.ROOM_STATUS_CHANGED,
+                timestamp=datetime.now(),
+                data=RoomStatusChangedData(
+                    room_id=room_id,
+                    room_number=room_number,
+                    old_status=old_status.value,
+                    new_status=status.value,
+                    changed_by=changed_by,
+                    reason=reason
+                ).to_dict(),
+                source="room_service"
+            ))
+
         return room
 
     def delete_room(self, room_id: int) -> bool:

@@ -47,13 +47,19 @@ npm run preview                      # Preview production build
 backend/app/
 ├── models/
 │   ├── ontology.py     # Domain objects (Room, Guest, Reservation, StayRecord, Bill, Task, Employee, RatePlan)
-│   └── schemas.py      # Pydantic models for API I/O
+│   ├── schemas.py      # Pydantic models for API I/O
+│   ├── events.py       # Domain event definitions (EventType enum, event data classes)
+│   └── snapshots.py    # OperationSnapshot and ConfigHistory models for undo
 ├── services/           # Business logic layer (one service per domain)
 │   ├── llm_service.py        # OpenAI-compatible LLM integration with robust JSON extraction
 │   ├── ai_service.py         # OODA loop: LLM优先，规则兜底
 │   ├── conversation_service.py # Chat history persistence (JSONL per user/day)
 │   ├── param_parser_service.py # Extracts entities (rooms, guests, dates) from natural language
-│   └── audit_service.py      # Tracks all operations for compliance
+│   ├── audit_service.py      # Tracks all operations for compliance
+│   ├── event_bus.py          # In-memory pub/sub event bus (singleton)
+│   ├── event_handlers.py     # Event handlers (auto-create cleaning task, update room status)
+│   ├── undo_service.py       # Operation snapshot creation and rollback logic
+│   └── config_history_service.py # Configuration version management
 ├── routers/            # FastAPI endpoints (one router per domain)
 ├── security/auth.py    # JWT authentication + role-based access
 ├── config.py           # Environment-based settings (LLM API config)
@@ -65,8 +71,8 @@ backend/app/
 ```
 frontend/src/
 ├── pages/              # Route pages (Dashboard, Rooms, Reservations, etc.)
-├── components/         # Reusable UI (Layout, ChatPanel, Modal, RoomCard)
-├── services/api.ts     # Axios HTTP client organized by domain
+├── components/         # Reusable UI (Layout, ChatPanel, Modal, RoomCard, UndoButton)
+├── services/api.ts     # Axios HTTP client organized by domain (includes undoApi)
 ├── store/index.ts      # Zustand stores (auth, chat, dashboard, ui)
 └── types/index.ts      # TypeScript interfaces matching backend schemas
 ```
@@ -110,6 +116,26 @@ frontend/src/
 - Backend: `require_manager`, `require_receptionist_or_manager`, `require_any_role` decorators in `security/auth.py`
 - Frontend: Nav items filtered by `user.role`
 
+**Event-Driven Architecture** (`event_bus.py`, `event_handlers.py`):
+- In-memory pub/sub pattern using singleton EventBus
+- Services publish domain events (e.g., `GUEST_CHECKED_OUT`, `TASK_COMPLETED`)
+- Event handlers subscribe to events and trigger side effects:
+  - `GUEST_CHECKED_OUT` → auto-creates cleaning task
+  - `TASK_COMPLETED` (cleaning) → room becomes VACANT_CLEAN
+- Supports dependency injection for testing via `event_publisher` parameter
+- Event history retained (last 100) for debugging
+
+**Operation Undo/Rollback** (`undo_service.py`, `snapshots.py`):
+- Services create `OperationSnapshot` before executing undoable operations
+- Snapshots store before/after state as JSON with 24-hour expiry window
+- Supported operations: check_in, check_out, extend_stay, change_room, complete_task, add_payment
+- Frontend `UndoButton` component shows recent undoable operations
+- Undo API: `/undo/operations` (list), `/undo/{uuid}` (execute)
+
+**Configuration Versioning** (`config_history_service.py`):
+- Tracks system configuration changes with version history
+- Supports rollback to previous config versions
+
 ### Aggregation Roots
 - **StayRecord**: Owns Bill, represents active occupancy lifecycle
 - **Reservation**: Owns booking details, transitions to StayRecord on check-in
@@ -135,6 +161,7 @@ All endpoints require JWT authentication. Main endpoint groups:
 - `/settings/*` - LLM configuration (manager only)
 - `/audit-logs/*` - Audit trail (manager only)
 - `/guests/*` - Guest CRM (tier, preferences, blacklist)
+- `/undo/*` - Operation undo (list undoable operations, execute undo)
 
 ## AI Action Types
 
@@ -200,6 +227,12 @@ If adding a new AI action type:
 1. Add action handler in `ai_service.py` execute_action method
 2. Add intent handler in `_generate_response` if using rule-based mode
 3. Update LLM system prompt in `llm_service.py` if needed
+
+If adding a new undoable operation:
+1. Add operation type to `OperationType` enum in `models/snapshots.py`
+2. Call `UndoService.create_snapshot()` in the service method before `db.commit()`
+3. Add rollback handler in `undo_service.py` `undo()` method
+4. Add operation type label mapping in frontend `UndoButton.tsx`
 
 ## UI Conventions
 

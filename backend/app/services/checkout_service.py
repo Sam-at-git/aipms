@@ -1,8 +1,9 @@
 """
 退房服务 - 本体操作层
-遵循 Palantir 原则：退房联动（CheckoutAction -> Room.status -> Task 自动创建）
+遵循事件驱动架构：退房发布事件，由事件处理器自动创建清洁任务
+支持操作撤销：关键操作创建快照
 """
-from typing import Optional
+from typing import Optional, Callable
 from datetime import datetime
 from decimal import Decimal
 from sqlalchemy.orm import Session
@@ -11,13 +12,18 @@ from app.models.ontology import (
     Reservation, ReservationStatus, Task, TaskType, TaskStatus
 )
 from app.models.schemas import CheckOutRequest
+from app.services.event_bus import event_bus, Event
+from app.models.events import EventType, GuestCheckedOutData, RoomStatusChangedData
+from app.models.snapshots import OperationType
 
 
 class CheckOutService:
     """退房服务"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, event_publisher: Callable[[Event], None] = None):
         self.db = db
+        # 支持依赖注入事件发布器，便于测试
+        self._publish_event = event_publisher or event_bus.publish
 
     def check_out(self, data: CheckOutRequest, operator_id: int) -> StayRecord:
         """
@@ -57,18 +63,8 @@ class CheckOutService:
 
         # 更新房间状态为脏房
         room = stay_record.room
+        old_room_status = room.status
         room.status = RoomStatus.VACANT_DIRTY
-
-        # 自动创建清洁任务
-        cleaning_task = Task(
-            room_id=room.id,
-            task_type=TaskType.CLEANING,
-            status=TaskStatus.PENDING,
-            priority=2,  # 退房清洁优先级较高
-            notes=f"退房清洁 - 原住客: {stay_record.guest.name}",
-            created_by=operator_id
-        )
-        self.db.add(cleaning_task)
 
         # 更新预订状态
         if stay_record.reservation:
@@ -80,8 +76,59 @@ class CheckOutService:
                 raise ValueError("退还押金不能超过原押金金额")
             # 押金退还记录可以在这里添加
 
+        # 保存客人信息用于事件和快照
+        guest_name = stay_record.guest.name
+        guest_id = stay_record.guest_id
+        room_number = room.room_number
+        room_id = room.id
+
+        # 创建操作快照（用于撤销）
+        from app.services.undo_service import UndoService
+        undo_service = UndoService(self.db)
+        snapshot = undo_service.create_snapshot(
+            operation_type=OperationType.CHECK_OUT,
+            entity_type="stay_record",
+            entity_id=stay_record.id,
+            before_state={
+                "stay_record": {
+                    "id": stay_record.id,
+                    "status": StayRecordStatus.ACTIVE.value
+                },
+                "room": {
+                    "id": room_id,
+                    "room_number": room_number,
+                    "status": old_room_status.value
+                }
+            },
+            after_state={
+                "stay_record_status": StayRecordStatus.CHECKED_OUT.value,
+                "room_status": RoomStatus.VACANT_DIRTY.value,
+                "created_task_id": None  # 将在事件处理器中更新
+            },
+            operator_id=operator_id
+        )
+
         self.db.commit()
         self.db.refresh(stay_record)
+
+        # 发布退房事件（事件处理器会自动创建清洁任务）
+        self._publish_event(Event(
+            event_type=EventType.GUEST_CHECKED_OUT,
+            timestamp=datetime.now(),
+            data=GuestCheckedOutData(
+                stay_record_id=stay_record.id,
+                guest_id=guest_id,
+                guest_name=guest_name,
+                room_id=room_id,
+                room_number=room_number,
+                check_out_time=stay_record.check_out_time,
+                total_amount=float(bill.total_amount) if bill else 0.0,
+                paid_amount=float(bill.paid_amount) if bill else 0.0,
+                operator_id=operator_id
+            ).to_dict(),
+            source="checkout_service"
+        ))
+
         return stay_record
 
     def batch_check_out(self, stay_record_ids: list, operator_id: int) -> list:

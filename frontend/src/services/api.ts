@@ -524,4 +524,60 @@ export const auditApi = {
   }
 }
 
+// ============== 操作撤销 ==============
+
+export interface OperationSnapshot {
+  id: number
+  snapshot_uuid: string
+  operation_type: string
+  operator_id: number
+  operation_time: string
+  entity_type: string
+  entity_id: number
+  is_undone: boolean
+  expires_at: string
+}
+
+export interface SnapshotDetail extends OperationSnapshot {
+  operator_name?: string
+  before_state: Record<string, any>
+  after_state: Record<string, any>
+  undone_time?: string
+  undone_by?: number
+  can_undo: boolean
+}
+
+export interface UndoResult {
+  success: boolean
+  message: string
+  details: Record<string, any>
+}
+
+export const undoApi = {
+  /** 获取可撤销的操作列表 */
+  getOperations: async (params?: {
+    entity_type?: string
+    entity_id?: number
+    limit?: number
+  }): Promise<OperationSnapshot[]> => {
+    const res = await api.get('/undo/operations', { params })
+    return res.data
+  },
+  /** 获取快照详情 */
+  getSnapshot: async (snapshotUuid: string): Promise<SnapshotDetail> => {
+    const res = await api.get(`/undo/${snapshotUuid}`)
+    return res.data
+  },
+  /** 执行撤销操作 */
+  undo: async (snapshotUuid: string): Promise<UndoResult> => {
+    const res = await api.post(`/undo/${snapshotUuid}`)
+    return res.data
+  },
+  /** 获取撤销历史（仅管理员） */
+  getHistory: async (limit?: number): Promise<OperationSnapshot[]> => {
+    const res = await api.get('/undo/history', { params: { limit } })
+    return res.data
+  }
+}
+
 export default api

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, RefreshCw, Play, CheckCircle, User } from 'lucide-react'
 import { taskApi, roomApi } from '../services/api'
 import Modal, { ModalFooter } from '../components/Modal'
+import { UndoButton } from '../components/UndoButton'
 import { useUIStore, useAuthStore } from '../store'
 import type { Task, Room } from '../types'
 
@@ -123,13 +124,16 @@ export default function Tasks() {
         <h1 className="text-2xl font-bold">{isCleaner ? '我的任务' : '任务管理'}</h1>
         <div className="flex gap-3">
           {!isCleaner && (
-            <button
-              onClick={() => openModal('createTask')}
-              className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
-            >
-              <Plus size={18} />
-              新建任务
-            </button>
+            <>
+              <button
+                onClick={() => openModal('createTask')}
+                className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
+              >
+                <Plus size={18} />
+                新建任务
+              </button>
+              <UndoButton onUndoSuccess={loadData} />
+            </>
           )}
           <button
             onClick={loadData}

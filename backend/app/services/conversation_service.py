@@ -16,6 +16,16 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
 
 
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles date and datetime objects"""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, date):
+            return obj.isoformat()
+        return super().default(obj)
+
+
 @dataclass
 class MessageContext:
     """消息上下文"""
@@ -126,7 +136,7 @@ class ConversationService:
         file_path = self._get_file_path(user_id, date_str)
 
         with open(file_path, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(message.to_dict(), ensure_ascii=False) + '\n')
+            f.write(json.dumps(message.to_dict(), ensure_ascii=False, cls=DateTimeEncoder) + '\n')
 
         return message
 

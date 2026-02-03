@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search, Calendar, Phone, User } from 'lucide-react'
+import { Plus, Search, Calendar, Phone, User, RefreshCw } from 'lucide-react'
 import { reservationApi, roomApi, priceApi } from '../services/api'
 import Modal, { ModalFooter } from '../components/Modal'
+import { UndoButton } from '../components/UndoButton'
 import { useUIStore } from '../store'
 import type { Reservation, RoomType } from '../types'
 
@@ -127,13 +128,23 @@ export default function Reservations() {
       {/* 头部 */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">预订管理</h1>
-        <button
-          onClick={() => openModal('createReservation')}
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
-        >
-          <Plus size={18} />
-          新建预订
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={() => openModal('createReservation')}
+            className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
+          >
+            <Plus size={18} />
+            新建预订
+          </button>
+          <UndoButton onUndoSuccess={loadData} />
+          <button
+            onClick={loadData}
+            className="flex items-center gap-2 px-3 py-2 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors"
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            刷新
+          </button>
+        </div>
       </div>
 
       {/* 搜索 */}

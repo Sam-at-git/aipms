@@ -1,6 +1,7 @@
 """
 账单服务 - 本体操作层
 管理 Bill 和 Payment 对象
+支持操作撤销：关键操作创建快照
 """
 from typing import List, Optional
 from datetime import datetime
@@ -8,6 +9,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 from app.models.ontology import Bill, Payment, StayRecord, PaymentMethod
 from app.models.schemas import PaymentCreate, BillAdjustment
+from app.models.snapshots import OperationType
 
 
 class BillingService:
@@ -33,6 +35,9 @@ class BillingService:
         if bill.is_settled:
             raise ValueError("账单已结清")
 
+        # 保存快照所需的旧状态
+        old_paid_amount = float(bill.paid_amount)
+
         payment = Payment(
             bill_id=data.bill_id,
             amount=data.amount,
@@ -41,6 +46,7 @@ class BillingService:
             created_by=operator_id
         )
         self.db.add(payment)
+        self.db.flush()  # 获取 payment.id
 
         # 更新账单已付金额
         bill.paid_amount += data.amount
@@ -49,6 +55,26 @@ class BillingService:
         balance = bill.total_amount + bill.adjustment_amount - bill.paid_amount
         if balance <= 0:
             bill.is_settled = True
+
+        # 创建操作快照（用于撤销）
+        from app.services.undo_service import UndoService
+        undo_service = UndoService(self.db)
+        undo_service.create_snapshot(
+            operation_type=OperationType.ADD_PAYMENT,
+            entity_type="payment",
+            entity_id=payment.id,
+            before_state={
+                "bill": {
+                    "id": bill.id,
+                    "paid_amount": old_paid_amount
+                }
+            },
+            after_state={
+                "payment_id": payment.id,
+                "bill_paid_amount": float(bill.paid_amount)
+            },
+            operator_id=operator_id
+        )
 
         self.db.commit()
         self.db.refresh(payment)

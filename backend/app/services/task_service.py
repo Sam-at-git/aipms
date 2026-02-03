@@ -1,19 +1,28 @@
 """
 任务服务 - 本体操作层
-遵循 Palantir 原则：清洁联动（Task.Completed -> Room.status = VACANT_CLEAN）
+支持事件驱动：任务完成发布事件，由事件处理器更新房间状态
+支持操作撤销：关键操作创建快照
 """
-from typing import List, Optional
+from typing import List, Optional, Callable
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.models.ontology import Task, TaskType, TaskStatus, Room, RoomStatus, Employee, EmployeeRole
 from app.models.schemas import TaskCreate, TaskAssign, TaskUpdate
+from app.services.event_bus import event_bus, Event
+from app.models.events import (
+    EventType, TaskCreatedData, TaskAssignedData,
+    TaskStartedData, TaskCompletedData
+)
+from app.models.snapshots import OperationType
 
 
 class TaskService:
     """任务服务"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, event_publisher: Callable[[Event], None] = None):
         self.db = db
+        # 支持依赖注入事件发布器，便于测试
+        self._publish_event = event_publisher or event_bus.publish
 
     def get_tasks(self, task_type: Optional[TaskType] = None,
                   status: Optional[TaskStatus] = None,
@@ -81,9 +90,27 @@ class TaskService:
         self.db.add(task)
         self.db.commit()
         self.db.refresh(task)
+
+        # 发布任务创建事件
+        self._publish_event(Event(
+            event_type=EventType.TASK_CREATED,
+            timestamp=datetime.now(),
+            data=TaskCreatedData(
+                task_id=task.id,
+                task_type=task.task_type.value,
+                room_id=task.room_id,
+                room_number=room.room_number,
+                priority=task.priority,
+                notes=task.notes or "",
+                created_by=created_by,
+                trigger="manual"
+            ).to_dict(),
+            source="task_service"
+        ))
+
         return task
 
-    def assign_task(self, task_id: int, data: TaskAssign) -> Task:
+    def assign_task(self, task_id: int, data: TaskAssign, assigned_by: int = None) -> Task:
         """分配任务"""
         task = self.get_task(task_id)
         if not task:
@@ -106,6 +133,23 @@ class TaskService:
 
         self.db.commit()
         self.db.refresh(task)
+
+        # 发布任务分配事件
+        self._publish_event(Event(
+            event_type=EventType.TASK_ASSIGNED,
+            timestamp=datetime.now(),
+            data=TaskAssignedData(
+                task_id=task.id,
+                task_type=task.task_type.value,
+                room_id=task.room_id,
+                room_number=task.room.room_number,
+                assignee_id=assignee.id,
+                assignee_name=assignee.name,
+                assigned_by=assigned_by or 0
+            ).to_dict(),
+            source="task_service"
+        ))
+
         return task
 
     def start_task(self, task_id: int, employee_id: int) -> Task:
@@ -125,6 +169,22 @@ class TaskService:
 
         self.db.commit()
         self.db.refresh(task)
+
+        # 发布任务开始事件
+        self._publish_event(Event(
+            event_type=EventType.TASK_STARTED,
+            timestamp=datetime.now(),
+            data=TaskStartedData(
+                task_id=task.id,
+                task_type=task.task_type.value,
+                room_id=task.room_id,
+                room_number=task.room.room_number,
+                started_by=employee_id,
+                started_by_name=task.assignee.name if task.assignee else ""
+            ).to_dict(),
+            source="task_service"
+        ))
+
         return task
 
     def complete_task(self, task_id: int, employee_id: int, notes: Optional[str] = None) -> Task:
@@ -142,19 +202,67 @@ class TaskService:
         if task.status not in [TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]:
             raise ValueError(f"状态为 {task.status.value} 的任务无法完成")
 
+        # 保存快照所需的旧状态
+        old_status = task.status.value
+        room = task.room
+        old_room_status = room.status.value if room else None
+
         task.status = TaskStatus.COMPLETED
         task.completed_at = datetime.now()
         if notes:
             task.notes = (task.notes or '') + f'\n完成备注: {notes}'
 
-        # 清洁联动：更新房间状态
+        # 保存信息用于事件
+        room_id = task.room_id
+        room_number = task.room.room_number
+        task_type = task.task_type.value
+        assignee_name = task.assignee.name if task.assignee else ""
+
+        # 创建操作快照（用于撤销）- 仅清洁任务
         if task.task_type == TaskType.CLEANING:
-            room = task.room
-            if room.status == RoomStatus.VACANT_DIRTY:
-                room.status = RoomStatus.VACANT_CLEAN
+            from app.services.undo_service import UndoService
+            undo_service = UndoService(self.db)
+            undo_service.create_snapshot(
+                operation_type=OperationType.COMPLETE_TASK,
+                entity_type="task",
+                entity_id=task.id,
+                before_state={
+                    "task": {
+                        "id": task.id,
+                        "status": old_status
+                    },
+                    "room": {
+                        "id": room_id,
+                        "room_number": room_number,
+                        "status": old_room_status
+                    } if room else None
+                },
+                after_state={
+                    "task_status": TaskStatus.COMPLETED.value,
+                    "room_status": RoomStatus.VACANT_CLEAN.value
+                },
+                operator_id=employee_id
+            )
 
         self.db.commit()
         self.db.refresh(task)
+
+        # 发布任务完成事件（事件处理器会更新房间状态）
+        self._publish_event(Event(
+            event_type=EventType.TASK_COMPLETED,
+            timestamp=datetime.now(),
+            data=TaskCompletedData(
+                task_id=task.id,
+                task_type=task_type,
+                room_id=room_id,
+                room_number=room_number,
+                completed_by=employee_id,
+                completed_by_name=assignee_name,
+                completion_time=task.completed_at
+            ).to_dict(),
+            source="task_service"
+        ))
+
         return task
 
     def update_task(self, task_id: int, data: TaskUpdate) -> Task:

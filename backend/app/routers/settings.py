@@ -1,19 +1,36 @@
 """
 系统设置路由
 LLM 配置和系统参数管理
+支持配置版本管理
 """
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 from app.database import get_db
 from app.models.ontology import Employee
 from app.models.schemas import LLMSettings, LLMTestRequest
 from app.services.llm_service import LLMService
+from app.services.config_history_service import ConfigHistoryService
 from app.security.auth import get_current_user, require_manager
 from app.config import settings
 
 router = APIRouter(prefix="/settings", tags=["系统设置"])
+
+
+class ConfigHistoryResponse(BaseModel):
+    """配置历史响应模型"""
+    id: int
+    config_key: str
+    version: int
+    changed_by: int
+    changed_at: str
+    change_reason: Optional[str]
+    is_current: bool
+
+    class Config:
+        from_attributes = True
 
 
 @router.get("/llm", response_model=LLMSettings)
@@ -36,11 +53,22 @@ def get_llm_settings(
 @router.post("/llm")
 def update_llm_settings(
     data: LLMSettings,
+    reason: Optional[str] = None,
+    db: Session = Depends(get_db),
     current_user: Employee = Depends(require_manager)
 ):
-    """更新 LLM 设置（仅经理）"""
-    # 更新环境变量
+    """更新 LLM 设置（仅经理），自动记录版本历史"""
+    # 记录变更前的配置
+    old_settings = {
+        "openai_base_url": settings.OPENAI_BASE_URL,
+        "llm_model": settings.LLM_MODEL,
+        "llm_temperature": settings.LLM_TEMPERATURE,
+        "llm_max_tokens": settings.LLM_MAX_TOKENS,
+        "enable_llm": settings.ENABLE_LLM,
+        "system_prompt": LLMService.SYSTEM_PROMPT
+    }
 
+    # 更新环境变量
     if data.openai_api_key and data.openai_api_key != "***":
         os.environ["OPENAI_API_KEY"] = data.openai_api_key
 
@@ -69,6 +97,27 @@ def update_llm_settings(
     # 更新系统提示词
     if data.system_prompt:
         LLMService.SYSTEM_PROMPT = data.system_prompt
+
+    # 记录变更后的配置
+    new_settings = {
+        "openai_base_url": settings.OPENAI_BASE_URL,
+        "llm_model": settings.LLM_MODEL,
+        "llm_temperature": settings.LLM_TEMPERATURE,
+        "llm_max_tokens": settings.LLM_MAX_TOKENS,
+        "enable_llm": settings.ENABLE_LLM,
+        "system_prompt": LLMService.SYSTEM_PROMPT
+    }
+
+    # 记录配置历史
+    config_history_service = ConfigHistoryService(db)
+    config_history_service.record_change(
+        config_key="llm_settings",
+        old_value=old_settings,
+        new_value=new_settings,
+        changed_by=current_user.id,
+        change_reason=reason
+    )
+    db.commit()
 
     return {"message": "LLM 设置已更新", "settings": get_llm_settings(current_user)}
 
@@ -154,3 +203,116 @@ def get_llm_providers(
             }
         ]
     }
+
+
+@router.get("/llm/history", response_model=List[ConfigHistoryResponse])
+def get_llm_settings_history(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_manager)
+):
+    """获取 LLM 设置变更历史（仅经理）"""
+    config_history_service = ConfigHistoryService(db)
+    history = config_history_service.get_history("llm_settings", limit)
+
+    return [
+        ConfigHistoryResponse(
+            id=h.id,
+            config_key=h.config_key,
+            version=h.version,
+            changed_by=h.changed_by,
+            changed_at=h.changed_at.isoformat(),
+            change_reason=h.change_reason,
+            is_current=h.is_current
+        )
+        for h in history
+    ]
+
+
+@router.get("/llm/history/{version}")
+def get_llm_settings_version(
+    version: int,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_manager)
+):
+    """获取特定版本的 LLM 设置（仅经理）"""
+    import json
+
+    config_history_service = ConfigHistoryService(db)
+    history = config_history_service.get_version("llm_settings", version)
+
+    if not history:
+        raise HTTPException(status_code=404, detail=f"版本 {version} 不存在")
+
+    return {
+        "id": history.id,
+        "config_key": history.config_key,
+        "version": history.version,
+        "old_value": json.loads(history.old_value),
+        "new_value": json.loads(history.new_value),
+        "changed_by": history.changed_by,
+        "changer_name": history.changer.name if history.changer else None,
+        "changed_at": history.changed_at.isoformat(),
+        "change_reason": history.change_reason,
+        "is_current": history.is_current
+    }
+
+
+@router.post("/llm/rollback/{version}")
+def rollback_llm_settings(
+    version: int,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_manager)
+):
+    """回滚到指定版本的 LLM 设置（仅经理）"""
+    import json
+
+    config_history_service = ConfigHistoryService(db)
+
+    try:
+        # 获取目标版本的配置
+        target = config_history_service.get_version("llm_settings", version)
+        if not target:
+            raise HTTPException(status_code=404, detail=f"版本 {version} 不存在")
+
+        target_value = json.loads(target.new_value)
+
+        # 应用配置
+        if target_value.get("openai_base_url"):
+            settings.OPENAI_BASE_URL = target_value["openai_base_url"]
+            os.environ["OPENAI_BASE_URL"] = target_value["openai_base_url"]
+
+        if target_value.get("llm_model"):
+            settings.LLM_MODEL = target_value["llm_model"]
+            os.environ["LLM_MODEL"] = target_value["llm_model"]
+
+        if target_value.get("llm_temperature") is not None:
+            settings.LLM_TEMPERATURE = target_value["llm_temperature"]
+            os.environ["LLM_TEMPERATURE"] = str(target_value["llm_temperature"])
+
+        if target_value.get("llm_max_tokens") is not None:
+            settings.LLM_MAX_TOKENS = target_value["llm_max_tokens"]
+            os.environ["LLM_MAX_TOKENS"] = str(target_value["llm_max_tokens"])
+
+        if target_value.get("enable_llm") is not None:
+            settings.ENABLE_LLM = target_value["enable_llm"]
+            os.environ["ENABLE_LLM"] = "true" if target_value["enable_llm"] else "false"
+
+        if target_value.get("system_prompt"):
+            LLMService.SYSTEM_PROMPT = target_value["system_prompt"]
+
+        # 记录回滚操作
+        config_history_service.rollback_to_version(
+            config_key="llm_settings",
+            version=version,
+            changed_by=current_user.id
+        )
+        db.commit()
+
+        return {
+            "message": f"已回滚到版本 {version}",
+            "settings": get_llm_settings(current_user)
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

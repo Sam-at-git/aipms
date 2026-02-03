@@ -315,9 +315,10 @@ class LLMService:
 **重要约束：**
 1. 你只能返回 JSON 格式的响应
 2. 不要编造不存在的数据（如房间号、预订号）
-3. 如果信息不足，在 message 中询问用户
-4. 所有需要确认的操作都要设置 requires_confirmation: true
-5. **房间相关：优先使用 room_number（字符串）而非 room_id，让后端自动转换**
+3. 尽可能提取用户提供的所有信息，包括部分信息
+4. 当信息不足时，明确列出缺失的字段
+5. 所有需要确认的操作都要设置 requires_confirmation: true
+6. **房间相关：优先使用 room_number（字符串）而非 room_id，让后端自动转换**
 
 **支持的操作类型 (action_type):**
 - query_rooms: 查看房态
@@ -328,28 +329,49 @@ class LLMService:
 - checkin: 预订入住（需要 reservation_id 和 room_number）
 - walkin_checkin: 散客入住（需要 room_number, guest_name, guest_phone, expected_check_out）
 - checkout: 退房（需要 stay_record_id）
-- create_reservation: 创建预订（需要 guest_name, guest_phone, room_type_id, 日期）
+- create_reservation: 创建预订（需要 guest_name, guest_phone, room_type, 日期）
 - extend_stay: 续住（需要 stay_record_id, new_check_out_date）
-- change_room: 换房（需要 stay_record_id, room_number）
+- change_room: 换房（需要 stay_record_id, new_room_number）
 - cancel_reservation: 取消预订（需要 reservation_id, cancel_reason）
 - create_task: 创建任务（需要 room_number, task_type: cleaning/maintenance）
-- assign_task: 分配任务（需要 task_id, assignee_id）
+- assign_task: 分配任务（需要 task_id, assignee_name）
 - start_task: 开始任务（需要 task_id）
 - complete_task: 完成任务（需要 task_id）
 - add_payment: 收款（需要 bill_id, amount, method: cash/card）
 - adjust_bill: 账单调整（需要 bill_id, adjustment_amount, reason）
 - update_room_status: 修改房态（需要 room_number, status: vacant_clean/occupied/vacant_dirty/out_of_order）
 
-**日期处理：**
-- 用户输入会包含明确的"当前日期"、"明天"、"后天"等具体日期
-- 在 params 中直接使用具体日期字符串（如 "2025-02-03"），系统会自动解析
-- 支持相对日期词汇："明天"、"后天"、"大后天"、"明晚"、"下周"等
-- 务必根据注入的当前日期信息来计算相对日期
+**各操作必需参数:**
+walkin_checkin: room_number, guest_name, guest_phone, expected_check_out
+create_reservation: guest_name, guest_phone, room_type, check_in_date, check_out_date
+checkin: reservation_id, room_number
+checkout: stay_record_id
+extend_stay: stay_record_id, new_check_out_date
+change_room: stay_record_id, new_room_number
+create_task: room_number, task_type
+
+**日期处理 - 重要：**
+- 用户的输入会包含"当前日期"、"明天"、"后天"等具体日期信息
+- 你必须根据注入的当前日期信息，将所有相对日期转换为具体的 ISO 格式日期（YYYY-MM-DD）
+- 在 params 中，所有日期字段必须使用 ISO 格式（如 "2025-02-03"），不要使用"明天"、"后天"等相对词汇
+- 支持的日期词汇转换：
+  * "今天" → 当天的 ISO 日期
+  * "明天"/"明日"/"明" → 今天+1天的 ISO 日期
+  * "后天"/"后日" → 今天+2天的 ISO 日期
+  * "大后天" → 今天+3天的 ISO 日期
+  * 已有的 ISO 格式日期保持不变
+
+**追问模式 - 当信息不完整时:**
+当用户的操作请求信息不完整时，你需要：
+1. 提取所有已提供的参数放入 params
+2. 在 message 中用自然语言询问缺失的信息
+3. 在 missing_fields 中列出所有缺失的字段定义
+4. 设置 requires_confirmation: false（表示需要先收集信息）
 
 **响应格式:**
 ```json
 {
-  "message": "给用户的回复",
+  "message": "给用户的回复或追问",
   "suggested_actions": [
     {
       "action_type": "操作类型",
@@ -358,23 +380,88 @@ class LLMService:
       "description": "操作描述",
       "requires_confirmation": true,
       "params": {
-        "参数名": "参数值"
-      }
+        "已收集的参数": "值"
+      },
+      "missing_fields": [
+        {
+          "field_name": "参数名",
+          "display_name": "显示名称",
+          "field_type": "text|select|date|number",
+          "options": [{"value": "值", "label": "显示"}],
+          "placeholder": "提示文本",
+          "required": true
+        }
+      ]
     }
   ],
-  "context": {
-    "key": "value"
-  }
+  "context": {"已收集的信息": "值"}
 }
 ```
 
 **示例对话:**
 
-用户: "查看房态"
+用户: "创建一个预订，李四，电话13800138000，明天入住，住两天"
 回复: {
-  "message": "正在为您查询当前房态...",
-  "suggested_actions": [{"action_type": "view", "entity_type": "room_status", "requires_confirmation": false}],
+  "message": "好的，我来帮您创建预订。已收集信息：\\n- 客人：李四\\n- 电话：13800138000\\n- 入住：明天\\n- 退房：后天\\n\\n请问需要预订什么房型？",
+  "suggested_actions": [{
+    "action_type": "create_reservation",
+    "entity_type": "reservation",
+    "description": "创建李四的预订",
+    "requires_confirmation": false,
+    "params": {
+      "guest_name": "李四",
+      "guest_phone": "13800138000",
+      "check_in_date": "2025-02-04",
+      "check_out_date": "2025-02-05",
+      "adult_count": 1
+    },
+    "missing_fields": [{
+      "field_name": "room_type",
+      "display_name": "房型",
+      "field_type": "select",
+      "options": [{"value": "标间", "label": "标间 ¥288/晚"}, {"value": "大床房", "label": "大床房 ¥328/晚"}, {"value": "豪华间", "label": "豪华间 ¥458/晚"}],
+      "placeholder": "请选择房型",
+      "required": true
+    }]
+  }],
+  "context": {"guest_name": "李四", "guest_phone": "13800138000", "check_in_date": "明天", "check_out_date": "后天"}
+}
+
+用户: "大床房"
+回复: {
+  "message": "好的，为您预订大床房。\\n- 客人：李四\\n- 电话：13800138000\\n- 房型：大床房 ¥328/晚\\n- 入住：明天\\n- 退房：后天\\n\\n确认创建预订吗？",
+  "suggested_actions": [{
+    "action_type": "create_reservation",
+    "entity_type": "reservation",
+    "description": "创建李四的大床房预订",
+    "requires_confirmation": true,
+    "params": {
+      "guest_name": "李四",
+      "guest_phone": "13800138000",
+      "room_type": "大床房",
+      "check_in_date": "2025-02-04",
+      "check_out_date": "2025-02-05",
+      "adult_count": 1
+    }
+  }],
   "context": {}
+}
+
+用户: "帮王五办理入住"
+回复: {
+  "message": "请问王五是预订入住还是散客入住？如果是预订入住，请提供预订号；如果是散客入住，请告诉我需要什么房型。",
+  "suggested_actions": [{
+    "action_type": "checkin",
+    "entity_type": "reservation",
+    "description": "为王五办理入住",
+    "requires_confirmation": false,
+    "params": {"guest_name": "王五"},
+    "missing_fields": [
+      {"field_name": "checkin_type", "display_name": "入住类型", "field_type": "select", "options": [{"value": "reservation", "label": "预订入住"}, {"value": "walkin", "label": "散客入住"}], "required": true},
+      {"field_name": "room_number", "display_name": "房间号", "field_type": "text", "placeholder": "如：201", "required": true}
+    ]
+  }],
+  "context": {"guest_name": "王五"}
 }
 
 用户: "201房退房"
@@ -391,60 +478,27 @@ class LLMService:
   "context": {"room_number": "201", "guest_name": "张三"}
 }
 
-用户: "创建一个预订，李四，电话13800138000，明天入住，住两天"
+用户: "查看房态"
 回复: {
-  "message": "请确认预订信息：\n- 客人：李四\n- 电话：13800138000\n- 入住：明天\n- 退房：后天\n请问需要预订什么房型？",
-  "suggested_actions": [{
-    "action_type": "create_reservation",
-    "entity_type": "reservation",
-    "description": "创建李四的预订",
-    "requires_confirmation": true,
-    "params": {
-      "guest_name": "李四",
-      "guest_phone": "13800138000",
-      "check_in_date": "明天",
-      "check_out_date": "后天",
-      "adult_count": 1
-    }
-  }],
-  "context": {"pending_info": "room_type_id"}
+  "message": "正在为您查询当前房态...",
+  "suggested_actions": [{"action_type": "view", "entity_type": "room_status", "requires_confirmation": false, "params": {} }],
+  "context": {}
 }
 
-用户: "帮张三续住两天"
+用户: "大床房有多少间？"
 回复: {
-  "message": "找到张三的入住记录（203号房），请确认续住至新日期？",
-  "suggested_actions": [{
-    "action_type": "extend_stay",
-    "entity_type": "stay_record",
-    "entity_id": 2,
-    "description": "为张三续住",
-    "requires_confirmation": true,
-    "params": {"stay_record_id": 2, "new_check_out_date": "2025-02-06"}
-  }],
-  "context": {"guest_name": "张三", "room_number": "203"}
+  "message": "正在为您查询大床房数量...",
+  "suggested_actions": [{"action_type": "query_rooms", "entity_type": "room", "requires_confirmation": false, "params": {"room_type": "大床房"}}],
+  "context": {"room_type": "大床房"}
 }
 
-用户: "请为散客陈先生（电话13512347776）预定大床房，明晚入住，住1天"
-回复: {
-  "message": "请确认预订信息：\n- 客人：陈先生\n- 电话：13512347776\n- 房型：大床房\n- 入住：明晚\n- 退房：后天\n- 天数：1天",
-  "suggested_actions": [{
-    "action_type": "create_reservation",
-    "entity_type": "reservation",
-    "description": "为陈先生创建大床房预订",
-    "requires_confirmation": true,
-    "params": {
-      "guest_name": "陈先生",
-      "guest_phone": "13512347776",
-      "room_type": "大床房",
-      "check_in_date": "明天",
-      "check_out_date": "后天",
-      "adult_count": 1
-    }
-  }],
-  "context": {"room_type_specified": true}
-}
-
-**注意：当用户明确指定了房型（如"大床房"、"标间"、"豪华间"），直接使用 room_type 参数传递房型名称，不需要再次询问。**
+**关键规则：**
+1. 当用户明确指定了房型（如"大床房"、"标间"、"豪华间"），使用 room_type 参数传递房型名称
+2. 当信息不完整时，必须在 params 中包含已收集的所有信息
+3. 缺失字段必须在 missing_fields 中明确定义
+4. field_type 可以是：text（文本）、select（下拉选择）、date（日期）、number（数字）
+5. 对于房型选择，使用 select 类型并提供选项列表
+6. 追问时设置 requires_confirmation: false，信息完整后设置为 true
 """
 
     def __init__(self):
@@ -759,3 +813,176 @@ class LLMService:
 
         except Exception:
             return TopicRelevance.CONTINUATION
+
+    def parse_followup_input(
+        self,
+        user_input: str,
+        action_type: str,
+        collected_params: dict,
+        context: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """
+        解析追问时的用户输入
+
+        Args:
+            user_input: 用户新输入
+            action_type: 已确定的操作类型
+            collected_params: 已收集的参数
+            context: 额外上下文（如可用房型列表）
+
+        Returns:
+            {
+                "params": {...},  # 合并后的所有参数
+                "is_complete": true/false,
+                "missing_fields": [...],
+                "message": "自然语言回复"
+            }
+        """
+        if not self.enabled:
+            return {
+                "params": collected_params,
+                "is_complete": False,
+                "missing_fields": [],
+                "message": "LLM 服务未启用"
+            }
+
+        # 构建已收集参数的描述
+        collected_info = []
+        for key, value in collected_params.items():
+            if value:
+                collected_info.append(f"- {key}: {value}")
+
+        # 构建上下文信息
+        context_info = ""
+        if context:
+            if context.get("room_types"):
+                rt_list = ", ".join([
+                    f"{rt.get('name')}"
+                    for rt in context["room_types"]
+                ])
+                context_info += f"\n可用房型: {rt_list}"
+
+        today = date.today()
+        date_context = f"\n**当前日期: {today.year}年{today.month}月{today.day}日**"
+        date_context += f"\n**明天: {(today + __import__('datetime').timedelta(days=1)).strftime('%Y-%m-%d')}**"
+        date_context += f"\n**后天: {(today + __import__('datetime').timedelta(days=2)).strftime('%Y-%m-%d')}**"
+
+        prompt = f"""你正在帮用户收集信息以完成酒店管理操作。
+
+**已确定的操作类型:** {action_type}
+
+**已收集的参数:**
+{chr(10).join(collected_info) if collected_info else "（无）"}
+
+**用户新输入:** {user_input}
+{date_context}
+{context_info}
+
+**任务:**
+1. 从用户新输入中提取参数
+2. 将新参数与已收集参数合并
+3. 判断信息是否完整
+4. 如果不完整，列出缺失的字段
+
+**返回 JSON 格式:**
+```json
+{{
+  "params": {{
+    "合并后的所有参数": "值"
+  }},
+  "is_complete": true/false,
+  "missing_fields": [
+    {{
+      "field_name": "参数名",
+      "display_name": "显示名称",
+      "field_type": "text|select|date|number",
+      "placeholder": "提示文本",
+      "required": true
+    }}
+  ],
+  "message": "给用户的自然语言回复"
+}}
+```
+
+**参数说明:**
+- walkin_checkin 需要: room_number, guest_name, guest_phone, expected_check_out
+- create_reservation 需要: guest_name, guest_phone, room_type, check_in_date, check_out_date
+- checkin 需要: reservation_id, room_number
+- checkout 需要: stay_record_id
+- extend_stay 需要: stay_record_id, new_check_out_date
+- change_room 需要: stay_record_id, new_room_number
+- create_task 需要: room_number, task_type
+
+**日期处理 - 重要：**
+- 所有日期字段在 params 中必须使用 ISO 格式（YYYY-MM-DD）
+- 支持相对日期词汇："今天"、"明天"、"后天"、"大后天"
+- 你必须根据提供的当前日期信息，将相对日期转换为 ISO 格式
+- 例如："明天" → "2025-02-04"（根据当前日期计算）
+
+**示例:**
+
+用户输入: "大床房"
+已收集: {{guest_name: "李四", check_in_date: "2025-02-04", check_out_date: "2025-02-05"}}
+返回:
+{{
+  "params": {{"guest_name": "李四", "room_type": "大床房", "check_in_date": "2025-02-04", "check_out_date": "2025-02-05"}},
+  "is_complete": false,
+  "missing_fields": [{{"field_name": "guest_phone", "display_name": "联系电话", "field_type": "text", "placeholder": "请输入手机号", "required": true}}],
+  "message": "好的，选择大床房。还需要提供联系电话。"
+}}
+
+用户输入: "13800138000"
+已收集: {{guest_name: "李四", room_type: "大床房", check_in_date: "2025-02-04", check_out_date: "2025-02-05"}}
+返回:
+{{
+  "params": {{"guest_name": "李四", "guest_phone": "13800138000", "room_type": "大床房", "check_in_date": "2025-02-04", "check_out_date": "2025-02-05"}},
+  "is_complete": true,
+  "missing_fields": [],
+  "message": "信息已完整：\\n- 客人：李四\\n- 电话：13800138000\\n- 房型：大床房\\n- 入住：2025-02-04\\n- 退房：2025-02-05\\n\\n确认创建预订吗？"
+}}
+"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=settings.LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": "你是酒店管理系统的参数提取助手，必须返回纯 JSON 格式。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=1500,
+                response_format={"type": "json_object"}
+            )
+
+            content = response.choices[0].message.content
+            result = extract_json_from_text(content)
+
+            if result:
+                # 确保返回值包含所有必需字段
+                if "params" not in result:
+                    result["params"] = collected_params
+                if "is_complete" not in result:
+                    result["is_complete"] = False
+                if "missing_fields" not in result:
+                    result["missing_fields"] = []
+                if "message" not in result:
+                    result["message"] = "信息已收到"
+
+                return result
+            else:
+                # 解析失败，返回默认值
+                return {
+                    "params": collected_params,
+                    "is_complete": False,
+                    "missing_fields": [],
+                    "message": "抱歉，没有理解您的输入，请重新提供信息。"
+                }
+
+        except Exception as e:
+            # 调用失败
+            return {
+                "params": collected_params,
+                "is_complete": False,
+                "missing_fields": [],
+                "message": f"处理出错: {str(e)}"
+            }

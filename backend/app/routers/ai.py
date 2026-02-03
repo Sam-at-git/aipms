@@ -35,6 +35,7 @@ class AIMessageWithContext(BaseModel):
     """带上下文的 AI 消息请求"""
     content: str
     topic_id: Optional[str] = None
+    follow_up_context: Optional[dict] = None  # 追问上下文
 
 
 class AIResponseWithHistory(BaseModel):
@@ -46,6 +47,7 @@ class AIResponseWithHistory(BaseModel):
     topic_id: Optional[str] = None
     requires_confirmation: Optional[bool] = None
     candidates: Optional[List[dict]] = None
+    follow_up: Optional[dict] = None
 
 
 # ============== 路由 ==============
@@ -66,6 +68,8 @@ def chat(
     """
     # 获取历史上下文消息
     conversation_history = []
+    follow_up_context = None
+
     if message.topic_id:
         # 获取该话题的历史消息
         context_messages = conv_service.get_context_messages(
@@ -77,6 +81,19 @@ def chat(
             {'role': m.role, 'content': m.content}
             for m in context_messages
         ]
+
+        # 从最近的助手消息中提取追问上下文
+        for msg in reversed(context_messages):
+            if msg.role == 'assistant' and msg.context:
+                context_data = msg.context
+                if isinstance(context_data, dict):
+                    # 检查是否有 follow_up 信息
+                    if 'follow_up' in context_data or 'action_type' in context_data:
+                        follow_up_context = {
+                            'action_type': context_data.get('action_type'),
+                            'collected_fields': context_data.get('collected_fields', {})
+                        }
+                        break
     else:
         # 获取最近的历史消息
         context_messages = conv_service.get_context_messages(
@@ -88,13 +105,18 @@ def chat(
             for m in context_messages
         ]
 
+    # 如果前端传了 follow_up_context，优先使用
+    if message.follow_up_context:
+        follow_up_context = message.follow_up_context
+
     # 处理消息
     service = AIService(db)
     result = service.process_message(
         message=message.content,
         user=current_user,
         conversation_history=conversation_history,
-        topic_id=message.topic_id
+        topic_id=message.topic_id,
+        follow_up_context=follow_up_context
     )
 
     # 确定 topic_id
@@ -121,7 +143,8 @@ def chat(
         message_id=assistant_msg.id,
         topic_id=topic_id,
         requires_confirmation=result.get('requires_confirmation'),
-        candidates=result.get('candidates')
+        candidates=result.get('candidates'),
+        follow_up=result.get('follow_up')
     )
 
 

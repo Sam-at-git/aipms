@@ -212,6 +212,32 @@ export interface AIResponse {
   requires_confirmation?: boolean
   action?: string
   candidates?: CandidateOption[]
+  follow_up?: FollowUpInfo
+  topic_id?: string
+}
+
+// 缺失字段定义（用于追问模式）
+export interface MissingField {
+  field_name: string
+  display_name: string
+  field_type: 'text' | 'select' | 'date' | 'number'
+  options?: FieldOption[]
+  placeholder?: string
+  required: boolean
+}
+
+export interface FieldOption {
+  value: string
+  label: string
+}
+
+// 追问信息
+export interface FollowUpInfo {
+  action_type: string
+  message: string
+  missing_fields: MissingField[]
+  collected_fields: Record<string, unknown>
+  context: Record<string, unknown>
 }
 
 export interface AIAction {
@@ -222,6 +248,7 @@ export interface AIAction {
   description: string
   requires_confirmation: boolean
   candidates?: CandidateOption[]
+  missing_fields?: MissingField[]
 }
 
 export interface CandidateOption {
@@ -249,6 +276,9 @@ export interface MessageContext {
   topic_id?: string
   is_followup?: boolean
   parent_message_id?: string
+  follow_up?: FollowUpInfo
+  action_type?: string
+  collected_fields?: Record<string, unknown>
 }
 
 // 会话消息（从服务端返回）

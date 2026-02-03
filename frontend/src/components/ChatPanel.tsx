@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, Check, X, Search, ChevronUp } from 'lucide-react'
+import { Send, Loader2, Check, X, Search, ChevronUp, ChevronDown } from 'lucide-react'
 import { useChatStore } from '../store'
 import { aiApi, conversationApi } from '../services/api'
-import type { AIAction, ChatMessage, CandidateOption, ConversationMessage } from '../types'
+import type { AIAction, ChatMessage, CandidateOption, ConversationMessage, FollowUpInfo } from '../types'
 
 // 日期分隔组件
 function DateSeparator({ date }: { date: string }) {
@@ -59,6 +59,9 @@ function groupMessagesByDate(messages: ChatMessage[]): Map<string, ChatMessage[]
 export default function ChatPanel() {
   const [input, setInput] = useState('')
   const [pendingAction, setPendingAction] = useState<AIAction | null>(null)
+  const [followUpInfo, setFollowUpInfo] = useState<FollowUpInfo | null>(null)
+  const [formValues, setFormValues] = useState<Record<string, string>>({})
+  const [showForm, setShowForm] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
   const [searchInput, setSearchInput] = useState('')
   const [isLoadingMore, setIsLoadingMore] = useState(false)
@@ -184,10 +187,11 @@ export default function ChatPanel() {
   const handleSend = async () => {
     if (!input.trim() || isLoading) return
 
+    const trimmedInput = input.trim()
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
-      content: input.trim(),
+      content: trimmedInput,
       timestamp: new Date()
     }
 
@@ -195,8 +199,104 @@ export default function ChatPanel() {
     setInput('')
     setLoading(true)
 
+    // 检测追问模式下的确认/取消关键词
+    const confirmKeywords = ['确认', '好的', '行', '可以', '是', '对', 'yes', 'ok']
+    const cancelKeywords = ['取消', '不', 'no', '否']
+
+    // 如果有待确认的操作，优先处理
+    if (pendingAction) {
+      const isConfirm = confirmKeywords.some(kw => trimmedInput.toLowerCase().includes(kw.toLowerCase()))
+      const isCancel = cancelKeywords.some(kw => trimmedInput.toLowerCase().includes(kw.toLowerCase()))
+
+      if (isCancel) {
+        // 取消操作
+        addMessage({
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: '操作已取消。',
+          timestamp: new Date()
+        })
+        setPendingAction(null)
+        setFollowUpInfo(null)
+        setFormValues({})
+        setLoading(false)
+        return
+      }
+
+      if (isConfirm) {
+        // 确认操作：执行待确认的操作
+        try {
+          const result = await aiApi.execute(pendingAction, true)
+          addMessage({
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: result.message || '操作已完成',
+            timestamp: new Date()
+          })
+          setPendingAction(null)
+          setFollowUpInfo(null)
+          setFormValues({})
+        } catch {
+          addMessage({
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: '操作执行失败，请稍后重试。',
+            timestamp: new Date()
+          })
+        }
+        setLoading(false)
+        return
+      }
+    }
+
+    // 如果在追问模式且用户输入了确认/取消关键词
+    if (followUpInfo) {
+      const isCancel = cancelKeywords.some(kw => trimmedInput.toLowerCase().includes(kw.toLowerCase()))
+
+      if (isCancel) {
+        // 取消操作
+        addMessage({
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: '操作已取消。',
+          timestamp: new Date()
+        })
+        setFollowUpInfo(null)
+        setFormValues({})
+        setLoading(false)
+        return
+      }
+
+      if (confirmKeywords.some(kw => trimmedInput.toLowerCase().includes(kw.toLowerCase()))) {
+        // 确认操作：使用表单提交逻辑
+        await handleFormSubmit()
+        return
+      }
+    }
+
+    // 构建追问上下文（如果在追问模式）
+    let followUpContext: Record<string, unknown> | undefined = undefined
+    if (followUpInfo) {
+      followUpContext = {
+        action_type: followUpInfo.action_type,
+        collected_fields: followUpInfo.collected_fields
+      }
+    }
+
     try {
-      const response = await aiApi.chat(input.trim(), currentTopicId || undefined)
+      const response = await aiApi.chat(
+        trimmedInput,
+        currentTopicId || undefined,
+        followUpContext
+      )
+
+      console.log('DEBUG chat response:', {
+        message: response.message,
+        suggested_actions: response.suggested_actions,
+        follow_up: response.follow_up,
+        has_action_with_confirmation: response.suggested_actions?.[0]?.requires_confirmation,
+        action_missing_fields: response.suggested_actions?.[0]?.missing_fields
+      })
 
       const aiMessage: ChatMessage = {
         id: response.message_id || (Date.now() + 1).toString(),
@@ -205,7 +305,13 @@ export default function ChatPanel() {
         timestamp: new Date(),
         actions: response.suggested_actions,
         context: {
-          topic_id: response.topic_id
+          topic_id: response.topic_id,
+          // 保存追问上下文用于下次请求
+          ...(response.follow_up ? {
+            follow_up: response.follow_up,
+            action_type: response.follow_up.action_type,
+            collected_fields: response.follow_up.collected_fields
+          } : {})
         }
       }
 
@@ -222,6 +328,23 @@ export default function ChatPanel() {
         }))
       }
 
+      // 处理追问模式
+      if (response.follow_up && response.suggested_actions?.[0]?.missing_fields) {
+        setFollowUpInfo(response.follow_up)
+        setFormValues(response.follow_up.collected_fields as Record<string, string> || {})
+        setShowForm(true)
+      } else if (response.suggested_actions?.[0]?.requires_confirmation &&
+                 (!response.suggested_actions[0].missing_fields || response.suggested_actions[0].missing_fields.length === 0)) {
+        // 信息完整的确认操作，设置待确认操作
+        setPendingAction(response.suggested_actions[0])
+        setFollowUpInfo(null)
+        setFormValues({})
+      } else {
+        // 其他情况清空追问状态
+        setFollowUpInfo(null)
+        setFormValues({})
+      }
+
       addMessage(aiMessage)
     } catch {
       addMessage({
@@ -235,6 +358,152 @@ export default function ChatPanel() {
     }
   }
 
+  // 处理表单提交
+  const handleFormSubmit = async () => {
+    if (!followUpInfo) return
+
+    // 合并已收集的字段和新填写的字段
+    const allFields = { ...followUpInfo.collected_fields, ...formValues }
+    const missingFields = followUpInfo.missing_fields.filter(
+      f => !allFields[f.field_name] || !String(allFields[f.field_name]).trim()
+    )
+
+    console.log('DEBUG handleFormSubmit:', {
+      followUpInfo,
+      formValues,
+      allFields,
+      missingFields: missingFields.length,
+      missingFieldNames: missingFields.map(f => f.field_name)
+    })
+
+    if (missingFields.length > 0) {
+      // 还有未填写的字段，继续追问
+      const response = await aiApi.chat(
+        JSON.stringify(allFields),
+        currentTopicId || undefined,
+        {
+          action_type: followUpInfo.action_type,
+          collected_fields: allFields
+        }
+      )
+
+      const aiMessage: ChatMessage = {
+        id: response.message_id || (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: response.message,
+        timestamp: new Date(),
+        actions: response.suggested_actions,
+        context: {
+          topic_id: response.topic_id,
+          ...(response.follow_up ? {
+            follow_up: response.follow_up,
+            action_type: response.follow_up.action_type,
+            collected_fields: response.follow_up.collected_fields
+          } : {})
+        }
+      }
+
+      if (response.topic_id) {
+        setCurrentTopicId(response.topic_id)
+      }
+
+      // 检查是否还有追问
+      if (response.follow_up && response.suggested_actions?.[0]?.missing_fields) {
+        setFollowUpInfo(response.follow_up)
+        setFormValues(response.follow_up.collected_fields as Record<string, string> || {})
+        setShowForm(true)
+      } else if (response.suggested_actions?.[0]?.requires_confirmation &&
+                 (!response.suggested_actions[0].missing_fields || response.suggested_actions[0].missing_fields.length === 0)) {
+        // 信息完整，需要确认（自然语言回复导致）
+        setPendingAction(response.suggested_actions[0])
+        setFollowUpInfo(null)
+        setFormValues({})
+      } else {
+        setFollowUpInfo(null)
+        setFormValues({})
+      }
+
+      addMessage(aiMessage)
+      setLoading(false)
+      return
+    }
+
+    // 信息完整，表单提交 → 直接执行操作（无需再确认）
+    const action: AIAction = {
+      action_type: followUpInfo.action_type,
+      entity_type: followUpInfo.action_type === 'create_reservation' ? 'reservation' : 'stay_record',
+      params: allFields,
+      description: buildActionDescription(followUpInfo.action_type, allFields),
+      requires_confirmation: false  // 表单提交无需确认
+    }
+
+    setLoading(true)
+    try {
+      const result = await aiApi.execute(action, true)
+
+      addMessage({
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: result.message || '操作已完成',
+        timestamp: new Date()
+      })
+
+      // 清空追问状态
+      setFollowUpInfo(null)
+      setFormValues({})
+    } catch {
+      addMessage({
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: '操作失败，请稍后重试。',
+        timestamp: new Date()
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 构建确认消息
+  const buildConfirmMessage = (_actionType: string, params: Record<string, unknown>): string => {
+    const fieldDisplayNames: Record<string, string> = {
+      guest_name: '客人',
+      guest_phone: '电话',
+      room_number: '房间号',
+      room_type: '房型',
+      check_in_date: '入住日期',
+      check_out_date: '离店日期',
+      expected_check_out: '预计退房',
+      reservation_id: '预订号',
+      stay_record_id: '住宿记录',
+      task_type: '任务类型'
+    }
+
+    let message = '信息已完整：\n\n'
+    for (const [key, value] of Object.entries(params)) {
+      if (value) {
+        const name = fieldDisplayNames[key] || key
+        message += `- ${name}：${value}\n`
+      }
+    }
+    message += '\n确认办理吗？'
+
+    return message
+  }
+
+  // 构建操作描述
+  const buildActionDescription = (actionType: string, params: Record<string, unknown>): string => {
+    const descriptions: Record<string, string> = {
+      walkin_checkin: `为 ${params.guest_name} 办理散客入住（${params.room_number}号房）`,
+      create_reservation: `创建 ${params.guest_name} 的预订（${params.room_type}）`,
+      checkin: `办理预订入住（${params.room_number}号房）`,
+      checkout: `办理退房`,
+      extend_stay: `为客人续住`,
+      change_room: `为客人换房`,
+      create_task: `创建清洁任务（${params.room_number}号房）`,
+    }
+    return descriptions[actionType] || actionType
+  }
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -243,6 +512,10 @@ export default function ChatPanel() {
   }
 
   const handleAction = async (action: AIAction, confirmed: boolean, selectedCandidate?: CandidateOption) => {
+    // 清空追问状态（操作结束）
+    setFollowUpInfo(null)
+    setFormValues({})
+
     if (!confirmed) {
       setPendingAction(null)
       addMessage({
@@ -424,6 +697,67 @@ export default function ChatPanel() {
                         <div key={idx} className="bg-dark-700 rounded-lg p-2">
                           <p className="text-xs text-dark-300 mb-2">{action.description}</p>
 
+                          {/* 显示缺失字段表单 */}
+                          {action.missing_fields && action.missing_fields.length > 0 && (
+                            <div className="mb-2 p-2 bg-dark-800 rounded">
+                              <div className="flex items-center justify-between mb-2">
+                                <p className="text-xs text-dark-400">请补充信息：</p>
+                                <button
+                                  onClick={() => setShowForm(!showForm)}
+                                  className="text-dark-500 hover:text-dark-300"
+                                >
+                                  {showForm ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                </button>
+                              </div>
+                              {showForm && (
+                                <div className="space-y-2">
+                                  {action.missing_fields.map((field, fIdx) => (
+                                    <div key={fIdx}>
+                                      <label className="text-xs text-dark-400 block mb-1">
+                                        {field.display_name}
+                                        {field.required && <span className="text-red-500 ml-1">*</span>}
+                                      </label>
+                                      {field.field_type === 'select' ? (
+                                        <select
+                                          value={formValues[field.field_name] || ''}
+                                          onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
+                                          className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm focus:outline-none focus:border-primary-500"
+                                        >
+                                          <option value="">{field.placeholder || '请选择'}</option>
+                                          {field.options?.map((opt, oIdx) => (
+                                            <option key={oIdx} value={opt.value}>{opt.label}</option>
+                                          ))}
+                                        </select>
+                                      ) : field.field_type === 'date' ? (
+                                        <input
+                                          type="text"
+                                          value={formValues[field.field_name] || ''}
+                                          onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
+                                          placeholder={field.placeholder || '如：明天、2025-02-05'}
+                                          className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm focus:outline-none focus:border-primary-500"
+                                        />
+                                      ) : (
+                                        <input
+                                          type={field.field_type === 'number' ? 'number' : 'text'}
+                                          value={formValues[field.field_name] || ''}
+                                          onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
+                                          placeholder={field.placeholder}
+                                          className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm focus:outline-none focus:border-primary-500"
+                                        />
+                                      )}
+                                    </div>
+                                  ))}
+                                  <button
+                                    onClick={handleFormSubmit}
+                                    className="w-full mt-2 px-3 py-1 bg-primary-600 hover:bg-primary-700 rounded text-xs"
+                                  >
+                                    提交
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           {/* 显示候选项 */}
                           {action.candidates && action.candidates.length > 0 && pendingAction?.action_type === action.action_type ? (
                             <div className="mb-2 p-2 bg-dark-800 rounded">
@@ -442,13 +776,13 @@ export default function ChatPanel() {
                             </div>
                           ) : null}
 
-                          {action.requires_confirmation && (
+                          {action.requires_confirmation && (!action.missing_fields || action.missing_fields.length === 0) && (
                             <div className="flex gap-2">
                               <button
                                 onClick={() => handleAction(action, true)}
                                 className="flex items-center gap-1 px-2 py-1 bg-primary-600 hover:bg-primary-700 rounded text-xs"
                               >
-                                <Check size={12} /> 确认
+                                <Check size={12} /> 提交
                               </button>
                               <button
                                 onClick={() => handleAction(action, false)}

@@ -457,8 +457,12 @@ export const guestApi = {
 // ============== AI ==============
 
 export const aiApi = {
-  chat: async (message: string, topicId?: string): Promise<AIResponseWithHistory> => {
-    const res = await api.post('/ai/chat', { content: message, topic_id: topicId })
+  chat: async (message: string, topicId?: string, followUpContext?: Record<string, unknown>): Promise<AIResponseWithHistory> => {
+    const res = await api.post('/ai/chat', {
+      content: message,
+      topic_id: topicId,
+      follow_up_context: followUpContext
+    })
     return res.data
   },
   execute: async (action: object, confirmed: boolean) => {

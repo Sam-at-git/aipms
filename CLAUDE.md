@@ -49,7 +49,8 @@ backend/app/
 │   ├── ontology.py     # Domain objects (Room, Guest, Reservation, StayRecord, Bill, Task, Employee, RatePlan)
 │   ├── schemas.py      # Pydantic models for API I/O
 │   ├── events.py       # Domain event definitions (EventType enum, event data classes)
-│   └── snapshots.py    # OperationSnapshot and ConfigHistory models for undo
+│   ├── snapshots.py    # OperationSnapshot and ConfigHistory models for undo
+│   └── security_events.py  # SecurityEventModel, event types, severity levels
 ├── services/           # Business logic layer (one service per domain)
 │   ├── llm_service.py        # OpenAI-compatible LLM integration with robust JSON extraction
 │   ├── ai_service.py         # OODA loop: LLM优先，规则兜底
@@ -59,7 +60,9 @@ backend/app/
 │   ├── event_bus.py          # In-memory pub/sub event bus (singleton)
 │   ├── event_handlers.py     # Event handlers (auto-create cleaning task, update room status)
 │   ├── undo_service.py       # Operation snapshot creation and rollback logic
-│   └── config_history_service.py # Configuration version management
+│   ├── config_history_service.py # Configuration version management
+│   ├── security_event_service.py # Security event recording and detection
+│   └── alert_service.py      # Alert threshold management and notification
 ├── routers/            # FastAPI endpoints (one router per domain)
 ├── security/auth.py    # JWT authentication + role-based access
 ├── config.py           # Environment-based settings (LLM API config)
@@ -73,7 +76,8 @@ frontend/src/
 ├── pages/              # Route pages (Dashboard, Rooms, Reservations, etc.)
 ├── components/         # Reusable UI (Layout, ChatPanel, Modal, RoomCard, UndoButton)
 ├── services/api.ts     # Axios HTTP client organized by domain (includes undoApi)
-├── store/index.ts      # Zustand stores (auth, chat, dashboard, ui)
+├── store/              # Zustand stores (auth, chat, dashboard, ui)
+│   └── index.ts        # Main store exports
 └── types/index.ts      # TypeScript interfaces matching backend schemas
 ```
 
@@ -95,8 +99,26 @@ frontend/src/
 3. Decide: Generate suggested actions with `requires_confirmation` flag
 4. Act: Execute confirmed actions via domain services
 
+**Follow-up Mode**: When action parameters are incomplete:
+- LLM returns `missing_fields` array with field definitions (field_name, display_name, field_type, options)
+- Frontend displays a form for collecting missing information
+- `process_message()` accepts `follow_up_context` to continue multi-turn conversations
+- Once complete, LLM returns action with `requires_confirmation: true`
+
 **LLM Integration** (`llm_service.py`):
 - OpenAI-compatible API support (DeepSeek, OpenAI, Azure, Ollama, etc.)
+- **Date Context Injection**: Current date, tomorrow, and day-after are passed to LLM for accurate relative date parsing
+  ```
+  **当前日期: 2026年2月3日**
+  **明天: 2026-02-04**
+  **后天: 2026-02-05**
+  ```
+- LLM instructed to convert all relative dates ("明天", "后天") to ISO format (`YYYY-MM-DD`) in response params
+- Backend `param_parser_service.py` provides robust fallback parsing for:
+  - ISO format: `2026-02-11`
+  - Relative keywords: `今天`, `明天` (+1), `后天` (+2), `大后天` (+3)
+  - Offset expressions: `+3天`
+  - Week patterns: `下周二`
 - Robust JSON extraction with fallback parsing:
   - Handles markdown code blocks (` ```json ... ` ```)
   - Removes comments (//, /* */)
@@ -118,10 +140,11 @@ frontend/src/
 
 **Event-Driven Architecture** (`event_bus.py`, `event_handlers.py`):
 - In-memory pub/sub pattern using singleton EventBus
-- Services publish domain events (e.g., `GUEST_CHECKED_OUT`, `TASK_COMPLETED`)
+- Services publish domain events (e.g., `GUEST_CHECKED_OUT`, `TASK_COMPLETED`, `ROOM_CHANGED`)
 - Event handlers subscribe to events and trigger side effects:
   - `GUEST_CHECKED_OUT` → auto-creates cleaning task
   - `TASK_COMPLETED` (cleaning) → room becomes VACANT_CLEAN
+  - `ROOM_CHANGED` → auto-creates cleaning task for old room
 - Supports dependency injection for testing via `event_publisher` parameter
 - Event history retained (last 100) for debugging
 
@@ -135,6 +158,13 @@ frontend/src/
 **Configuration Versioning** (`config_history_service.py`):
 - Tracks system configuration changes with version history
 - Supports rollback to previous config versions
+
+**Security Events** (`security_event_service.py`, `alert_service.py`):
+- Records security-relevant events (login failures, suspicious operations, etc.)
+- Event types: AUTH_FAILURE, AUTH_SUCCESS, SUSPICIOUS_ACTION, PERMISSION_DENIED, etc.
+- Severity levels: LOW, MEDIUM, HIGH, CRITICAL
+- Automatic alerting when threshold thresholds are exceeded
+- Security statistics and trend analysis
 
 ### Aggregation Roots
 - **StayRecord**: Owns Bill, represents active occupancy lifecycle
@@ -162,6 +192,8 @@ All endpoints require JWT authentication. Main endpoint groups:
 - `/audit-logs/*` - Audit trail (manager only)
 - `/guests/*` - Guest CRM (tier, preferences, blacklist)
 - `/undo/*` - Operation undo (list undoable operations, execute undo)
+- `/ontology/*` - Ontology schema, entity stats, relationship graph (manager only)
+- `/security/*` - Security events, alerts, threat detection (manager only)
 
 ## AI Action Types
 

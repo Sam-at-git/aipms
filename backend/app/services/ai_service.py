@@ -29,6 +29,7 @@ from app.services.billing_service import BillingService
 from app.services.report_service import ReportService
 from app.services.llm_service import LLMService, TopicRelevance
 from app.services.param_parser_service import ParamParserService
+from app.models.schemas import MissingField
 
 
 class AIService:
@@ -71,8 +72,10 @@ class AIService:
         if date_str in ["今天", "今日", "今日内"]:
             return date.today()
 
-        # 明天/明日
-        if date_str in ["明天", "明日", "明", "明晚", "明早"]:
+        # 明天/明日（注意：单独的"明"会匹配包含它的词，如"明天"、"明日"等）
+        if date_str in ["明天", "明日", "明晚", "明早"]:
+            return date.today() + timedelta(days=1)
+        if date_str == "明":
             return date.today() + timedelta(days=1)
 
         # 后天
@@ -118,12 +121,432 @@ class AIService:
 
         return None
 
+    # 各操作类型必需的参数定义
+    ACTION_REQUIRED_PARAMS = {
+        'walkin_checkin': ['room_number', 'guest_name', 'guest_phone', 'expected_check_out'],
+        'create_reservation': ['guest_name', 'guest_phone', 'room_type', 'check_in_date', 'check_out_date'],
+        'checkin': ['reservation_id', 'room_number'],
+        'checkout': ['stay_record_id'],
+        'extend_stay': ['stay_record_id', 'new_check_out_date'],
+        'change_room': ['stay_record_id', 'new_room_number'],
+        'create_task': ['room_number', 'task_type'],
+    }
+
+    def _validate_action_params(
+        self,
+        action_type: str,
+        params: dict,
+        user: Employee
+    ) -> tuple[bool, list[MissingField], str]:
+        """
+        校验操作参数是否完整
+
+        Returns:
+            (is_valid, missing_fields, error_message)
+        """
+        if action_type not in self.ACTION_REQUIRED_PARAMS:
+            # 不需要校验的操作类型
+            return True, [], ""
+
+        required = self.ACTION_REQUIRED_PARAMS.get(action_type, [])
+        missing = []
+        collected = {}
+
+        for param in required:
+            value = params.get(param)
+            if not value or (isinstance(value, str) and not value.strip()):
+                # 参数缺失，生成 MissingField
+                field_def = self._get_field_definition(action_type, param, params)
+                if field_def:
+                    missing.append(field_def)
+            else:
+                collected[param] = value
+
+        # 特殊校验：日期合理性
+        if 'check_in_date' in params and 'check_out_date' in params:
+            if params['check_in_date'] and params['check_out_date']:
+                # 这里可以添加日期比较逻辑，但需要先解析日期字符串
+                pass
+
+        is_valid = len(missing) == 0
+        error_message = f"需要补充信息：{', '.join([f.display_name for f in missing])}" if missing else ""
+
+        return is_valid, missing, error_message
+
+    def _get_field_definition(
+        self,
+        action_type: str,
+        param_name: str,
+        current_params: dict
+    ) -> Optional[MissingField]:
+        """获取字段定义（用于生成追问表单）"""
+        field_definitions = {
+            'room_number': MissingField(
+                field_name='room_number',
+                display_name='房间号',
+                field_type='text',
+                placeholder='如：201',
+                required=True
+            ),
+            'guest_name': MissingField(
+                field_name='guest_name',
+                display_name='客人姓名',
+                field_type='text',
+                placeholder='请输入客人姓名',
+                required=True
+            ),
+            'guest_phone': MissingField(
+                field_name='guest_phone',
+                display_name='联系电话',
+                field_type='text',
+                placeholder='请输入手机号',
+                required=True
+            ),
+            'room_type': MissingField(
+                field_name='room_type',
+                display_name='房型',
+                field_type='select',
+                options=self._get_room_type_options(),
+                placeholder='请选择房型',
+                required=True
+            ),
+            'check_in_date': MissingField(
+                field_name='check_in_date',
+                display_name='入住日期',
+                field_type='date',
+                placeholder='如：今天、明天、2025-02-05',
+                required=True
+            ),
+            'check_out_date': MissingField(
+                field_name='check_out_date',
+                display_name='离店日期',
+                field_type='date',
+                placeholder='如：明天、后天、2025-02-06',
+                required=True
+            ),
+            'expected_check_out': MissingField(
+                field_name='expected_check_out',
+                display_name='预计离店日期',
+                field_type='date',
+                placeholder='如：明天、后天',
+                required=True
+            ),
+            'new_room_number': MissingField(
+                field_name='new_room_number',
+                display_name='新房间号',
+                field_type='text',
+                placeholder='请输入目标房间号',
+                required=True
+            ),
+            'stay_record_id': MissingField(
+                field_name='stay_record_id',
+                display_name='住宿记录',
+                field_type='select',
+                options=self._get_active_stay_options(),
+                placeholder='请选择客人',
+                required=True
+            ),
+            'reservation_id': MissingField(
+                field_name='reservation_id',
+                display_name='预订记录',
+                field_type='select',
+                options=self._get_reservation_options(),
+                placeholder='请选择预订',
+                required=True
+            ),
+            'task_type': MissingField(
+                field_name='task_type',
+                display_name='任务类型',
+                field_type='select',
+                options=[
+                    {'value': 'cleaning', 'label': '清洁'},
+                    {'value': 'maintenance', 'label': '维修'}
+                ],
+                placeholder='请选择任务类型',
+                required=True
+            ),
+        }
+        return field_definitions.get(param_name)
+
+    def _get_room_type_options(self) -> list[dict]:
+        """获取房型选项列表"""
+        room_types = self.room_service.get_room_types()
+        return [
+            {'value': rt.name, 'label': f'{rt.name} ¥{rt.base_price}/晚'}
+            for rt in room_types
+        ]
+
+    def _get_active_stay_options(self) -> list[dict]:
+        """获取在住客人选项列表"""
+        stays = self.checkin_service.get_active_stays()
+        return [
+            {'value': str(s.id), 'label': f'{s.room.room_number}号房 - {s.guest.name}'}
+            for s in stays
+        ]
+
+    def _get_reservation_options(self) -> list[dict]:
+        """获取今日预订选项列表"""
+        reservations = self.reservation_service.get_today_arrivals()
+        return [
+            {'value': str(r.id), 'label': f'{r.reservation_no} - {r.guest.name} ({r.room_type.name})'}
+            for r in reservations
+        ]
+
+    def _generate_followup_response(
+        self,
+        action_type: str,
+        action_description: str,
+        params: dict,
+        missing_fields: list[MissingField],
+        entity_type: str = "unknown"
+    ) -> dict:
+        """
+        生成追问响应
+
+        Args:
+            action_type: 操作类型
+            action_description: 操作描述
+            params: 已收集的参数
+            missing_fields: 缺失的字段列表
+            entity_type: 实体类型
+
+        Returns:
+            包含追问信息的响应字典
+        """
+        # 生成自然语言追问消息
+        collected_info = []
+        for key, value in params.items():
+            if value:
+                # 转换参数名为显示名称
+                display_names = {
+                    'guest_name': '客人',
+                    'guest_phone': '电话',
+                    'room_type': '房型',
+                    'room_number': '房间号',
+                    'check_in_date': '入住日期',
+                    'check_out_date': '离店日期',
+                    'expected_check_out': '预计离店',
+                }
+                name = display_names.get(key, key)
+                collected_info.append(f"- {name}：{value}")
+
+        message = action_description or "请补充以下信息："
+        if collected_info:
+            message += f"\n\n已收集信息：\n" + "\n".join(collected_info)
+        message += f"\n\n还需要补充：{', '.join([f.display_name for f in missing_fields])}"
+
+        return {
+            'message': message,
+            'suggested_actions': [{
+                'action_type': action_type,
+                'entity_type': entity_type,
+                'description': action_description,
+                'requires_confirmation': False,
+                'params': params,
+                'missing_fields': [f.model_dump() for f in missing_fields]
+            }],
+            'follow_up': {
+                'action_type': action_type,
+                'message': message,
+                'missing_fields': [f.model_dump() for f in missing_fields],
+                'collected_fields': params,
+                'context': {}
+            },
+            'context': {
+                'collected_fields': params,
+                'action_type': action_type
+            }
+        }
+
+    def _process_followup_input(
+        self,
+        message: str,
+        follow_up_context: dict,
+        user: Employee
+    ) -> dict:
+        """
+        处理追问模式的用户输入
+
+        Args:
+            message: 用户新输入
+            follow_up_context: 追问上下文，包含 action_type 和 collected_fields
+            user: 当前用户
+
+        Returns:
+            处理后的响应
+        """
+        action_type = follow_up_context.get('action_type', '')
+        collected_params = follow_up_context.get('collected_fields', {})
+
+        # 构建上下文
+        context = self._build_llm_context(user)
+
+        # 使用 LLM 解析用户输入
+        llm_result = self.llm_service.parse_followup_input(
+            user_input=message,
+            action_type=action_type,
+            collected_params=collected_params,
+            context=context
+        )
+
+        # LLM 返回的合并后参数
+        merged_params = llm_result.get('params', {})
+        is_complete = llm_result.get('is_complete', False)
+        missing_fields_data = llm_result.get('missing_fields', [])
+
+        # 获取实体类型（定义在外面，两种路径都需要）
+        entity_types = {
+            'walkin_checkin': 'stay_record',
+            'create_reservation': 'reservation',
+            'checkin': 'stay_record',
+            'checkout': 'stay_record',
+            'extend_stay': 'stay_record',
+            'change_room': 'stay_record',
+            'create_task': 'task',
+        }
+
+        # 如果信息完整，生成可执行的操作
+        if is_complete:
+            # 增强参数（添加数据库验证后的值）
+            enhanced_result = self._enhance_single_action_params(
+                action_type, merged_params, user
+            )
+
+            entity_type = entity_types.get(action_type, 'unknown')
+
+            # 生成操作描述
+            descriptions = {
+                'walkin_checkin': f"为 {merged_params.get('guest_name')} 办理散客入住",
+                'create_reservation': f"创建 {merged_params.get('guest_name')} 的预订",
+                'checkin': "办理预订入住",
+                'checkout': "办理退房",
+                'extend_stay': f"为客人续住",
+                'change_room': "为客人换房",
+                'create_task': f"创建任务",
+            }
+
+            result = {
+                'message': llm_result.get('message', ''),
+                'suggested_actions': [{
+                    'action_type': action_type,
+                    'entity_type': entity_type,
+                    'description': descriptions.get(action_type, action_type),
+                    'requires_confirmation': True,
+                    'params': enhanced_result,
+                    # 确保不包含 missing_fields，避免前端判断错误
+                    # 注意：不设置 missing_fields 字段，让它不出现在响应中
+                }],
+                'context': {},
+                'follow_up': None
+            }
+            print(f"DEBUG: Returning complete action - {action_type}, requires_confirmation: True")
+            return result
+
+        # 信息仍不完整，继续追问
+        else:
+            # 将 LLM 返回的 missing_fields 转换为 MissingField 对象
+            missing_fields = [
+                MissingField(**f) for f in missing_fields_data
+            ] if missing_fields_data else []
+
+            # 如果没有 missing_fields 但 is_complete=false，用后端校验
+            if not missing_fields:
+                is_valid, missing_fields, _ = self._validate_action_params(
+                    action_type, merged_params, user
+                )
+
+            if missing_fields:
+                # 继续追问
+                descriptions = {
+                    'walkin_checkin': f"办理散客入住",
+                    'create_reservation': f"创建预订",
+                    'checkin': "办理入住",
+                    'checkout': "办理退房",
+                    'extend_stay': "续住",
+                    'change_room': "换房",
+                    'create_task': "创建任务",
+                }
+
+                return self._generate_followup_response(
+                    action_type=action_type,
+                    action_description=descriptions.get(action_type, action_type),
+                    params=merged_params,
+                    missing_fields=missing_fields,
+                    entity_type=entity_types.get(action_type, 'unknown')
+                )
+
+            # 没有缺失字段，信息完整！返回确认操作
+            # （LLM 可能误判为 is_complete=false，但后端校验发现信息完整）
+            entity_type = entity_types.get(action_type, 'unknown')
+            descriptions = {
+                'walkin_checkin': f"为 {merged_params.get('guest_name')} 办理散客入住",
+                'create_reservation': f"创建 {merged_params.get('guest_name')} 的预订",
+                'checkin': "办理预订入住",
+                'checkout': "办理退房",
+                'extend_stay': f"为客人续住",
+                'change_room': "为客人换房",
+                'create_task': f"创建任务",
+            }
+
+            return {
+                'message': llm_result.get('message', f"{descriptions.get(action_type, action_type)}，确认办理吗？"),
+                'suggested_actions': [{
+                    'action_type': action_type,
+                    'entity_type': entity_type,
+                    'description': descriptions.get(action_type, action_type),
+                    'requires_confirmation': True,
+                    'params': merged_params
+                }],
+                'context': {},
+                'follow_up': None
+            }
+
+    def _enhance_single_action_params(
+        self,
+        action_type: str,
+        params: dict,
+        user: Employee
+    ) -> dict:
+        """
+        增强单个操作的参数（添加数据库验证后的值）
+
+        这是 _enhance_actions_with_db_data 的简化版本，用于追问模式
+        """
+        enhanced_params = params.copy()
+
+        # 解析房型参数
+        if "room_type" in params and params["room_type"]:
+            room_type_input = params["room_type"]
+            parse_result = self.param_parser.parse_room_type(str(room_type_input))
+            if parse_result.confidence >= 0.7:
+                enhanced_params["room_type_id"] = parse_result.value
+                room_type = self.room_service.get_room_type(parse_result.value)
+                if room_type:
+                    enhanced_params["room_type_name"] = room_type.name
+
+        # 解析房间参数
+        if "room_number" in params and params["room_number"]:
+            room_input = params["room_number"]
+            parse_result = self.param_parser.parse_room(str(room_input))
+            if parse_result.confidence >= 0.7:
+                enhanced_params["room_id"] = parse_result.value
+
+        # 解析新房间（换房场景）
+        if "new_room_number" in params and params["new_room_number"]:
+            room_input = params["new_room_number"]
+            parse_result = self.param_parser.parse_room(str(room_input))
+            if parse_result.confidence >= 0.7:
+                enhanced_params["new_room_id"] = parse_result.value
+
+        return enhanced_params
+
     def process_message(
         self,
         message: str,
         user: Employee,
         conversation_history: list = None,
-        topic_id: str = None
+        topic_id: str = None,
+        follow_up_context: dict = None
     ) -> dict:
         """
         处理用户消息 - OODA 循环入口
@@ -135,6 +558,7 @@ class AIService:
             user: 当前用户
             conversation_history: 历史对话消息列表（可选）
             topic_id: 当前话题 ID（可选）
+            follow_up_context: 追问上下文（包含 action_type 和 collected_fields）
 
         Returns:
             包含 message, suggested_actions, context, topic_id 的字典
@@ -142,6 +566,13 @@ class AIService:
         message = message.strip()
         new_topic_id = topic_id
         include_context = False
+
+        # ========== 追问模式处理 ==========
+        # 如果有追问上下文，使用专门的追问处理逻辑
+        if follow_up_context and follow_up_context.get('action_type'):
+            result = self._process_followup_input(message, follow_up_context, user)
+            result['topic_id'] = new_topic_id
+            return result
 
         # 检查话题相关性并决定是否携带上下文
         if conversation_history and self.llm_service.is_enabled():
@@ -193,8 +624,50 @@ class AIService:
                         response['topic_id'] = new_topic_id
                         return response
 
-                    # 其他操作：增强参数并返回
+                    # 增强参数（添加数据库验证后的值）
                     result = self._enhance_actions_with_db_data(result)
+
+                    # 后端参数校验：检查操作类请求是否信息完整
+                    if result.get("suggested_actions"):
+                        action = result["suggested_actions"][0]
+                        action_params = action.get("params", {})
+                        action_type = action.get("action_type", "")
+
+                        # 如果 LLM 已经返回了 missing_fields，直接使用
+                        if action.get("missing_fields"):
+                            result['topic_id'] = new_topic_id
+                            return result
+
+                        # 否则进行后端校验
+                        is_valid, missing_fields, error_msg = self._validate_action_params(
+                            action_type, action_params, user
+                        )
+
+                        if not is_valid and missing_fields:
+                            # 信息不完整，生成追问
+                            followup = self._generate_followup_response(
+                                action_type=action_type,
+                                action_description=action.get("description", ""),
+                                params=action_params,
+                                missing_fields=missing_fields,
+                                entity_type=action.get("entity_type", "unknown")
+                            )
+                            followup['topic_id'] = new_topic_id
+                            return followup
+
+                        # 信息完整：确保 action 不包含 missing_fields，设置 requires_confirmation
+                        if result.get("suggested_actions"):
+                            for act in result["suggested_actions"]:
+                                # 移除可能存在的 missing_fields
+                                if "missing_fields" in act:
+                                    del act["missing_fields"]
+                                # 设置 requires_confirmation
+                                act["requires_confirmation"] = True
+                                # 确保 params 存在
+                                if "params" not in act:
+                                    act["params"] = action_params
+                            print(f"DEBUG: Complete action set, actions count: {len(result['suggested_actions'])}")
+
                     result['topic_id'] = new_topic_id
                     return result
 
@@ -602,6 +1075,37 @@ class AIService:
         }
 
     def _query_rooms_response(self, entities: dict) -> dict:
+        # 如果指定了房型，返回该房型的统计
+        if 'room_type' in entities:
+            room_type_name = entities['room_type']
+            room_type = self.db.query(RoomType).filter(RoomType.name == room_type_name).first()
+
+            if room_type:
+                rooms = self.db.query(Room).filter(Room.room_type_id == room_type.id).all()
+                total = len(rooms)
+                vacant_clean = sum(1 for r in rooms if r.status == RoomStatus.VACANT_CLEAN)
+                occupied = sum(1 for r in rooms if r.status == RoomStatus.OCCUPIED)
+                vacant_dirty = sum(1 for r in rooms if r.status == RoomStatus.VACANT_DIRTY)
+                out_of_order = sum(1 for r in rooms if r.status == RoomStatus.OUT_OF_ORDER)
+
+                message = f"**{room_type_name}统计：**\n\n"
+                message += f"- 总数：{total} 间\n"
+                message += f"- 空闲可住：{vacant_clean} 间 ✅\n"
+                message += f"- 已入住：{occupied} 间 🔴\n"
+                message += f"- 待清洁：{vacant_dirty} 间 🟡\n"
+                message += f"- 维修中：{out_of_order} 间 ⚫\n"
+
+                return {
+                    'message': message,
+                    'suggested_actions': [],
+                    'context': {
+                        'room_type': room_type_name,
+                        'room_type_id': room_type.id,
+                        'count': total
+                    }
+                }
+
+        # 默认返回全部房态统计
         summary = self.room_service.get_room_status_summary()
 
         message = f"**当前房态统计：**\n\n"

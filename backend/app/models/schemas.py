@@ -2,10 +2,10 @@
 Pydantic 模式定义
 用于 API 请求/响应验证
 """
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from decimal import Decimal
-from typing import Optional, List
-from pydantic import BaseModel, Field
+from typing import Optional, List, Union, Any
+from pydantic import BaseModel, Field, field_validator
 from app.models.ontology import (
     RoomStatus, ReservationStatus, StayRecordStatus,
     TaskType, TaskStatus, PaymentMethod, EmployeeRole, GuestTier
@@ -201,11 +201,58 @@ class CheckInFromReservation(BaseModel):
 class WalkInCheckIn(BaseModel):
     guest_name: str
     guest_phone: str
-    guest_id_type: str
-    guest_id_number: str
+    guest_id_type: str = '身份证'
+    guest_id_number: str = ''
     room_id: int
-    expected_check_out: date
+    expected_check_out: Union[date, str]  # 支持日期对象或字符串
     deposit_amount: Decimal = Field(default=0, ge=0)
+
+    @field_validator('expected_check_out')
+    @classmethod
+    def parse_expected_check_out(cls, v: Any) -> date:
+        """解析离店日期，支持相对日期字符串"""
+        if isinstance(v, date):
+            # 已经是 date 对象，直接返回
+            return v
+
+        if isinstance(v, str):
+            v = v.strip()
+            today = date.today()
+
+            # 解析 ISO 格式
+            try:
+                return date.fromisoformat(v)
+            except ValueError:
+                pass
+
+            # 解析相对日期
+            relative_dates = {
+                '今天': 0,
+                '明日': 0, '明天': 0, '明': 0,
+                '后天': 1, '后日': 1,
+                '大后天': 2,
+                '昨': -1, '昨日': -1,
+            }
+            for keyword, offset in relative_dates.items():
+                if keyword in v:
+                    result_date = today + timedelta(days=offset)
+                    # 验证日期必须晚于今天
+                    if result_date <= today:
+                        raise ValueError(f"离店日期必须晚于今天（解析为：{result_date.isoformat()}）")
+                    return result_date
+
+            # 解析偏移量 (+3天)
+            import re
+            offset_match = re.search(r'([+-]?\d+)\s*(天|日)', v)
+            if offset_match:
+                offset = int(offset_match.group(1))
+                result_date = today + timedelta(days=offset)
+                if result_date <= today:
+                    raise ValueError(f"离店日期必须晚于今天（解析为：{result_date.isoformat()}）")
+                return result_date
+
+        # 如果是其他类型，尝试转换
+        return date(v)
 
 
 class ExtendStay(BaseModel):
@@ -457,6 +504,25 @@ class AIMessage(BaseModel):
     content: str
 
 
+class MissingField(BaseModel):
+    """缺失字段定义"""
+    field_name: str  # 字段名，如 guest_name, room_type_id
+    display_name: str  # 显示名称，如 "客人姓名", "房型"
+    field_type: str  # 字段类型: text, select, date, number
+    options: Optional[List[dict]] = None  # 可选项（用于 select 类型）
+    placeholder: Optional[str] = None  # 提示文本
+    required: bool = True  # 是否必填
+
+
+class FollowUpInfo(BaseModel):
+    """追问信息"""
+    action_type: str  # 操作类型，如 create_reservation, walkin_checkin
+    message: str  # 自然语言追问
+    missing_fields: List[MissingField] = []  # 缺失字段列表
+    collected_fields: dict = {}  # 已收集的字段
+    context: dict = {}  # 额外上下文（如可用房间列表、房型列表等）
+
+
 class AIAction(BaseModel):
     action_type: str
     entity_type: str
@@ -464,12 +530,15 @@ class AIAction(BaseModel):
     params: dict = {}
     description: str
     requires_confirmation: bool = True
+    missing_fields: Optional[List[MissingField]] = None  # 缺失字段（用于追问模式）
 
 
 class AIResponse(BaseModel):
     message: str
     suggested_actions: List[AIAction] = []
     context: dict = {}
+    follow_up: Optional[FollowUpInfo] = None  # 追问信息
+    topic_id: Optional[str] = None  # 话题ID，用于关联对话上下文
 
 
 class ActionConfirmation(BaseModel):

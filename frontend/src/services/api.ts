@@ -657,6 +657,49 @@ export const ontologyApi = {
   }): Promise<InstanceGraph> => {
     const res = await api.get('/ontology/instance-graph', { params })
     return res.data
+  },
+  // 语义层 (Semantic) - 实体属性和关系
+  getSemantic: async (): Promise<{
+    entities: import('../types').OntologyEntitySemantic[]
+  }> => {
+    const res = await api.get('/ontology/semantic')
+    return res.data
+  },
+  getEntitySemantic: async (entityName: string): Promise<import('../types').OntologyEntitySemantic> => {
+    const res = await api.get(`/ontology/semantic/${entityName}`)
+    return res.data
+  },
+  // 动力层 (Kinetic) - 可执行操作
+  getKinetic: async (): Promise<{
+    entities: import('../types').OntologyEntityKinetic[]
+  }> => {
+    const res = await api.get('/ontology/kinetic')
+    return res.data
+  },
+  getEntityKinetic: async (entityName: string): Promise<import('../types').OntologyEntityKinetic> => {
+    const res = await api.get(`/ontology/kinetic/${entityName}`)
+    return res.data
+  },
+  // 动态层 (Dynamic) - 状态机、权限、业务规则
+  getDynamic: async (): Promise<import('../types').OntologyDynamic> => {
+    const res = await api.get('/ontology/dynamic')
+    return res.data
+  },
+  getStateMachines: async (): Promise<import('../types').StateMachine[]> => {
+    const res = await api.get('/ontology/dynamic/state-machines')
+    return res.data
+  },
+  getPermissionMatrix: async (): Promise<import('../types').PermissionMatrix> => {
+    const res = await api.get('/ontology/dynamic/permission-matrix')
+    return res.data
+  },
+  getBusinessRules: async (entity?: string): Promise<{
+    rules: import('../types').BusinessRule[]
+  }> => {
+    const res = await api.get('/ontology/dynamic/business-rules', {
+      params: entity ? { entity } : undefined
+    })
+    return res.data
   }
 }
 

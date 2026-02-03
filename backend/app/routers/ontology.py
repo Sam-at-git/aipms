@@ -1,6 +1,7 @@
 """
 本体关系可视化路由
 提供本体结构定义、实体统计和关系图数据
+支持三个维度：语义(Semantic)、动力(Kinetic)、动态(Dynamic)
 """
 from typing import Optional, Dict, List, Any
 from fastapi import APIRouter, Depends, Query
@@ -11,6 +12,7 @@ from app.models.ontology import (
     RoomStatus, ReservationStatus, StayRecordStatus, TaskStatus, EmployeeRole, GuestTier
 )
 from app.security.auth import get_current_user, require_manager
+from app.services.ontology_metadata_service import OntologyMetadataService
 
 router = APIRouter(prefix="/ontology", tags=["本体视图"])
 
@@ -451,3 +453,128 @@ async def get_instance_graph(
             })
 
     return {"nodes": nodes, "edges": edges}
+
+
+# ============== 语义层 (Semantic) - 实体属性和关系 ==============
+
+@router.get("/semantic")
+async def get_semantic_metadata(
+    current_user: Employee = Depends(require_manager)
+):
+    """
+    获取语义层元数据
+    展示所有实体的属性定义、类型、约束等详细信息
+    """
+    service = OntologyMetadataService()
+    return service.get_semantic_metadata()
+
+
+@router.get("/semantic/{entity_name}")
+async def get_entity_semantic(
+    entity_name: str,
+    current_user: Employee = Depends(require_manager)
+):
+    """获取单个实体的语义元数据"""
+    service = OntologyMetadataService()
+    all_semantic = service.get_semantic_metadata()
+
+    for entity in all_semantic["entities"]:
+        if entity["name"] == entity_name:
+            return entity
+
+    return {"error": "Entity not found"}
+
+
+# ============== 动力层 (Kinetic) - 可执行操作 ==============
+
+@router.get("/kinetic")
+async def get_kinetic_metadata(
+    current_user: Employee = Depends(require_manager)
+):
+    """
+    获取动力层元数据
+    按实体分组展示所有可执行的操作（Actions）
+    """
+    service = OntologyMetadataService()
+    return service.get_kinetic_metadata()
+
+
+@router.get("/kinetic/{entity_name}")
+async def get_entity_kinetic(
+    entity_name: str,
+    current_user: Employee = Depends(require_manager)
+):
+    """获取单个实体的动力元数据（可执行操作）"""
+    service = OntologyMetadataService()
+    all_kinetic = service.get_kinetic_metadata()
+
+    for entity in all_kinetic["entities"]:
+        if entity["name"] == entity_name:
+            return entity
+
+    return {"error": "Entity not found"}
+
+
+# ============== 动态层 (Dynamic) - 状态机、权限、业务规则 ==============
+
+@router.get("/dynamic")
+async def get_dynamic_metadata(
+    current_user: Employee = Depends(require_manager)
+):
+    """
+    获取动态层元数据
+    包含状态机、权限矩阵、业务规则
+    """
+    service = OntologyMetadataService()
+    return service.get_dynamic_metadata()
+
+
+@router.get("/dynamic/state-machines")
+async def get_state_machines(
+    current_user: Employee = Depends(require_manager)
+):
+    """获取所有状态机定义"""
+    service = OntologyMetadataService()
+    dynamic = service.get_dynamic_metadata()
+    return dynamic["state_machines"]
+
+
+@router.get("/dynamic/state-machines/{entity_name}")
+async def get_entity_state_machine(
+    entity_name: str,
+    current_user: Employee = Depends(require_manager)
+):
+    """获取单个实体的状态机定义"""
+    service = OntologyMetadataService()
+    state_machines = service._get_state_machines()
+
+    for sm in state_machines:
+        if sm["entity"] == entity_name:
+            return sm
+
+    return {"error": "State machine not found"}
+
+
+@router.get("/dynamic/permission-matrix")
+async def get_permission_matrix(
+    current_user: Employee = Depends(require_manager)
+):
+    """获取权限矩阵"""
+    service = OntologyMetadataService()
+    dynamic = service.get_dynamic_metadata()
+    return dynamic["permission_matrix"]
+
+
+@router.get("/dynamic/business-rules")
+async def get_business_rules(
+    entity: Optional[str] = Query(None, description="筛选实体"),
+    current_user: Employee = Depends(require_manager)
+):
+    """获取业务规则列表"""
+    service = OntologyMetadataService()
+    rules = service._get_business_rules()
+
+    if entity:
+        rules = [r for r in rules if r["entity"] == entity]
+
+    return {"rules": rules}

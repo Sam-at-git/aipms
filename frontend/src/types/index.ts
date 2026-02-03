@@ -342,3 +342,165 @@ export interface ActionSummary {
   entity_type: string | null
   count: number
 }
+
+// ============== 本体元数据类型 (Ontology Metadata) ==============
+
+// 原有的本体 Schema（兼容性保留）
+export interface OntologySchema {
+  entities: OntologyEntity[]
+  relationships: OntologyRelationship[]
+}
+
+export interface OntologyEntity {
+  name: string
+  description: string
+  attributes: OntologyAttributeSimple[]
+}
+
+export interface OntologyAttributeSimple {
+  name: string
+  type: string
+  primary?: boolean
+  values?: string[]
+}
+
+export interface OntologyRelationship {
+  from: string
+  to: string
+  type: string
+  label: string
+}
+
+export interface OntologyStatistics {
+  entities: Record<string, {
+    total: number
+    by_status?: Record<string, number>
+    by_tier?: Record<string, number>
+    by_role?: Record<string, number>
+    active?: number
+    settled?: number
+    unsettled?: number
+  }>
+}
+
+// ============== 语义层类型 (Semantic) ==============
+export interface OntologySemantic {
+  entities: OntologyEntitySemantic[]
+}
+
+export interface OntologyEntitySemantic {
+  name: string
+  description: string
+  table_name: string
+  is_aggregate_root: boolean
+  attributes: OntologyAttribute[]
+  relationships: OntologyRelationshipDetail[]
+  related_entities: string[]
+}
+
+export interface OntologyAttribute {
+  name: string
+  type: string
+  python_type: string
+  is_primary_key: boolean
+  is_foreign_key: boolean
+  is_required: boolean
+  is_nullable: boolean
+  is_unique: boolean
+  default_value: string | null
+  max_length: number | null
+  enum_values: string[] | null
+  description: string
+  security_level: 'PUBLIC' | 'INTERNAL' | 'CONFIDENTIAL' | 'RESTRICTED'
+  foreign_key_target: string | null
+}
+
+export interface OntologyRelationshipDetail {
+  name: string
+  target: string
+  type: 'one_to_many' | 'many_to_one' | 'one_to_one' | 'many_to_many'
+  foreign_key: string | null
+  label: string
+}
+
+// ============== 动力层类型 (Kinetic) ==============
+export interface OntologyKinetic {
+  entities: OntologyEntityKinetic[]
+}
+
+export interface OntologyEntityKinetic {
+  name: string
+  description: string
+  actions: OntologyAction[]
+}
+
+export interface OntologyAction {
+  action_type: string
+  description: string
+  params: OntologyActionParam[]
+  requires_confirmation: boolean
+  allowed_roles: EmployeeRole[]
+  writeback: boolean
+  undoable: boolean
+}
+
+export interface OntologyActionParam {
+  name: string
+  type: 'string' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'array' | 'object'
+  required: boolean
+  description: string
+  enum_values?: string[]
+  format?: string
+}
+
+// ============== 动态层类型 (Dynamic) ==============
+export interface OntologyDynamic {
+  state_machines: StateMachine[]
+  permission_matrix: PermissionMatrix
+  business_rules: BusinessRule[]
+}
+
+export interface StateMachine {
+  entity: string
+  description: string
+  states: StateDefinition[]
+  initial_state: string
+  transitions: StateTransition[]
+}
+
+export interface StateDefinition {
+  value: string
+  label: string
+  color?: string
+}
+
+export interface StateTransition {
+  from: string
+  to: string
+  trigger: string
+  trigger_action?: string
+  condition?: string | null
+  side_effects: string[]
+}
+
+export interface PermissionMatrix {
+  roles: EmployeeRole[]
+  actions: PermissionAction[]
+}
+
+export interface PermissionAction {
+  action_type: string
+  entity: string
+  roles: EmployeeRole[]
+}
+
+export interface BusinessRule {
+  rule_id: string
+  entity: string
+  rule_name: string
+  description: string
+  condition: string
+  action: string
+  severity: 'error' | 'warning' | 'info'
+}
+

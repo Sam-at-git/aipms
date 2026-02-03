@@ -62,7 +62,9 @@ backend/app/
 │   ├── undo_service.py       # Operation snapshot creation and rollback logic
 │   ├── config_history_service.py # Configuration version management
 │   ├── security_event_service.py # Security event recording and detection
-│   └── alert_service.py      # Alert threshold management and notification
+│   ├── alert_service.py      # Alert threshold management and notification
+│   ├── metadata.py           # Ontology metadata decorators and registry (semantic/kinetic/dynamic)
+│   └── ontology_metadata_service.py # Runtime metadata extraction via reflection
 ├── routers/            # FastAPI endpoints (one router per domain)
 ├── security/auth.py    # JWT authentication + role-based access
 ├── config.py           # Environment-based settings (LLM API config)
@@ -166,6 +168,15 @@ frontend/src/
 - Automatic alerting when threshold thresholds are exceeded
 - Security statistics and trend analysis
 
+**Ontology Metadata System** (`metadata.py`, `ontology_metadata_service.py`):
+- Three-dimensional ontology view: Semantic, Kinetic, Dynamic
+- **Semantic**: Entity attributes, types, constraints, relationships (extracted via SQLAlchemy reflection)
+- **Kinetic**: Executable operations/actions grouped by entity
+- **Dynamic**: State machines, permission matrix, business rules
+- Decorators available: `@ontology_entity`, `@ontology_action`, `@business_rule`, `@state_machine`
+- Runtime extraction via `OntologyMetadataService` - no hardcoded schema needed
+- Frontend Ontology page with 4 tabs: Data (graph), Semantic, Kinetic, Dynamic
+
 ### Aggregation Roots
 - **StayRecord**: Owns Bill, represents active occupancy lifecycle
 - **Reservation**: Owns booking details, transitions to StayRecord on check-in
@@ -192,7 +203,12 @@ All endpoints require JWT authentication. Main endpoint groups:
 - `/audit-logs/*` - Audit trail (manager only)
 - `/guests/*` - Guest CRM (tier, preferences, blacklist)
 - `/undo/*` - Operation undo (list undoable operations, execute undo)
-- `/ontology/*` - Ontology schema, entity stats, relationship graph (manager only)
+- `/ontology/*` - Ontology schema, entity stats, relationship graph, semantic/kinetic/dynamic metadata (manager only)
+  - `/ontology/schema` - Basic schema with entities and relationships
+  - `/ontology/statistics` - Entity counts and distributions
+  - `/ontology/semantic` - Detailed entity attributes with security levels
+  - `/ontology/kinetic` - Executable operations grouped by entity
+  - `/ontology/dynamic` - State machines, permission matrix, business rules
 - `/security/*` - Security events, alerts, threat detection (manager only)
 
 ## AI Action Types
@@ -265,6 +281,29 @@ If adding a new undoable operation:
 2. Call `UndoService.create_snapshot()` in the service method before `db.commit()`
 3. Add rollback handler in `undo_service.py` `undo()` method
 4. Add operation type label mapping in frontend `UndoButton.tsx`
+
+**Ontology Metadata Decorators** (optional, for enhanced runtime metadata):
+```python
+from app.services.metadata import ontology_entity, ontology_action, business_rule
+
+@ontology_entity(name="MyEntity", description="...", table_name="my_entities")
+class MyEntity(Base):
+    ...
+
+class MyEntityService:
+    @ontology_action(
+        entity="MyEntity",
+        action_type="do_something",
+        description="...",
+        params=[{"name": "id", "type": "integer", "required": True}],
+        requires_confirmation=True,
+        allowed_roles=["manager", "receptionist"],
+        writeback=True,
+        undoable=True
+    )
+    def do_something(self, id: int):
+        ...
+```
 
 ## UI Conventions
 

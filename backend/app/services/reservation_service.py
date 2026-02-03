@@ -72,6 +72,17 @@ class ReservationService:
             Reservation.status == ReservationStatus.CONFIRMED
         ).all()
 
+    def get_today_expected(self) -> List[Reservation]:
+        """获取今日预期离店"""
+        today = date.today()
+        return self.db.query(Reservation).filter(
+            Reservation.check_out_date == today,
+            Reservation.status.in_([
+                ReservationStatus.CONFIRMED,
+                ReservationStatus.CHECKED_IN
+            ])
+        ).all()
+
     def create_reservation(self, data: ReservationCreate, created_by: int) -> Reservation:
         """创建预订"""
         # 验证房型

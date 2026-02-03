@@ -8,7 +8,7 @@ from app.database import get_db
 from app.models.ontology import Employee, GuestTier
 from app.models.schemas import GuestCreate, GuestUpdate, GuestResponse, GuestDetailResponse
 from app.services.guest_service import GuestService
-from app.security.auth import get_current_user, require_manager
+from app.security.auth import get_current_user, require_manager, require_receptionist_or_manager
 
 router = APIRouter(prefix="/guests", tags=["客人管理"])
 
@@ -88,7 +88,7 @@ def get_guest(
 def create_guest(
     data: GuestCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(get_current_user)
+    current_user: Employee = Depends(require_receptionist_or_manager)
 ):
     """创建客人"""
     service = GuestService(db)
@@ -168,7 +168,7 @@ def get_reservation_history(
 ):
     """获取客人预订历史"""
     service = GuestService(db)
-    return service.get_reservation_history(guest_id, limit)
+    return service.get_guest_reservation_history(guest_id, limit)
 
 
 @router.put("/{guest_id}/tier")
@@ -227,3 +227,17 @@ def update_preferences(
         return {"message": "偏好已更新"}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/{guest_id}/stats")
+def get_guest_stats(
+    guest_id: int,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    """获取客人统计信息"""
+    service = GuestService(db)
+    try:
+        return service.get_guest_stats(guest_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

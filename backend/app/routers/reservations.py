@@ -53,6 +53,17 @@ def get_today_arrivals(
     return [service.get_reservation_detail(r.id) for r in reservations]
 
 
+@router.get("/today-expected")
+def get_today_expected(
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    """获取今日预期离店"""
+    service = ReservationService(db)
+    reservations = service.get_today_expected()
+    return [service.get_reservation_detail(r.id) for r in reservations]
+
+
 @router.get("/{reservation_id}", response_model=ReservationResponse)
 def get_reservation(
     reservation_id: int,

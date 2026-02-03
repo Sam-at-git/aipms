@@ -191,7 +191,7 @@ frontend/src/
 All endpoints require JWT authentication. Main endpoint groups:
 - `/auth/*` - Login, current user, password change
 - `/rooms/*` - Room types, rooms, status updates, availability
-- `/reservations/*` - CRUD, search, today's arrivals
+- `/reservations/*` - CRUD, search, today's arrivals, today's expected departures
 - `/checkin/*` - From reservation, walk-in, extend stay, change room
 - `/checkout/*` - Execute checkout, expected/overdue lists
 - `/billing/*` - Bills, payments, adjustments (manager only)
@@ -201,7 +201,13 @@ All endpoints require JWT authentication. Main endpoint groups:
 - `/conversations/*` - Chat history persistence, search, pagination
 - `/settings/*` - LLM configuration (manager only)
 - `/audit-logs/*` - Audit trail (manager only)
-- `/guests/*` - Guest CRM (tier, preferences, blacklist)
+- `/guests/*` - Guest CRM (tier, preferences, blacklist, stats, history)
+  - `/guests/{id}/tier` - PUT with `tier` as **query parameter**, not JSON body
+  - `/guests/{id}/blacklist` - PUT with `is_blacklisted` and `reason` as **query parameters**
+  - `/guests/{id}/preferences` - PUT with preferences dict as JSON body
+  - `/guests/{id}/stats` - GET guest statistics (reservation_count, tier, etc.)
+  - `/guests/{id}/stay-history` - GET stay records
+  - `/guests/{id}/reservation-history` - GET reservations
 - `/undo/*` - Operation undo (list undoable operations, execute undo)
 - `/ontology/*` - Ontology schema, entity stats, relationship graph, semantic/kinetic/dynamic metadata (manager only)
   - `/ontology/schema` - Basic schema with entities and relationships
@@ -226,8 +232,9 @@ The `execute_action` method in `ai_service.py` supports the following action_typ
 - `update_room_status` - Manually change room status (requires: room_id, status)
 
 **Reservation Management:**
-- `create_reservation` - Create new booking (requires: guest_name, guest_phone, room_type_id, dates)
-- `cancel_reservation` - Cancel booking (requires: reservation_id, cancel_reason)
+- `create_reservation` - Create new booking (requires: `guest_name`, `guest_phone`, `room_type_id`, `check_in_date`, `check_out_date`, `adult_count`; optional: `child_count`, `room_count`, `guest_id_number`, `special_requests`)
+  - Note: The API auto-creates or updates Guest from `guest_name`/`guest_phone` - don't send `guest_id`
+- `cancel_reservation` - Cancel booking (requires: `reservation_id`, `cancel_reason`)
 
 **Task Management:**
 - `create_task` - Create cleaning/maintenance task (requires: room_id, task_type)
@@ -313,6 +320,14 @@ class MyEntityService:
 - All modals managed via `useUIStore.openModal(name, data)`
 - Icons from `lucide-react`
 
+## API Response Quirks
+
+- Payment amounts return as `float` in JSON, not strings
+- Many endpoints return `{"message": "...", "reservation_id": ...}` instead of full object after state changes
+- Cancel/mark-no-show endpoints return success message but don't include the updated `status` field
+- Use `/billing/stay/{stay_id}` to get bill details, not `/checkout/stay/{stay_id}`
+- Some endpoints return 400 (Bad Request) instead of 404 for "not found" cases
+
 ## Development Notes
 
 - Backend uses `uv` package manager (python 3.10+)
@@ -320,3 +335,24 @@ class MyEntityService:
 - Database file: `backend/aipms.db` (SQLite)
 - Type validation: Pydantic v2 on both frontend and backend
 - State management: Zustand for frontend, global `settings` instance for backend config
+
+## Testing
+
+**Backend Tests** (located in `backend/tests/api/`):
+- Uses pytest with SQLite in-memory database
+- Test client uses dependency injection to override `get_db` with test session
+- Fixtures in `conftest.py` provide auth headers and sample data
+- Run specific test: `uv run pytest tests/api/test_api_rooms.py -k "test_get_room"`
+- Run with verbose: `uv run pytest tests/api/ -v`
+- Event handlers don't work in test environment (skip affected tests with `@pytest.mark.skip`)
+
+**Common Test Patterns:**
+- Use `db_session` fixture for database operations (not `SessionLocal()`)
+- Use `params=` for query parameters, `data=` for form data, `json=` for JSON bodies
+- Check `response.json()` for actual API response structure when assertions fail
+- Some endpoints return 400 instead of 404 for "not found" cases
+- Decimal amounts often return as strings in JSON responses
+
+**Known Test Issues:**
+- Event-driven features (auto-create cleaning tasks) don't work in test environment - use `@pytest.mark.skip(reason="事件处理器在测试环境中未正确初始化")`
+- Some validation is not implemented server-side (e.g., occupancy limits) - skip those tests

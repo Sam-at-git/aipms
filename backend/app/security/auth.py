@@ -93,6 +93,7 @@ def require_role(allowed_roles: List[EmployeeRole]):
 
 
 # 便捷的角色检查器
-require_manager = require_role([EmployeeRole.MANAGER])
-require_receptionist_or_manager = require_role([EmployeeRole.MANAGER, EmployeeRole.RECEPTIONIST])
-require_any_role = require_role([EmployeeRole.MANAGER, EmployeeRole.RECEPTIONIST, EmployeeRole.CLEANER])
+require_sysadmin = require_role([EmployeeRole.SYSADMIN])
+require_manager = require_role([EmployeeRole.SYSADMIN, EmployeeRole.MANAGER])
+require_receptionist_or_manager = require_role([EmployeeRole.SYSADMIN, EmployeeRole.MANAGER, EmployeeRole.RECEPTIONIST])
+require_any_role = require_role([EmployeeRole.SYSADMIN, EmployeeRole.MANAGER, EmployeeRole.RECEPTIONIST, EmployeeRole.CLEANER])

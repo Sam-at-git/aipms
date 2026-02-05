@@ -110,8 +110,15 @@ def init_rooms(db, room_types):
 
 
 def init_employees(db):
-    """初始化6名员工"""
+    """初始化7名员工"""
     employees = [
+        {
+            'username': 'sysadmin',
+            'password': '123456',
+            'name': '系统管理员',
+            'phone': '13800000000',
+            'role': EmployeeRole.SYSADMIN
+        },
         {
             'username': 'manager',
             'password': '123456',
@@ -234,6 +241,7 @@ def main():
         print("初始化完成！")
         print()
         print("默认账号：")
+        print("  系统管理员: sysadmin / 123456")
         print("  经理: manager / 123456")
         print("  前台: front1 / 123456")
         print("  清洁员: cleaner1 / 123456")

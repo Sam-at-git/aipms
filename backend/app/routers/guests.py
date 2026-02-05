@@ -1,5 +1,8 @@
 """
 客人管理路由 (包含CRM功能)
+
+SPEC-58: 适配使用 core/services/guest_service (GuestServiceV2)
+保持向后兼容，可以选择使用新的领域层服务
 """
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -8,9 +11,28 @@ from app.database import get_db
 from app.models.ontology import Employee, GuestTier
 from app.models.schemas import GuestCreate, GuestUpdate, GuestResponse, GuestDetailResponse
 from app.services.guest_service import GuestService
+
+# 导入新的 GuestServiceV2 (SPEC-58)
+try:
+    from core.services.guest_service import GuestServiceV2
+    CORE_GUEST_SERVICE_AVAILABLE = True
+except ImportError:
+    CORE_GUEST_SERVICE_AVAILABLE = False
+
 from app.security.auth import get_current_user, require_manager, require_receptionist_or_manager
 
 router = APIRouter(prefix="/guests", tags=["客人管理"])
+
+
+# 服务工厂函数 - 可以选择使用 GuestServiceV2
+def get_guest_service(db: Session):
+    """获取客人服务实例"""
+    if CORE_GUEST_SERVICE_AVAILABLE:
+        # 使用新的 GuestServiceV2 (core/services/guest_service.py)
+        return GuestServiceV2(db)
+    else:
+        # 回退到原有 GuestService
+        return GuestService(db)
 
 
 @router.get("/", response_model=List[GuestResponse])
@@ -23,7 +45,7 @@ def list_guests(
     current_user: Employee = Depends(get_current_user)
 ):
     """获取客人列表"""
-    service = GuestService(db)
+    service = get_guest_service(db)
     guests = service.get_guests(search=search, tier=tier, is_blacklisted=is_blacklisted, limit=limit)
 
     return [
@@ -55,7 +77,7 @@ def get_guest(
     current_user: Employee = Depends(get_current_user)
 ):
     """获取客人详情"""
-    service = GuestService(db)
+    service = get_guest_service(db)
     guest = service.get_guest(guest_id)
     if not guest:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="客人不存在")
@@ -91,7 +113,7 @@ def create_guest(
     current_user: Employee = Depends(require_receptionist_or_manager)
 ):
     """创建客人"""
-    service = GuestService(db)
+    service = get_guest_service(db)
     try:
         guest = service.create_guest(data)
         return GuestResponse(
@@ -123,7 +145,7 @@ def update_guest(
     current_user: Employee = Depends(require_manager)
 ):
     """更新客人信息"""
-    service = GuestService(db)
+    service = get_guest_service(db)
     try:
         guest = service.update_guest(guest_id, data)
         return GuestResponse(
@@ -155,7 +177,7 @@ def get_stay_history(
     current_user: Employee = Depends(get_current_user)
 ):
     """获取客人入住历史"""
-    service = GuestService(db)
+    service = get_guest_service(db)
     return service.get_guest_stay_history(guest_id, limit)
 
 
@@ -167,7 +189,7 @@ def get_reservation_history(
     current_user: Employee = Depends(get_current_user)
 ):
     """获取客人预订历史"""
-    service = GuestService(db)
+    service = get_guest_service(db)
     return service.get_guest_reservation_history(guest_id, limit)
 
 
@@ -179,7 +201,7 @@ def update_guest_tier(
     current_user: Employee = Depends(require_manager)
 ):
     """更新客人等级"""
-    service = GuestService(db)
+    service = get_guest_service(db)
     try:
         guest = service.update_tier(guest_id, tier)
         return {"message": f"客人等级已更新为 {tier.value}"}
@@ -196,7 +218,7 @@ def toggle_blacklist(
     current_user: Employee = Depends(require_manager)
 ):
     """设置黑名单状态"""
-    service = GuestService(db)
+    service = get_guest_service(db)
     try:
         if is_blacklisted:
             if not reason:
@@ -221,7 +243,7 @@ def update_preferences(
     current_user: Employee = Depends(get_current_user)
 ):
     """更新客人偏好"""
-    service = GuestService(db)
+    service = get_guest_service(db)
     try:
         service.update_preferences(guest_id, preferences)
         return {"message": "偏好已更新"}
@@ -236,7 +258,7 @@ def get_guest_stats(
     current_user: Employee = Depends(get_current_user)
 ):
     """获取客人统计信息"""
-    service = GuestService(db)
+    service = get_guest_service(db)
     try:
         return service.get_guest_stats(guest_id)
     except ValueError as e:

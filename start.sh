@@ -35,8 +35,8 @@ if [ ! -f "pms.db" ]; then
 fi
 
 # 启动后端（后台运行）
-echo "启动 FastAPI 服务 (端口 8000)..."
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+echo "启动 FastAPI 服务 (端口 8020)..."
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8020 &
 BACKEND_PID=$!
 
 cd ..
@@ -53,7 +53,7 @@ if [ ! -d "node_modules" ]; then
 fi
 
 # 启动前端
-echo "启动 Vite 开发服务器 (端口 3000)..."
+echo "启动 Vite 开发服务器 (端口 3020)..."
 npm run dev &
 FRONTEND_PID=$!
 
@@ -63,9 +63,9 @@ echo ""
 echo "=========================================="
 echo "系统启动完成！"
 echo ""
-echo "前端地址: http://localhost:3000"
-echo "后端地址: http://localhost:8000"
-echo "API文档: http://localhost:8000/docs"
+echo "前端地址: http://localhost:3020"
+echo "后端地址: http://localhost:8020"
+echo "API文档: http://localhost:8020/docs"
 echo ""
 echo "默认账号: manager / 123456"
 echo "=========================================="

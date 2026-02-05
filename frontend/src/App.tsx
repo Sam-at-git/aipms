@@ -99,20 +99,20 @@ import {
 import { useUIStore } from './store'
 
 const navItems = [
-  { path: '/', icon: LayoutDashboard, label: '工作台', roles: ['manager', 'receptionist', 'cleaner'] },
-  { path: '/rooms', icon: BedDouble, label: '房态管理', roles: ['manager', 'receptionist'] },
-  { path: '/reservations', icon: CalendarCheck, label: '预订管理', roles: ['manager', 'receptionist'] },
-  { path: '/guests', icon: Users, label: '在住客人', roles: ['manager', 'receptionist'] },
-  { path: '/customers', icon: UserCircle, label: '客户管理', roles: ['manager', 'receptionist'] },
-  { path: '/tasks', icon: ClipboardList, label: '任务管理', roles: ['manager', 'receptionist', 'cleaner'] },
-  { path: '/billing', icon: DollarSign, label: '账单管理', roles: ['manager', 'receptionist'] },
-  { path: '/prices', icon: Tag, label: '价格管理', roles: ['manager'] },
-  { path: '/audit-logs', icon: FileText, label: '审计日志', roles: ['manager'] },
-  { path: '/ontology', icon: Database, label: '本体视图', roles: ['manager'] },
-  { path: '/security', icon: Shield, label: '安全管理', roles: ['manager'] },
-  { path: '/employees', icon: UserCog, label: '员工管理', roles: ['manager'] },
-  { path: '/reports', icon: BarChart3, label: '统计报表', roles: ['manager'] },
-  { path: '/settings', icon: SettingsIcon, label: '系统设置', roles: ['manager'] },
+  { path: '/', icon: LayoutDashboard, label: '工作台', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'] },
+  { path: '/rooms', icon: BedDouble, label: '房态管理', roles: ['sysadmin', 'manager', 'receptionist'] },
+  { path: '/reservations', icon: CalendarCheck, label: '预订管理', roles: ['sysadmin', 'manager', 'receptionist'] },
+  { path: '/guests', icon: Users, label: '在住客人', roles: ['sysadmin', 'manager', 'receptionist'] },
+  { path: '/customers', icon: UserCircle, label: '客户管理', roles: ['sysadmin', 'manager', 'receptionist'] },
+  { path: '/tasks', icon: ClipboardList, label: '任务管理', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'] },
+  { path: '/billing', icon: DollarSign, label: '账单管理', roles: ['sysadmin', 'manager', 'receptionist'] },
+  { path: '/prices', icon: Tag, label: '价格管理', roles: ['sysadmin', 'manager'] },
+  { path: '/audit-logs', icon: FileText, label: '审计日志', roles: ['sysadmin'] },
+  { path: '/ontology', icon: Database, label: '本体视图', roles: ['sysadmin'] },
+  { path: '/security', icon: Shield, label: '安全管理', roles: ['sysadmin'] },
+  { path: '/employees', icon: UserCog, label: '员工管理', roles: ['sysadmin', 'manager'] },
+  { path: '/reports', icon: BarChart3, label: '统计报表', roles: ['sysadmin', 'manager'] },
+  { path: '/settings', icon: SettingsIcon, label: '系统设置', roles: ['sysadmin'] },
 ]
 
 function AppLayout() {
@@ -173,7 +173,8 @@ function AppLayout() {
             <div className="mb-3">
               <p className="text-sm font-medium">{user?.name}</p>
               <p className="text-xs text-dark-500">
-                {user?.role === 'manager' ? '经理' :
+                {user?.role === 'sysadmin' ? '系统管理员' :
+                 user?.role === 'manager' ? '经理' :
                  user?.role === 'receptionist' ? '前台' : '清洁员'}
               </p>
             </div>

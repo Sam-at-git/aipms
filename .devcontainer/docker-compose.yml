@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:cached
+    command: sleep infinity
+    user: sam
+    # 端口映射：容器端口 -> 宿主机端口
+    ports:
+      - "3020:3020"  # 前端开发服务器
+      - "8020:8020"  # 后端 API 服务器
+    # 容器网络配置
+    network_mode: bridge

@@ -13,7 +13,7 @@ from app.models.ontology import Employee
 from app.models.schemas import LLMSettings, LLMTestRequest
 from app.services.llm_service import LLMService
 from app.services.config_history_service import ConfigHistoryService
-from app.security.auth import get_current_user, require_manager
+from app.security.auth import get_current_user, require_sysadmin
 from app.config import settings
 
 router = APIRouter(prefix="/settings", tags=["系统设置"])
@@ -55,7 +55,7 @@ def update_llm_settings(
     data: LLMSettings,
     reason: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """更新 LLM 设置（仅经理），自动记录版本历史"""
     # 记录变更前的配置
@@ -125,7 +125,7 @@ def update_llm_settings(
 @router.post("/llm/test")
 def test_llm_connection(
     data: LLMTestRequest,
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """测试 LLM 连接"""
     try:
@@ -209,7 +209,7 @@ def get_llm_providers(
 def get_llm_settings_history(
     limit: int = 20,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取 LLM 设置变更历史（仅经理）"""
     config_history_service = ConfigHistoryService(db)
@@ -233,7 +233,7 @@ def get_llm_settings_history(
 def get_llm_settings_version(
     version: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取特定版本的 LLM 设置（仅经理）"""
     import json
@@ -262,7 +262,7 @@ def get_llm_settings_version(
 def rollback_llm_settings(
     version: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """回滚到指定版本的 LLM 设置（仅经理）"""
     import json

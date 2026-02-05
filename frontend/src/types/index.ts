@@ -14,7 +14,7 @@ export type TaskType = 'cleaning' | 'maintenance'
 export type PaymentMethod = 'cash' | 'card'
 
 // 员工角色
-export type EmployeeRole = 'manager' | 'receptionist' | 'cleaner'
+export type EmployeeRole = 'sysadmin' | 'manager' | 'receptionist' | 'cleaner'
 
 // 房型
 export interface RoomType {

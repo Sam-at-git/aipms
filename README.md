@@ -79,9 +79,9 @@ npm run dev
 
 ### 3. 访问系统
 
-- 前端地址：http://localhost:3000
-- 后端 API：http://localhost:8000
-- API 文档：http://localhost:8000/docs
+- 前端地址：http://localhost:3020
+- 后端 API：http://localhost:8020
+- API 文档：http://localhost:8020/docs
 
 ### 默认账号
 
@@ -177,7 +177,7 @@ npm run dev
 
 ## API 文档
 
-启动后端后访问 http://localhost:8000/docs 查看完整 API 文档。
+启动后端后访问 http://localhost:8020/docs 查看完整 API 文档。
 
 主要接口：
 - `/auth/*` - 认证相关

@@ -11,7 +11,7 @@ from app.models.ontology import (
     Room, Guest, Reservation, StayRecord, Task, Employee, RoomType, Bill,
     RoomStatus, ReservationStatus, StayRecordStatus, TaskStatus, EmployeeRole, GuestTier
 )
-from app.security.auth import get_current_user, require_manager
+from app.security.auth import get_current_user, require_sysadmin
 from app.services.ontology_metadata_service import OntologyMetadataService
 
 router = APIRouter(prefix="/ontology", tags=["本体视图"])
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/ontology", tags=["本体视图"])
 
 @router.get("/schema")
 async def get_ontology_schema(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取本体结构定义"""
     return {
@@ -126,7 +126,7 @@ async def get_ontology_schema(
 @router.get("/statistics")
 async def get_ontology_statistics(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取各实体的统计数据"""
     return {
@@ -197,7 +197,7 @@ async def get_instance_graph(
     center_id: Optional[int] = Query(None, description="中心实体ID"),
     depth: int = Query(2, ge=1, le=3, description="关系深度"),
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取以指定实体为中心的关系图数据"""
     nodes = []
@@ -459,7 +459,7 @@ async def get_instance_graph(
 
 @router.get("/semantic")
 async def get_semantic_metadata(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """
     获取语义层元数据
@@ -472,7 +472,7 @@ async def get_semantic_metadata(
 @router.get("/semantic/{entity_name}")
 async def get_entity_semantic(
     entity_name: str,
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取单个实体的语义元数据"""
     service = OntologyMetadataService()
@@ -489,7 +489,7 @@ async def get_entity_semantic(
 
 @router.get("/kinetic")
 async def get_kinetic_metadata(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """
     获取动力层元数据
@@ -502,7 +502,7 @@ async def get_kinetic_metadata(
 @router.get("/kinetic/{entity_name}")
 async def get_entity_kinetic(
     entity_name: str,
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取单个实体的动力元数据（可执行操作）"""
     service = OntologyMetadataService()
@@ -519,7 +519,7 @@ async def get_entity_kinetic(
 
 @router.get("/dynamic")
 async def get_dynamic_metadata(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """
     获取动态层元数据
@@ -531,7 +531,7 @@ async def get_dynamic_metadata(
 
 @router.get("/dynamic/state-machines")
 async def get_state_machines(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取所有状态机定义"""
     service = OntologyMetadataService()
@@ -542,7 +542,7 @@ async def get_state_machines(
 @router.get("/dynamic/state-machines/{entity_name}")
 async def get_entity_state_machine(
     entity_name: str,
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取单个实体的状态机定义"""
     service = OntologyMetadataService()
@@ -557,7 +557,7 @@ async def get_entity_state_machine(
 
 @router.get("/dynamic/permission-matrix")
 async def get_permission_matrix(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取权限矩阵"""
     service = OntologyMetadataService()
@@ -568,7 +568,7 @@ async def get_permission_matrix(
 @router.get("/dynamic/business-rules")
 async def get_business_rules(
     entity: Optional[str] = Query(None, description="筛选实体"),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取业务规则列表"""
     service = OntologyMetadataService()

@@ -62,6 +62,7 @@ class PaymentMethod(str, Enum):
 
 class EmployeeRole(str, Enum):
     """员工角色"""
+    SYSADMIN = "sysadmin"      # 系统管理员
     MANAGER = "manager"        # 经理
     RECEPTIONIST = "receptionist"  # 前台
     CLEANER = "cleaner"        # 清洁员
@@ -316,7 +317,9 @@ class Employee(Base):
     @property
     def clearance(self) -> SecurityLevel:
         """根据角色返回安全等级"""
-        if self.role == EmployeeRole.MANAGER:
+        if self.role == EmployeeRole.SYSADMIN:
+            return SecurityLevel.RESTRICTED
+        elif self.role == EmployeeRole.MANAGER:
             return SecurityLevel.RESTRICTED
         elif self.role == EmployeeRole.RECEPTIONIST:
             return SecurityLevel.CONFIDENTIAL

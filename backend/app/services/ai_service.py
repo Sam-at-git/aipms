@@ -9,6 +9,8 @@ AI 对话服务 - OODA 循环运行时
 支持两种模式：
 1. LLM 模式：使用 OpenAI 兼容 API 进行自然语言理解
 2. 规则模式：使用规则匹配作为后备方案
+
+SPEC-54: 集成新的 core/ai/ 模块，保持向后兼容
 """
 import json
 import re
@@ -31,6 +33,41 @@ from app.services.llm_service import LLMService, TopicRelevance
 from app.services.param_parser_service import ParamParserService
 from app.models.schemas import MissingField
 
+# 导入新的 core/ai/ 模块 (SPEC-28, 29, 30)
+try:
+    from core.ai import (
+        OpenAICompatibleClient,
+        PromptBuilder,
+        PromptContext,
+        ConfirmByRiskStrategy,
+        ConfirmationLevel,
+    )
+    CORE_AI_AVAILABLE = True
+except ImportError:
+    CORE_AI_AVAILABLE = False
+
+# 导入业务规则模块 (SPEC-47, 48, 49)
+try:
+    from core.domain.rules import (
+        register_all_rules,
+        calculate_room_price,
+        calculate_guest_tier,
+    )
+    CORE_RULES_AVAILABLE = True
+except ImportError:
+    CORE_RULES_AVAILABLE = False
+
+# 导入元数据配置 (SPEC-21, 53)
+try:
+    from core.domain.metadata import (
+        get_security_level,
+        get_action_requirements,
+        should_skip_confirmation,
+    )
+    CORE_METADATA_AVAILABLE = True
+except ImportError:
+    CORE_METADATA_AVAILABLE = False
+
 
 class AIService:
     """AI 对话服务 - 实现 OODA 循环"""
@@ -46,6 +83,33 @@ class AIService:
         self.report_service = ReportService(db)
         self.llm_service = LLMService()
         self.param_parser = ParamParserService(db)
+
+        # 初始化新的 core/ai/ 组件 (如果可用)
+        self._init_core_components()
+
+    def _init_core_components(self):
+        """初始化 core/ai/ 组件"""
+        self.use_core_ai = CORE_AI_AVAILABLE
+        self.use_core_rules = CORE_RULES_AVAILABLE
+        self.use_core_metadata = CORE_METADATA_AVAILABLE
+
+        # 创建 LLM 客户端
+        if self.use_core_ai:
+            self.llm_client = OpenAICompatibleClient()
+            self.prompt_builder = PromptBuilder()
+            self.hitl_strategy = ConfirmByRiskStrategy()
+        else:
+            self.llm_client = None
+            self.prompt_builder = None
+            self.hitl_strategy = None
+
+        # 注册业务规则
+        if self.use_core_rules:
+            from core.engine.rule_engine import rule_engine
+            try:
+                register_all_rules(rule_engine)
+            except Exception:
+                pass  # 规则可能已经注册
 
     def _parse_relative_date(self, date_input: Union[str, date]) -> Optional[date]:
         """

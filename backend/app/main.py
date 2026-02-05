@@ -46,7 +46,10 @@ app.include_router(security.router)
 
 @app.on_event("startup")
 def startup():
-    """应用启动时初始化"""
+    """应用启动时初始化
+
+    SPEC-64: 初始化本体注册中心和业务规则
+    """
     # 初始化数据库
     init_db()
 
@@ -57,6 +60,33 @@ def startup():
     # 注册告警处理器
     from app.services.alert_service import register_alert_handlers
     register_alert_handlers()
+
+    # ========== SPEC-64: 初始化本体注册中心 ==========
+    try:
+        # 导入本体注册中心
+        from core.ontology import registry
+
+        # 导入并注册领域本体
+        from core.domain.room import RoomEntity
+        from core.domain.guest import GuestEntity
+        from core.domain.reservation import ReservationEntity
+        from core.domain.stay_record import StayRecordEntity
+        from core.domain.bill import BillEntity
+        from core.domain.task import TaskEntity
+        from core.domain.employee import EmployeeEntity
+        from core.domain.relationships import relationship_registry
+
+        # 导入业务规则
+        from core.domain.rules import register_all_rules
+
+        # 注册业务规则（这会注册规则到规则引擎）
+        from core.engine.rule_engine import rule_engine
+        register_all_rules(rule_engine)
+
+        print("本体注册中心初始化完成")
+
+    except Exception as e:
+        print(f"本体注册中心初始化警告: {e}")
 
 
 @app.get("/")

@@ -1,0 +1,144 @@
+# core/domain/metadata/security_levels.yaml
+# SPEC-21: 属性安全等级配置
+#
+# 定义各实体的属性安全等级，用于属性级访问控制
+#
+# 安全等级定义：
+# - PUBLIC: 所有人可见
+# - INTERNAL: 内部员工可见
+# - RESTRICTED: 仅经理可见
+# - CONFIDENTIAL: 仅系统管理员可见
+# - SECRET: 最高级别，几乎不公开
+
+# Room 实体属性安全等级
+Room:
+  # 公开属性 - 所有人可见
+  id: PUBLIC
+  room_number: PUBLIC
+  status: PUBLIC
+  room_type_name: PUBLIC
+
+  # 内部属性 - 员工可见
+  room_type_id: INTERNAL
+  floor: INTERNAL
+  building: INTERNAL
+
+  # 受限属性 - 仅经理可见
+  base_price: RESTRICTED  # 前台无法查看价格
+  maintenance_cost: RESTRICTED
+
+  # 机密属性 - 系统管理员
+  internal_notes: CONFIDENTIAL
+
+# RoomType 实体属性安全等级
+RoomType:
+  id: PUBLIC
+  name: PUBLIC
+  base_price: RESTRICTED  # 价格敏感信息
+  description: PUBLIC
+  amenities: PUBLIC
+  max_occupancy: INTERNAL
+  total_rooms: INTERNAL
+
+# Guest 实体属性安全等级
+Guest:
+  id: INTERNAL
+  name: PUBLIC
+  phone: INTERNAL  # 联系方式内部可见
+  id_type: INTERNAL
+  id_number: RESTRICTED  # 身份证号仅经理可见
+  email: RESTRICTED
+  tier: PUBLIC
+  is_blacklisted: RESTRICTED  # 黑名单信息敏感
+  blacklist_reason: CONFIDENTIAL
+  total_spending: RESTRICTED
+  reservation_count: INTERNAL
+  preferences: INTERNAL
+  notes: RESTRICTED
+
+# Reservation 实体属性安全等级
+Reservation:
+  id: INTERNAL
+  reservation_no: INTERNAL
+  guest_name: PUBLIC
+  guest_phone: INTERNAL
+  room_type_name: PUBLIC
+  check_in_date: PUBLIC
+  check_out_date: PUBLIC
+  status: PUBLIC
+  adult_count: INTERNAL
+  child_count: INTERNAL
+  special_requests: INTERNAL
+  prepaid_amount: RESTRICTED  # 支付信息敏感
+  created_at: INTERNAL
+  cancel_reason: RESTRICTED
+  cancelled_at: RESTRICTED
+
+# StayRecord 实体属性安全等级
+StayRecord:
+  id: INTERNAL
+  guest_name: PUBLIC
+  room_number: PUBLIC
+  check_in_date: PUBLIC
+  expected_check_out: PUBLIC
+  actual_check_out: PUBLIC
+  status: PUBLIC
+  deposit_amount: RESTRICTED
+  total_amount: RESTRICTED
+  notes: INTERNAL
+
+# Bill 实体属性安全等级
+Bill:
+  id: RESTRICTED  # 账单信息敏感
+  stay_record_id: RESTRICTED
+  total_amount: RESTRICTED
+  paid_amount: RESTRICTED
+  adjustment_amount: RESTRICTED
+  adjustment_reason: CONFIDENTIAL
+  balance: RESTRICTED
+  status: RESTRICTED
+  created_at: INTERNAL
+  updated_at: INTERNAL
+
+# Payment 实体属性安全等级
+Payment:
+  id: CONFIDENTIAL
+  bill_id: CONFIDENTIAL
+  amount: CONFIDENTIAL
+  method: CONFIDENTIAL
+  transaction_id: CONFIDENTIAL
+  processed_by: INTERNAL
+  created_at: INTERNAL
+  remark: CONFIDENTIAL
+
+# Task 实体属性安全等级
+Task:
+  id: INTERNAL
+  room_number: PUBLIC
+  task_type: PUBLIC
+  status: PUBLIC
+  priority: INTERNAL
+  assigned_to: INTERNAL  # 分配信息内部可见
+  created_at: INTERNAL
+  completed_at: INTERNAL
+  notes: INTERNAL
+
+# Employee 实体属性安全等级
+Employee:
+  id: INTERNAL
+  username: INTERNAL
+  name: PUBLIC
+  role: INTERNAL
+  phone: INTERNAL
+  email: RESTRICTED
+  is_active: INTERNAL
+  hire_date: RESTRICTED
+  salary: CONFIDENTIAL  # 薪资高度敏感
+  notes: RESTRICTED
+
+# 全局默认值
+defaults:
+  id: INTERNAL
+  created_at: INTERNAL
+  updated_at: INTERNAL
+  notes: RESTRICTED

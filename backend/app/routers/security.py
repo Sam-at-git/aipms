@@ -11,7 +11,7 @@ from app.models.ontology import Employee
 from app.models.security_events import SecurityEventType, SecurityEventSeverity
 from app.services.security_event_service import security_event_service
 from app.services.alert_service import alert_service
-from app.security.auth import get_current_user, require_manager
+from app.security.auth import get_current_user, require_sysadmin
 
 router = APIRouter(prefix="/security", tags=["安全管理"])
 
@@ -26,7 +26,7 @@ async def list_security_events(
     limit: int = Query(100, ge=1, le=500, description="返回数量"),
     offset: int = Query(0, ge=0, description="偏移量"),
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取安全事件列表"""
     start_time = datetime.utcnow() - timedelta(hours=hours)
@@ -64,7 +64,7 @@ async def list_security_events(
 async def get_security_event(
     event_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取安全事件详情"""
     event = security_event_service.get_event_by_id(db, event_id)
@@ -77,7 +77,7 @@ async def get_security_event(
 async def get_security_statistics(
     hours: int = Query(24, ge=1, le=720, description="统计时间范围（小时）"),
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取安全事件统计"""
     return security_event_service.get_statistics(db, hours)
@@ -86,7 +86,7 @@ async def get_security_statistics(
 @router.get("/alerts")
 async def get_active_alerts(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取活跃告警（未确认的高危事件）"""
     return alert_service.get_active_alerts(db)
@@ -95,7 +95,7 @@ async def get_active_alerts(
 @router.get("/alerts/summary")
 async def get_alert_summary(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取告警摘要"""
     return alert_service.get_alert_summary(db)
@@ -105,7 +105,7 @@ async def get_alert_summary(
 async def acknowledge_event(
     event_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """确认安全事件"""
     event = security_event_service.acknowledge_event(db, event_id, current_user.id)
@@ -119,7 +119,7 @@ async def acknowledge_event(
 async def bulk_acknowledge_events(
     event_ids: List[int],
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """批量确认安全事件"""
     count = security_event_service.bulk_acknowledge(db, event_ids, current_user.id)
@@ -133,7 +133,7 @@ async def get_user_security_history(
     days: int = Query(30, ge=1, le=365, description="历史天数"),
     limit: int = Query(50, ge=1, le=200, description="返回数量"),
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取用户安全事件历史"""
     events = security_event_service.get_user_security_history(db, user_id, days, limit)
@@ -145,7 +145,7 @@ async def get_high_severity_events(
     hours: int = Query(24, ge=1, le=168, description="时间范围（小时）"),
     limit: int = Query(20, ge=1, le=100, description="返回数量"),
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取高危事件列表"""
     events = security_event_service.get_recent_high_severity_events(db, hours, limit)
@@ -154,7 +154,7 @@ async def get_high_severity_events(
 
 @router.get("/event-types")
 async def get_event_types(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取所有事件类型"""
     from app.models.security_events import EVENT_TYPE_DESCRIPTIONS
@@ -166,7 +166,7 @@ async def get_event_types(
 
 @router.get("/severity-levels")
 async def get_severity_levels(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_sysadmin)
 ):
     """获取所有严重程度级别"""
     from app.models.security_events import SEVERITY_DESCRIPTIONS

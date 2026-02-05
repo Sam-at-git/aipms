@@ -2,74 +2,117 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+---
 
-AIPMS is a smart hotel management system built on **Palantir-inspired ontology-driven architecture**. All operations go through domain objects (Room, Guest, Reservation, StayRecord, etc.) rather than direct database access. The system combines a digital twin display (left panel) with an AI conversational interface (right panel).
+## Quick Reference
 
-## Build & Run Commands
-
-### Backend (FastAPI + SQLite)
+### Backend Commands
 ```bash
 cd backend
-uv sync                              # Install dependencies
-uv run python init_data.py           # Initialize database with seed data
-uv run uvicorn app.main:app --reload --port 8000
+uv sync                                    # Install dependencies
+uv run python init_data.py                 # Initialize database
+uv run uvicorn app.main:app --reload --port 8020  # Start server
 
-# Run tests
-uv run pytest                        # Run all tests
-uv run pytest tests/test_file.py     # Run specific test file
-uv run pytest -k "test_name"         # Run tests matching pattern
+# Testing
+uv run pytest                              # All tests
+uv run pytest tests/api/ -v                # API tests only
+uv run pytest tests/core/ -v               # Core framework tests
+uv run pytest tests/api/test_api_rooms.py -k "test_get_room"  # Single test
 ```
 
-### Frontend (React + Vite)
+### Frontend Commands
 ```bash
 cd frontend
-npm install
-npm run dev                          # Dev server on http://localhost:3000
-npm run build                        # TypeScript check + production build
-npm run preview                      # Preview production build
+npm install && npm run dev                 # Dev server on http://localhost:3020
+npm run build                              # Production build
 ```
 
 ### Combined
 ```bash
-./start.sh                           # Starts both backend and frontend
+./start.sh                                 # Starts both backend and frontend
 ```
 
 ### Default Credentials
-- manager / 123456 (full access)
+- sysadmin / 123456 (system admin - full access + system management)
+- manager / 123456 (manager - business operations, no system settings)
 - front1 / 123456 (receptionist)
 - cleaner1 / 123456 (cleaner - tasks only)
+
+---
+
+## Ralph Loop 重构模式 (Active Refactoring)
+
+本项目正在进行 **Ralph Loop** 模式架构重构，将系统重构为 **本体运行时框架 (core)** + **酒店业务本体 (domain)** 两层架构。
+
+### 核心文件
+- `docs/ralphloop/refactor-plan.md` - 主控计划（80个SPEC）
+- `docs/ralphloop/progress.txt` - 进度日志和坑点记录
+- `docs/ralphloop/specs/SPEC-XX-design.md` - 每个 SPEC 的详细设计
+
+### 行为约束
+
+**🚨 挣扎信号 (STRUGGLE SIGNAL)** - 必须立即停止并发出 `[STRUGGLE_SIGNAL]`：
+- 在修复同一个 Bug 上失败了 2 次
+- 开始"猜测" API 用法
+- 连续 3 次尝试无法通过测试
+
+**🛡️ 消除警觉性税** - 方案可行但有风险时，明确说明风险
+
+### 工作流程
+
+**Architect Phase**: 读取 progress.txt → 确认 SPEC → 探索代码 → 输出设计到 specs/ → `<ARCHITECT_COMPLETE>`
+
+**Editor Phase**: 读取设计文档 → 运行测试基准 → 精确修改 → 验证测试 → 更新 progress.txt → `<EDITOR_COMPLETE>` 或 `[STRUGGLE_SIGNAL]`
+
+### 禁止事项
+- ❌ 跳过测试验证
+- ❌ 修改测试文件来让测试通过（除非任务明确要求）
+- ❌ 一次性修改超过 3 个文件
+- ❌ 重写整个文件（必须使用 SEARCH/REPLACE 块）
+
+---
+
+## Project Overview
+
+AIPMS is a smart hotel management system built on **Palantir-inspired ontology-driven architecture**. All operations go through domain objects (Room, Guest, Reservation, StayRecord, etc.) rather than direct database access. The system combines a digital twin display (left panel) with an AI conversational interface (right panel).
+
 
 ## Architecture
 
 ### Backend Structure
 ```
-backend/app/
-├── models/
-│   ├── ontology.py     # Domain objects (Room, Guest, Reservation, StayRecord, Bill, Task, Employee, RatePlan)
-│   ├── schemas.py      # Pydantic models for API I/O
-│   ├── events.py       # Domain event definitions (EventType enum, event data classes)
-│   ├── snapshots.py    # OperationSnapshot and ConfigHistory models for undo
-│   └── security_events.py  # SecurityEventModel, event types, severity levels
-├── services/           # Business logic layer (one service per domain)
-│   ├── llm_service.py        # OpenAI-compatible LLM integration with robust JSON extraction
-│   ├── ai_service.py         # OODA loop: LLM优先，规则兜底
-│   ├── conversation_service.py # Chat history persistence (JSONL per user/day)
-│   ├── param_parser_service.py # Extracts entities (rooms, guests, dates) from natural language
-│   ├── audit_service.py      # Tracks all operations for compliance
-│   ├── event_bus.py          # In-memory pub/sub event bus (singleton)
-│   ├── event_handlers.py     # Event handlers (auto-create cleaning task, update room status)
-│   ├── undo_service.py       # Operation snapshot creation and rollback logic
-│   ├── config_history_service.py # Configuration version management
-│   ├── security_event_service.py # Security event recording and detection
-│   ├── alert_service.py      # Alert threshold management and notification
-│   ├── metadata.py           # Ontology metadata decorators and registry (semantic/kinetic/dynamic)
-│   └── ontology_metadata_service.py # Runtime metadata extraction via reflection
-├── routers/            # FastAPI endpoints (one router per domain)
-├── security/auth.py    # JWT authentication + role-based access
-├── config.py           # Environment-based settings (LLM API config)
-├── database.py         # SQLAlchemy session management
-└── main.py             # App initialization
+backend/
+├── app/                          # Current application code
+│   ├── models/
+│   │   ├── ontology.py           # Domain objects (Room, Guest, Reservation, StayRecord, Bill, Task, Employee)
+│   │   ├── schemas.py            # Pydantic models for API I/O
+│   │   ├── events.py             # Domain event definitions
+│   │   └── snapshots.py          # OperationSnapshot for undo
+│   ├── services/                 # Business logic layer (one service per domain)
+│   │   ├── ai_service.py         # OODA loop: LLM优先，规则兜底
+│   │   ├── llm_service.py        # OpenAI-compatible LLM integration
+│   │   ├── event_bus.py          # In-memory pub/sub event bus
+│   │   └── ...                   # Other domain services
+│   ├── routers/                  # FastAPI endpoints
+│   ├── security/auth.py          # JWT + role-based access
+│   └── main.py                   # App initialization
+│
+├── core/                         # NEW: Ontology runtime framework (in development)
+│   ├── ontology/                 # Entity abstractions
+│   │   ├── base.py               # BaseEntity, ObjectProxy
+│   │   ├── metadata.py           # EntityMetadata, ActionMetadata, PropertyMetadata
+│   │   ├── registry.py           # OntologyRegistry singleton
+│   │   ├── security.py           # SecurityLevel enum
+│   │   └── link.py               # Link, LinkCollection
+│   └── ooda/                     # OODA loop abstractions
+│       └── intent.py             # IntentRecognitionService, IntentResult
+│
+├── tests/
+│   ├── api/                      # API integration tests
+│   ├── core/                     # Core framework unit tests
+│   └── ooda/                     # OODA module tests
+│
+└── aipms.db                      # SQLite database
 ```
 
 ### Frontend Structure
@@ -77,9 +120,8 @@ backend/app/
 frontend/src/
 ├── pages/              # Route pages (Dashboard, Rooms, Reservations, etc.)
 ├── components/         # Reusable UI (Layout, ChatPanel, Modal, RoomCard, UndoButton)
-├── services/api.ts     # Axios HTTP client organized by domain (includes undoApi)
+├── services/api.ts     # Axios HTTP client organized by domain
 ├── store/              # Zustand stores (auth, chat, dashboard, ui)
-│   └── index.ts        # Main store exports
 └── types/index.ts      # TypeScript interfaces matching backend schemas
 ```
 
@@ -330,29 +372,32 @@ class MyEntityService:
 
 ## Development Notes
 
-- Backend uses `uv` package manager (python 3.10+)
+- Backend uses `uv` package manager (python 3.12+)
 - Frontend uses npm with Vite
 - Database file: `backend/aipms.db` (SQLite)
-- Type validation: Pydantic v2 on both frontend and backend
-- State management: Zustand for frontend, global `settings` instance for backend config
+- Type validation: Pydantic v2
+- State management: Zustand for frontend
 
 ## Testing
 
-**Backend Tests** (located in `backend/tests/api/`):
-- Uses pytest with SQLite in-memory database
-- Test client uses dependency injection to override `get_db` with test session
-- Fixtures in `conftest.py` provide auth headers and sample data
-- Run specific test: `uv run pytest tests/api/test_api_rooms.py -k "test_get_room"`
-- Run with verbose: `uv run pytest tests/api/ -v`
-- Event handlers don't work in test environment (skip affected tests with `@pytest.mark.skip`)
+**Test Directories:**
+- `backend/tests/api/` - API integration tests (128+ tests)
+- `backend/tests/core/` - Core framework unit tests (97 tests)
+- `backend/tests/ooda/` - OODA module tests
 
-**Common Test Patterns:**
+**Running Tests:**
+```bash
+cd backend
+uv run pytest tests/api/ -v           # API tests
+uv run pytest tests/core/ -v          # Core framework tests
+uv run pytest -k "test_name"          # Single test by name
+```
+
+**Test Patterns:**
 - Use `db_session` fixture for database operations (not `SessionLocal()`)
-- Use `params=` for query parameters, `data=` for form data, `json=` for JSON bodies
-- Check `response.json()` for actual API response structure when assertions fail
+- Use `params=` for query parameters, `json=` for JSON bodies
+- Event handlers don't work in test environment - use `@pytest.mark.skip(reason="事件处理器在测试环境中未正确初始化")`
+
+**Known Quirks:**
 - Some endpoints return 400 instead of 404 for "not found" cases
 - Decimal amounts often return as strings in JSON responses
-
-**Known Test Issues:**
-- Event-driven features (auto-create cleaning tasks) don't work in test environment - use `@pytest.mark.skip(reason="事件处理器在测试环境中未正确初始化")`
-- Some validation is not implemented server-side (e.g., occupancy limits) - skip those tests

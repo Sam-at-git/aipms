@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from datetime import date, timedelta
 from dataclasses import dataclass, field
 
-from core.ontology.registry import registry
+from core.ontology.registry import registry, OntologyRegistry
 from core.ontology.metadata import EntityMetadata, ActionMetadata, PropertyMetadata, StateMachine
 
 
@@ -204,7 +204,7 @@ class PromptBuilder:
                 lines.append(f"**数据表:** {entity.table_name}")
 
             # 属性列表（SPEC-51: 动态注入属性元数据）
-            if entity.properties:
+            if getattr(entity, 'properties', None):
                 lines.append("\n**属性:**")
                 for prop in entity.properties:
                     if isinstance(prop, PropertyMetadata):
@@ -268,10 +268,19 @@ class PromptBuilder:
                 if hasattr(action, 'params') and action.params:
                     lines.append(f"- **参数**:")
                     for param in action.params:
-                        param_name = param.get('name', 'unknown')
-                        param_type = param.get('type', 'string')
-                        param_required = "必填" if param.get('required', False) else "可选"
-                        param_desc = param.get('description', '')
+                        if isinstance(param, dict):
+                            param_name = param.get('name', 'unknown')
+                            param_type = param.get('type', 'string')
+                            param_required = "必填" if param.get('required', False) else "可选"
+                            param_desc = param.get('description', '')
+                        else:
+                            # ActionParam dataclass
+                            param_name = getattr(param, 'name', 'unknown')
+                            param_type = getattr(param, 'type', 'string')
+                            if hasattr(param_type, 'value'):
+                                param_type = param_type.value
+                            param_required = "必填" if getattr(param, 'required', False) else "可选"
+                            param_desc = getattr(param, 'description', '')
                         lines.append(f"  - {param_name} ({param_type}) {param_required}: {param_desc}")
 
         return "\n".join(lines)
@@ -293,9 +302,15 @@ class PromptBuilder:
             if hasattr(sm, 'transitions') and sm.transitions:
                 lines.append(f"- **状态转换:**")
                 for transition in sm.transitions:
-                    from_state = transition.get('from', '?')
-                    to_state = transition.get('to', '?')
-                    event = transition.get('event', '直接转换')
+                    if isinstance(transition, dict):
+                        from_state = transition.get('from', transition.get('from_state', '?'))
+                        to_state = transition.get('to', transition.get('to_state', '?'))
+                        event = transition.get('event', transition.get('trigger', '直接转换'))
+                    else:
+                        # StateTransition dataclass
+                        from_state = getattr(transition, 'from_state', '?')
+                        to_state = getattr(transition, 'to_state', '?')
+                        event = getattr(transition, 'trigger', '直接转换')
                     lines.append(f"  - {from_state} → {to_state} (事件: {event})")
 
         return "\n".join(lines)
@@ -492,6 +507,187 @@ class PromptBuilder:
 
         return context
 
+    # ==================== Schema 导出方法 (Phase 2.5) ====================
+
+    def build_entity_description(self, entity_name: str) -> str:
+        """
+        构建单个实体的描述
+
+        Args:
+            entity_name: 实体名称
+
+        Returns:
+            实体描述文本
+        """
+        schema = self._get_schema()
+        entity = schema.get("entity_types", {}).get(entity_name)
+
+        if not entity:
+            return f"# {entity_name}\n\n实体不存在。"
+
+        lines = [
+            f"# {entity.get('display_name', entity_name)}",
+            f"{entity.get('description', '')}",
+            "",
+            "## 属性"
+        ]
+
+        for prop_name, prop_meta in entity.get("properties", {}).items():
+            required = " (必填)" if prop_meta.get("is_required") else ""
+            lines.append(f"- **{prop_name}**{required}: {prop_meta.get('type', 'unknown')}")
+
+        if entity.get("interfaces"):
+            lines.append("\n## 实现接口")
+            lines.extend(f"- {iface}" for iface in entity["interfaces"])
+
+        if entity.get("actions"):
+            lines.append("\n## 可用操作")
+            for action in entity["actions"]:
+                lines.append(f"- {action}")
+
+        return "\n".join(lines)
+
+    def build_interface_description(self, interface_name: str) -> str:
+        """
+        构建接口描述
+
+        Args:
+            interface_name: 接口名称
+
+        Returns:
+            接口描述文本
+        """
+        schema = self._get_schema()
+        interface = schema.get("interfaces", {}).get(interface_name)
+
+        if not interface:
+            return f"# 接口 {interface_name}\n\n接口不存在。"
+
+        lines = [
+            f"# {interface_name} (接口)",
+        ]
+
+        if interface.get("description"):
+            lines.append(f"{interface['description']}")
+
+        lines.append("")
+        lines.append("## 实现该接口的实体")
+
+        for impl in interface.get("implementations", []):
+            lines.append(f"- {impl}")
+
+        if interface.get("required_properties"):
+            lines.append("\n## 必需属性")
+            for name, ptype in interface["required_properties"].items():
+                lines.append(f"- {name}: {ptype}")
+
+        if interface.get("required_actions"):
+            lines.append("\n## 必需动作")
+            for action in interface["required_actions"]:
+                lines.append(f"- {action}")
+
+        return "\n".join(lines)
+
+    def _get_schema(self) -> Dict[str, Any]:
+        """获取 schema（带缓存）"""
+        if not hasattr(self, '_schema_cache') or self._schema_cache is None:
+            self._schema_cache = self.registry.export_schema()
+        return self._schema_cache
+
+    def invalidate_cache(self):
+        """清除缓存 - 当本体发生变化时调用"""
+        self._schema_cache = None
+
+    # ==================== NL2OntologyQuery 支持 ====================
+
+    def build_query_schema(self) -> str:
+        """
+        构建用于 NL2OntologyQuery 的 Schema
+
+        生成精确的、结构化的 Schema JSON，确保 LLM 使用正确的字段名。
+
+        Returns:
+            Schema 描述字符串（包含精确的 JSON Schema）
+        """
+        # 使用新的 export_query_schema 方法获取精确的 Schema
+        query_schema = self.registry.export_query_schema()
+
+        lines = ["**Ontology Query Schema (精确字段定义)**", ""]
+        lines.append("**重要: 必须使用下面定义的精确字段名，不要猜测或创造新字段名**")
+        lines.append("")
+
+        # 输出实体及其字段的精确定义
+        lines.append("## 可查询实体及字段")
+        lines.append("")
+
+        for entity_name, entity_info in query_schema.get("entities", {}).items():
+            lines.append(f"### {entity_name}")
+            if entity_info.get("description"):
+                lines.append(f"- 描述: {entity_info['description']}")
+            if entity_info.get("table"):
+                lines.append(f"- 表名: {entity_info['table']}")
+
+            # 字段列表
+            lines.append("- 字段:")
+            fields = entity_info.get("fields", {})
+            for field_name, field_info in fields.items():
+                field_type = field_info.get("type", "unknown")
+                line = f"  - `{field_name}` ({field_type})"
+
+                # 标记特殊字段
+                if field_info.get("primary_key"):
+                    line += " [主键]"
+                if field_info.get("filterable"):
+                    line += " [可过滤]"
+                if field_info.get("aggregatable"):
+                    line += " [可聚合]"
+
+                # 关系字段特殊标记
+                if field_info.get("type") == "relationship":
+                    target_entity = field_info.get("target_entity", "")
+                    line += f" → 关联到 {target_entity}"
+
+                lines.append(line)
+
+            # 关系定义
+            relationships = entity_info.get("relationships", {})
+            if relationships:
+                lines.append("- 关系:")
+                for rel_name, rel_info in relationships.items():
+                    rel_type = rel_info.get("type", "")
+                    target = rel_info.get("entity", "")
+                    lines.append(f"  - `{rel_name}` → {target} ({rel_type})")
+
+            lines.append("")
+
+        # 聚合查询说明
+        lines.append("## 聚合查询")
+        lines.append("")
+        lines.append(f"- 支持的聚合函数: {', '.join(query_schema.get('aggregate_functions', []))}")
+        lines.append(f"- 支持的过滤操作符: {', '.join(query_schema.get('filter_operators', []))}")
+        lines.append("")
+        lines.append("**重要规则:**")
+        lines.append('1. 使用 field="id" + function="COUNT" 进行计数统计')
+        lines.append('2. 日期过滤使用 check_in_time 字段（不是 check_in_date）')
+        lines.append('3. 关联字段使用点号路径: guest.name, room.room_number')
+        lines.append("")
+        lines.append("**查询示例:**")
+        lines.append("```json")
+        lines.append('{')
+        lines.append('  "entity": "StayRecord",')
+        lines.append('  "fields": ["guest.name", "stay_count"],')
+        lines.append('  "aggregate": {"field": "id", "function": "COUNT", "alias": "stay_count"},')
+        lines.append('  "filters": [')
+        lines.append('    {"field": "check_in_time", "operator": "gte", "value": "2026-01-01"},')
+        lines.append('    {"field": "check_in_time", "operator": "lt", "value": "2026-02-01"}')
+        lines.append('  ],')
+        lines.append('  "order_by": ["stay_count DESC"],')
+        lines.append('  "limit": 3')
+        lines.append('}')
+        lines.append('```')
+
+        return "\n".join(lines)
+
 
 # ==================== 便捷函数 ====================
 
@@ -527,47 +723,6 @@ def build_system_prompt(
         include_rules=include_rules,
         include_state_machines=include_state_machines,
         include_permissions=include_permissions
-    )
-
-    builder = PromptBuilder()
-    return builder.build_system_prompt(context)
-
-
-__all__ = [
-    "PromptBuilder",
-    "PromptContext",
-    "build_system_prompt",
-]
-
-
-# ==================== 便捷函数 ====================
-
-def build_system_prompt(
-    user_role: str = "",
-    current_date: Optional[date] = None,
-    include_entities: bool = True,
-    include_actions: bool = True,
-    include_rules: bool = True
-) -> str:
-    """
-    构建系统提示词的便捷函数
-
-    Args:
-        user_role: 用户角色
-        current_date: 当前日期
-        include_entities: 是否包含实体描述
-        include_actions: 是否包含操作描述
-        include_rules: 是否包含规则描述
-
-    Returns:
-        系统提示词字符串
-    """
-    context = PromptContext(
-        user_role=user_role,
-        current_date=current_date,
-        include_entities=include_entities,
-        include_actions=include_actions,
-        include_rules=include_rules
     )
 
     builder = PromptBuilder()

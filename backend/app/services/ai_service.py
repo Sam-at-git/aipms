@@ -14,7 +14,8 @@ SPEC-54: 集成新的 core/ai/ 模块，保持向后兼容
 """
 import json
 import re
-from typing import Optional, List, Dict, Any, Union
+import logging
+from typing import Optional, List, Dict, Any, Union, TYPE_CHECKING
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from sqlalchemy.orm import Session
@@ -22,6 +23,8 @@ from app.models.ontology import (
     Room, RoomStatus, RoomType, Guest, Reservation, ReservationStatus,
     StayRecord, StayRecordStatus, Task, TaskType, TaskStatus, Employee
 )
+
+logger = logging.getLogger(__name__)
 from app.services.room_service import RoomService
 from app.services.reservation_service import ReservationService
 from app.services.checkin_service import CheckInService
@@ -69,6 +72,135 @@ except ImportError:
     CORE_METADATA_AVAILABLE = False
 
 
+class SystemCommandHandler:
+    """处理以 # 开头的系统指令（仅 sysadmin）"""
+
+    # 已知实体名映射（支持大小写和中文）
+    ENTITY_ALIASES = {
+        'room': 'Room', 'rooms': 'Room', '房间': 'Room',
+        'guest': 'Guest', 'guests': 'Guest', '客人': 'Guest',
+        'reservation': 'Reservation', 'reservations': 'Reservation', '预订': 'Reservation',
+        'stayrecord': 'StayRecord', 'stay': 'StayRecord', '住宿': 'StayRecord',
+        'task': 'Task', 'tasks': 'Task', '任务': 'Task',
+        'bill': 'Bill', 'bills': 'Bill', '账单': 'Bill',
+        'employee': 'Employee', 'employees': 'Employee', '员工': 'Employee',
+        'roomtype': 'RoomType', '房型': 'RoomType',
+    }
+
+    def is_system_command(self, message: str) -> bool:
+        """判断是否为系统指令（# 后跟字母或中文，不跟数字）"""
+        msg = message.strip()
+        if not msg.startswith('#'):
+            return False
+        if len(msg) < 2:
+            return False
+        # # 后面紧跟数字的不算系统指令（如 #123）
+        second_char = msg[1]
+        return not second_char.isdigit()
+
+    def execute(self, command: str, user: Employee, db: Session) -> dict:
+        """执行系统指令"""
+        from app.models.ontology import EmployeeRole
+
+        if user.role != EmployeeRole.SYSADMIN:
+            return {
+                'message': '系统指令仅限系统管理员使用。',
+                'suggested_actions': [],
+                'context': {'type': 'system_command', 'command': command}
+            }
+
+        cmd = command.strip().lstrip('#').strip()
+
+        # 处理 "查询XXX对象定义" 模式
+        if cmd.startswith('查询') and '对象' in cmd:
+            entity_name = cmd.replace('查询', '').replace('对象定义', '').replace('对象', '').strip()
+            return self._query_entity(entity_name, db)
+
+        # 处理 "日志" / "logs" 命令
+        if cmd.lower() in ('日志', 'logs', 'log', '审计日志'):
+            return self._query_logs(db)
+
+        # 默认尝试作为实体名查询
+        return self._query_entity(cmd, db)
+
+    def _query_entity(self, name: str, db: Session) -> dict:
+        """查询实体元数据"""
+        # 查找实体名
+        lookup = name.lower().strip()
+        entity_name = self.ENTITY_ALIASES.get(lookup, name)
+
+        try:
+            from app.services.ontology_metadata_service import OntologyMetadataService
+            service = OntologyMetadataService(db)
+            semantic = service.get_semantic_metadata()
+
+            # 查找匹配的实体
+            for entity in semantic.get('entities', []):
+                if entity.get('name', '').lower() == entity_name.lower():
+                    attrs = entity.get('attributes', [])
+                    lines = [f"**{entity_name}** 对象定义：\n"]
+                    lines.append(f"描述: {entity.get('description', 'N/A')}")
+                    lines.append(f"数据表: {entity.get('table_name', 'N/A')}")
+                    lines.append(f"\n属性列表 ({len(attrs)} 个):")
+                    for attr in attrs:
+                        attr_line = f"  - {attr['name']}: {attr.get('type', 'unknown')}"
+                        if attr.get('primary'):
+                            attr_line += ' [主键]'
+                        if attr.get('nullable') is False:
+                            attr_line += ' [必填]'
+                        lines.append(attr_line)
+
+                    return {
+                        'message': '\n'.join(lines),
+                        'suggested_actions': [],
+                        'context': {'type': 'system_command', 'entity': entity_name}
+                    }
+
+            # 未找到，列出可用实体
+            available = [e.get('name', '') for e in semantic.get('entities', [])]
+            return {
+                'message': f"未找到实体 '{name}'。可用实体: {', '.join(available)}",
+                'suggested_actions': [],
+                'context': {'type': 'system_command'}
+            }
+        except Exception as e:
+            return {
+                'message': f"查询实体信息失败: {str(e)}",
+                'suggested_actions': [],
+                'context': {'type': 'system_command'}
+            }
+
+    def _query_logs(self, db: Session) -> dict:
+        """查询最近审计日志"""
+        try:
+            from app.services.audit_service import AuditService
+            service = AuditService(db)
+            logs = service.get_logs(limit=10)
+            if not logs:
+                return {
+                    'message': '暂无审计日志。',
+                    'suggested_actions': [],
+                    'context': {'type': 'system_command', 'command': 'logs'}
+                }
+            lines = ["最近 10 条审计日志：\n"]
+            for log in logs:
+                lines.append(
+                    f"- [{log.created_at}] {log.action} {log.entity_type}"
+                    f"#{log.entity_id} by user#{log.operator_id}"
+                )
+            return {
+                'message': '\n'.join(lines),
+                'suggested_actions': [],
+                'context': {'type': 'system_command', 'command': 'logs'}
+            }
+        except Exception as e:
+            return {
+                'message': f"查询日志失败: {str(e)}",
+                'suggested_actions': [],
+                'context': {'type': 'system_command', 'command': 'logs'}
+            }
+
+
 class AIService:
     """AI 对话服务 - 实现 OODA 循环"""
 
@@ -83,6 +215,7 @@ class AIService:
         self.report_service = ReportService(db)
         self.llm_service = LLMService()
         self.param_parser = ParamParserService(db)
+        self.system_command_handler = SystemCommandHandler()
 
         # 初始化新的 core/ai/ 组件 (如果可用)
         self._init_core_components()
@@ -610,7 +743,8 @@ class AIService:
         user: Employee,
         conversation_history: list = None,
         topic_id: str = None,
-        follow_up_context: dict = None
+        follow_up_context: dict = None,
+        language: str = None
     ) -> dict:
         """
         处理用户消息 - OODA 循环入口
@@ -630,6 +764,12 @@ class AIService:
         message = message.strip()
         new_topic_id = topic_id
         include_context = False
+
+        # ========== 系统指令处理 ==========
+        if self.system_command_handler.is_system_command(message):
+            result = self.system_command_handler.execute(message, user, self.db)
+            result['topic_id'] = new_topic_id
+            return result
 
         # ========== 追问模式处理 ==========
         # 如果有追问上下文，使用专门的追问处理逻辑
@@ -677,13 +817,22 @@ class AIService:
                         for h in conversation_history[-6:]  # 最多 3 轮
                     ]
 
-                result = self.llm_service.chat(message, context)
+                # 注入查询 Schema（用于 ontology_query）
+                context['include_query_schema'] = True
+
+                result = self.llm_service.chat(message, context, language=language)
 
                 # 如果 LLM 返回了有效的操作，则处理并返回
                 if result.get("suggested_actions") and not result.get("context", {}).get("error"):
                     # 先检查是否是查询类操作，需要获取实际数据
                     action_type = result["suggested_actions"][0].get("action_type", "")
-                    if action_type.startswith("query_") or action_type == "view":
+                    # 查询类操作：包括 query_*, view, ontology_query, query_smart
+                    is_query_action = (
+                        action_type.startswith("query_") or
+                        action_type == "view" or
+                        action_type in ["ontology_query", "query_smart"]
+                    )
+                    if is_query_action:
                         response = self._handle_query_action(result, user)
                         response['topic_id'] = new_topic_id
                         return response
@@ -963,6 +1112,28 @@ class AIService:
         if action_type == "query_reports" or (action_type == "view" and "report" in entity_type.lower()):
             return self._query_reports_response()
 
+        # query_smart: 结构化查询，返回表格/图表数据
+        if action_type == "query_smart":
+            params = action.get("params", {})
+            query_result = self._execute_smart_query(
+                entity=params.get("entity", entity_type),
+                query_type=params.get("query_type", "list"),
+                filters=params.get("filters", {}),
+                user=user
+            )
+            # 让 LLM 格式化查询结果
+            return self._format_query_result_with_llm(result, query_result, user)
+
+        # ontology_query: NL2OntologyQuery - 动态字段选择查询
+        if action_type == "ontology_query":
+            params = action.get("params", {})
+            query_result = self._execute_ontology_query(
+                structured_query_dict=params,
+                user=user
+            )
+            # 让 LLM 格式化查询结果
+            return self._format_query_result_with_llm(result, query_result, user)
+
         # 如果是通用的 view 类型，检查 LLM 返回的 message 来推断查询类型
         if action_type == "view":
             llm_message = result.get("message", "").lower()
@@ -979,6 +1150,74 @@ class AIService:
 
         return result
 
+    def _format_query_result_with_llm(self, original_result: Dict, query_result: Dict, user: Employee) -> Dict:
+        """
+        使用 LLM 格式化查询结果，生成更友好的回复
+
+        Args:
+            original_result: LLM 原始返回的 result
+            query_result: 执行查询后的结果（包含 rows, columns 等）
+            user: 当前用户
+
+        Returns:
+            格式化后的响应，包含更友好的 message 和 query_result
+        """
+        query_data = query_result.get("query_result", {})
+        rows = query_data.get("rows", [])
+        columns = query_data.get("columns", [])
+        summary = query_data.get("summary", "")
+
+        # 如果没有结果，直接返回
+        if not rows:
+            return query_result
+
+        # 构建数据摘要，让 LLM 理解查询结果
+        data_summary = self._build_data_summary(rows, columns)
+
+        # 构建格式化提示
+        format_prompt = f"""用户的问题：{original_result.get('message', '')}
+
+查询结果摘要：{summary}
+
+详细数据：
+{data_summary}
+
+请根据查询结果，用自然语言回答用户的问题。
+要求：
+1. 直接回答问题，列出关键信息
+2. 如果是人名，只列出名字即可
+3. 保持简洁，不要啰嗦
+4. 不要添加 JSON 格式，直接用自然语言回答
+
+请直接给出回答："""
+
+        try:
+            formatted_message = self.llm_service.chat(
+                format_prompt,
+                {"user_role": user.role.value, "user_name": user.name},
+                language='zh'
+            ).get("message", summary)
+
+            # 替换 message
+            query_result["message"] = formatted_message
+            return query_result
+
+        except Exception as e:
+            logger.warning(f"LLM formatting failed: {e}, using original result")
+            return query_result
+
+    def _build_data_summary(self, rows: List[Dict], columns: List[str]) -> str:
+        """构建数据摘要文本"""
+        if not rows:
+            return "无数据"
+
+        lines = []
+        for i, row in enumerate(rows[:10]):  # 最多10条
+            row_text = ", ".join([f"{col}: {row.get(col, '')}" for col in columns])
+            lines.append(f"- {row_text}")
+
+        return "\n".join(lines)
+
     def _process_with_rules(self, message: str, user: Employee) -> dict:
         """
         使用规则模式处理消息（后备方案）
@@ -993,46 +1232,75 @@ class AIService:
         return response
 
     def _identify_intent(self, message: str) -> str:
-        """识别用户意图"""
+        """
+        识别用户意图 - 使用动态关键字查询（框架无关）
+
+        从 core/ai/query_keywords 获取通用查询动词
+        从 OntologyRegistry 获取领域相关的实体/属性关键字
+        """
+        from core.ai import QUERY_KEYWORDS, ACTION_KEYWORDS, HELP_KEYWORDS
+        from core.ontology.registry import registry
+
         message_lower = message.lower()
 
-        # 查询类意图
-        if any(kw in message_lower for kw in ['查看', '查询', '显示', '有多少', '哪些', '列表', '统计']):
-            if any(kw in message_lower for kw in ['房间', '房态', '空房']):
-                return 'query_rooms'
-            if any(kw in message_lower for kw in ['预订', '预约']):
-                return 'query_reservations'
-            if any(kw in message_lower for kw in ['在住', '住客', '客人']):
-                return 'query_guests'
-            if any(kw in message_lower for kw in ['任务', '清洁']):
-                return 'query_tasks'
+        # 帮助意图 - 优先检查
+        if any(kw in message_lower for kw in HELP_KEYWORDS):
+            return 'help'
+
+        # 查询类意图 - 使用框架层通用查询动词 + 领域层实体关键字
+        if any(kw in message_lower for kw in QUERY_KEYWORDS):
+            # 动态查询匹配的实体
+            matched_entities = registry.find_entities_by_keywords(message)
+            if matched_entities:
+                # 有实体匹配，返回对应的查询意图
+                # 根据实体类型映射到具体的 intent
+                entity_intent_map = {
+                    'Room': 'query_rooms',
+                    'Guest': 'query_guests',
+                    'Reservation': 'query_reservations',
+                    'Task': 'query_tasks',
+                    'StayRecord': 'query_guests',  # 住宿记录归为客人查询
+                    'Bill': 'query_reports',
+                    'Employee': 'query_reports',
+                }
+                # 返回第一个匹配实体的意图（多个匹配时由 LLM 消歧）
+                for entity in matched_entities:
+                    if entity in entity_intent_map:
+                        return entity_intent_map[entity]
+
+            # 特殊的报表查询关键字
             if any(kw in message_lower for kw in ['入住率', '营收', '报表', '统计']):
                 return 'query_reports'
 
-        # 操作类意图
-        if any(kw in message_lower for kw in ['入住', '办理入住', 'checkin']):
-            return 'action_checkin'
-        if any(kw in message_lower for kw in ['退房', '结账', 'checkout']):
-            return 'action_checkout'
-        if any(kw in message_lower for kw in ['预订', '预约', '订房']):
-            return 'action_reserve'
-        if any(kw in message_lower for kw in ['换房', '转房']):
-            return 'action_change_room'
-        if any(kw in message_lower for kw in ['续住', '延期']):
-            return 'action_extend'
-        if any(kw in message_lower for kw in ['清洁', '打扫']):
-            return 'action_cleaning'
-
-        # 帮助
-        if any(kw in message_lower for kw in ['帮助', '帮忙', '怎么', '如何', '你好', 'hello', 'hi']):
-            return 'help'
+        # 操作类意图 - 使用框架层通用操作动词
+        if any(kw in message_lower for kw in ACTION_KEYWORDS):
+            # 根据具体操作类型判断
+            if any(kw in message_lower for kw in ['入住', '办理入住', 'checkin', 'check in']):
+                return 'action_checkin'
+            if any(kw in message_lower for kw in ['退房', '结账', 'checkout', 'check out']):
+                return 'action_checkout'
+            if any(kw in message_lower for kw in ['预订', '预约', '订房', 'reserve', 'booking']):
+                return 'action_reserve'
+            if any(kw in message_lower for kw in ['换房', '转房', 'change']):
+                return 'action_change_room'
+            if any(kw in message_lower for kw in ['续住', '延期', 'extend']):
+                return 'action_extend'
+            if any(kw in message_lower for kw in ['清洁', '打扫', 'cleaning', 'clean']):
+                return 'action_cleaning'
 
         return 'unknown'
 
     def _extract_entities(self, message: str) -> dict:
-        """提取实体"""
+        """
+        提取实体 - 使用动态关键字查询（框架无关）
+
+        结合规则匹配（房间号、日期等）和动态关键字查询（房型、状态等）
+        """
+        from core.ontology.registry import registry
+
         entities = {}
 
+        # ===== 规则匹配：结构化信息 =====
         # 提取房间号
         room_match = re.search(r'(\d{3,4})\s*号?\s*房', message)
         if room_match:
@@ -1061,19 +1329,19 @@ class AIService:
                 year += 1
             entities['date'] = date(year, month, day)
 
-        # 提取房型
-        room_type_keywords = {
-            '标间': '标间',
-            '标准间': '标间',
-            '大床': '大床房',
-            '大床房': '大床房',
-            '豪华': '豪华间',
-            '豪华间': '豪华间'
-        }
-        for kw, rt in room_type_keywords.items():
-            if kw in message:
-                entities['room_type'] = rt
-                break
+        # ===== 动态关键字查询：领域相关实体 =====
+        # 查询匹配的实体
+        matched = registry.resolve_keyword_matches(message)
+
+        # 如果匹配到 Room 实体，提取房型信息
+        if 'Room' in matched['entities']:
+            # 从 RoomType 表获取房型（如果用户提到了具体房型）
+            from app.models.ontology import RoomType
+            room_types = self.db.query(RoomType).all()
+            for rt in room_types:
+                if rt.name in message:
+                    entities['room_type'] = rt.name
+                    break
 
         return entities
 
@@ -1293,6 +1561,507 @@ class AIService:
             'suggested_actions': [],
             'context': {'stats': stats}
         }
+
+    def _execute_smart_query(self, entity: str, query_type: str, filters: dict, user: Employee) -> dict:
+        """
+        执行智能查询，返回结构化结果
+
+        Args:
+            entity: 查询实体 (room, reservation, guest, task, report)
+            query_type: 查询类型 (status, list, count, summary)
+            filters: 过滤条件
+            user: 当前用户
+
+        Returns:
+            包含 message, query_result 的字典
+            query_result: {display_type, columns, rows, summary}
+        """
+        entity_lower = entity.lower()
+
+        if entity_lower in ('room', 'rooms', '房间'):
+            return self._smart_query_rooms(filters)
+        elif entity_lower in ('reservation', 'reservations', '预订'):
+            return self._smart_query_reservations(filters)
+        elif entity_lower in ('guest', 'guests', '客人', '在住客人'):
+            return self._smart_query_guests(filters)
+        elif entity_lower in ('task', 'tasks', '任务'):
+            return self._smart_query_tasks(filters)
+        elif entity_lower in ('report', 'reports', '报表', '统计'):
+            return self._smart_query_reports()
+        else:
+            return {
+                'message': f'不支持的查询实体: {entity}',
+                'suggested_actions': [],
+                'query_result': {'display_type': 'text', 'data': None}
+            }
+
+    def _smart_query_rooms(self, filters: dict) -> dict:
+        """房间智能查询 - 返回结构化表格"""
+        summary = self.room_service.get_room_status_summary()
+        rooms = self.db.query(Room).all()
+
+        # 文本摘要
+        message = f"共 {summary['total']} 间房间"
+
+        # 结构化数据
+        rows = []
+        for r in rooms:
+            rows.append({
+                'room_number': r.room_number,
+                'floor': r.floor,
+                'type': r.room_type.name if r.room_type else '',
+                'status': r.status.value,
+            })
+
+        return {
+            'message': message,
+            'suggested_actions': [],
+            'query_result': {
+                'display_type': 'table',
+                'columns': ['房号', '楼层', '房型', '状态'],
+                'column_keys': ['room_number', 'floor', 'type', 'status'],
+                'rows': rows,
+                'summary': summary
+            }
+        }
+
+    def _smart_query_reservations(self, filters: dict) -> dict:
+        """预订智能查询"""
+        arrivals = self.reservation_service.get_today_arrivals()
+        rows = []
+        for r in arrivals:
+            rows.append({
+                'reservation_no': r.reservation_no,
+                'guest_name': r.guest.name if r.guest else '',
+                'room_type': r.room_type.name if r.room_type else '',
+                'check_in_date': str(r.check_in_date),
+                'check_out_date': str(r.check_out_date),
+                'status': r.status.value,
+            })
+
+        return {
+            'message': f"今日预抵 {len(arrivals)} 位客人",
+            'suggested_actions': [],
+            'query_result': {
+                'display_type': 'table',
+                'columns': ['预订号', '客人', '房型', '入住', '离店', '状态'],
+                'column_keys': ['reservation_no', 'guest_name', 'room_type', 'check_in_date', 'check_out_date', 'status'],
+                'rows': rows,
+            }
+        }
+
+    def _smart_query_guests(self, filters: dict) -> dict:
+        """在住客人智能查询"""
+        active_stays = self.db.query(StayRecord).filter(
+            StayRecord.status == StayRecordStatus.ACTIVE
+        ).all()
+
+        rows = []
+        for s in active_stays:
+            rows.append({
+                'guest_name': s.guest.name if s.guest else '',
+                'room_number': s.room.room_number if s.room else '',
+                'check_in': str(s.check_in_time.date()) if s.check_in_time else '',
+                'expected_out': str(s.expected_check_out),
+            })
+
+        return {
+            'message': f"当前在住 {len(active_stays)} 位客人",
+            'suggested_actions': [],
+            'query_result': {
+                'display_type': 'table',
+                'columns': ['客人', '房间', '入住日期', '预计退房'],
+                'column_keys': ['guest_name', 'room_number', 'check_in', 'expected_out'],
+                'rows': rows,
+            }
+        }
+
+    def _smart_query_tasks(self, filters: dict) -> dict:
+        """任务智能查询"""
+        tasks = self.db.query(Task).filter(
+            Task.status.in_([TaskStatus.PENDING, TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS])
+        ).all()
+
+        rows = []
+        for t in tasks:
+            rows.append({
+                'room_number': t.room.room_number if t.room else '',
+                'task_type': t.task_type.value if t.task_type else '',
+                'status': t.status.value,
+                'assignee': t.assignee.name if t.assignee else '未分配',
+            })
+
+        return {
+            'message': f"当前有 {len(tasks)} 个待处理任务",
+            'suggested_actions': [],
+            'query_result': {
+                'display_type': 'table',
+                'columns': ['房间', '类型', '状态', '负责人'],
+                'column_keys': ['room_number', 'task_type', 'status', 'assignee'],
+                'rows': rows,
+            }
+        }
+
+    def _smart_query_reports(self) -> dict:
+        """报表智能查询"""
+        stats = self.report_service.get_dashboard_stats()
+
+        return {
+            'message': f"入住率 {stats['occupancy_rate']}%，今日营收 ¥{stats['today_revenue']}",
+            'suggested_actions': [],
+            'query_result': {
+                'display_type': 'chart',
+                'data': stats,
+                'summary': stats
+            }
+        }
+
+    def _execute_ontology_query(
+        self,
+        structured_query_dict: dict,
+        user: Employee
+    ) -> dict:
+        """
+        执行 Ontology 查询 (NL2OntologyQuery)
+
+        使用 QueryEngine 动态构建并执行查询，
+        无硬编码实体逻辑。
+
+        Args:
+            structured_query_dict: StructuredQuery 字典
+            user: 当前用户
+
+        Returns:
+            {
+                "message": "共 X 条记录",
+                "suggested_actions": [],
+                "query_result": {
+                    "display_type": "table",
+                    "columns": ["姓名", "电话"],
+                    "column_keys": ["name", "phone"],
+                    "rows": [{"name": "张三", "phone": "123"}],
+                    "summary": "共 2 条记录"
+                }
+            }
+        """
+        from core.ontology.query import StructuredQuery
+        from core.ontology.query_engine import QueryEngine
+        from core.ontology.registry import registry
+
+        try:
+            # 调试日志：打印 LLM 返回的查询结构
+            logger.info(f"LLM returned query: {structured_query_dict}")
+
+            # 验证和纠正字段名（重要保障机制）
+            corrected_query = self._validate_and_correct_fields(structured_query_dict)
+
+            if corrected_query != structured_query_dict:
+                logger.info(f"Corrected query fields: {structured_query_dict} -> {corrected_query}")
+
+            # 解析 StructuredQuery
+            query = StructuredQuery.from_dict(corrected_query)
+
+            # 调试日志：打印解析后的查询
+            logger.info(f"Parsed query - entity: {query.entity}, fields: {query.fields}, "
+                       f"aggregate: {query.aggregate}, group_by: {query.group_by}, "
+                       f"filters: {len(query.filters)}, limit: {query.limit}")
+
+            # 判断是否为简单查询（可用 Service 优化）
+            # 聚合查询不视为简单查询
+            if query.is_simple() and not query.aggregate:
+                return self._execute_simple_query(query, user)
+
+            # 复杂查询使用 QueryEngine
+            engine = QueryEngine(self.db, registry)
+            result = engine.execute(query, user)
+
+            # 当查询结果为空时，给出更友好的提示
+            if result.get("display_type") == "table" and len(result.get("rows", [])) == 0:
+                # 检查是否有日期过滤条件
+                has_date_filter = any(
+                    f.field in ["check_in_time", "check_out_time", "check_in_date", "check_out_date", "created_at"]
+                    for f in query.filters
+                )
+                if has_date_filter:
+                    result["message"] = f"指定时间范围内没有找到记录。当前数据范围：2025年2月 - 2026年2月"
+
+            return {
+                "message": result.get("summary", result.get("message", "查询完成")),
+                "suggested_actions": [],
+                "query_result": result
+            }
+
+        except Exception as e:
+            logger.error(f"Ontology query failed: {e}", exc_info=True)
+            return {
+                "message": f"查询失败: {str(e)}",
+                "suggested_actions": [],
+                "query_result": {
+                    "display_type": "text",
+                    "rows": [],
+                    "summary": "查询失败"
+                }
+            }
+
+    def _validate_and_correct_fields(self, query_dict: dict) -> dict:
+        """
+        验证和纠正 LLM 返回的字段名
+
+        这是一个重要的保障机制，确保 LLM 使用正确的 Ontology 字段名。
+        常见的 LLM 错误：
+        - check_in_date -> check_in_time
+        - check_out_date -> check_out_time
+        - guest_name -> guest.name
+        - room_number -> room.room_number
+
+        Args:
+            query_dict: LLM 返回的查询字典
+
+        Returns:
+            纠正后的查询字典
+        """
+        from core.ontology.registry import registry
+        import copy
+
+        corrected = copy.deepcopy(query_dict)
+        entity_name = corrected.get("entity", "")
+
+        # 获取实体的有效字段
+        schema = registry.export_query_schema()
+        entity_schema = schema.get("entities", {}).get(entity_name, {})
+        valid_fields = set(entity_schema.get("fields", {}).keys())
+
+        # 字段名映射表（常见的 LLM 错误）
+        field_mappings = {
+            # StayRecord 常见错误
+            "check_in_date": "check_in_time",
+            "check_out_date": "check_out_time",
+            "guest_name": "guest.name",
+            "guest_phone": "guest.phone",
+            "room_number": "room.room_number",
+            "room_type": "room.room_type.name",
+            "stay_date": "check_in_time",
+            "booking_date": "created_at",
+
+            # Reservation 常见错误
+            "checkin_date": "check_in_date",
+            "checkout_date": "check_out_date",
+            "booking_date": "created_at",
+
+            # Guest 常见错误
+            "guest_name": "name",
+            "customer_name": "name",
+
+            # Room 常见错误
+            "room_status": "status",
+            "room_type_id": "room_type_id",
+        }
+
+        # 纠正 filters 中的字段名
+        filters = corrected.get("filters", [])
+        for f in filters:
+            field = f.get("field", "")
+            if field not in valid_fields:
+                # 尝试映射
+                corrected_field = field_mappings.get(field)
+                if corrected_field and corrected_field in valid_fields:
+                    f["field"] = corrected_field
+                    logger.info(f"Corrected filter field: {field} -> {corrected_field}")
+                # 尝试模糊匹配（相似度）
+                elif self._find_similar_field(field, valid_fields):
+                    f["field"] = self._find_similar_field(field, valid_fields)
+
+        # 纠正 fields 列表中的字段名
+        fields = corrected.get("fields", [])
+        corrected_fields = []
+        for field in fields:
+            if field in valid_fields:
+                corrected_fields.append(field)
+            else:
+                # 尝试映射
+                corrected_field = field_mappings.get(field)
+                if corrected_field and corrected_field in valid_fields:
+                    corrected_fields.append(corrected_field)
+                    logger.info(f"Corrected field: {field} -> {corrected_field}")
+                # 如果是聚合别名，保留
+                elif corrected.get("aggregate", {}).get("alias") == field:
+                    corrected_fields.append(field)
+                # 尝试模糊匹配
+                elif self._find_similar_field(field, valid_fields):
+                    corrected_fields.append(self._find_similar_field(field, valid_fields))
+
+        if corrected_fields:
+            corrected["fields"] = corrected_fields
+
+        # 纠正 aggregate 中的字段名
+        aggregate = corrected.get("aggregate")
+        if aggregate:
+            agg_field = aggregate.get("field", "")
+            if agg_field not in valid_fields:
+                corrected_agg = field_mappings.get(agg_field)
+                if corrected_agg and corrected_agg in valid_fields:
+                    aggregate["field"] = corrected_agg
+                    logger.info(f"Corrected aggregate field: {agg_field} -> {corrected_agg}")
+
+        # 纠正 order_by 中的字段名
+        order_by = corrected.get("order_by", [])
+        corrected_order_by = []
+        for order_expr in order_by:
+            parts = order_expr.split()
+            if parts:
+                field = parts[0]
+                if field not in valid_fields:
+                    corrected_field = field_mappings.get(field)
+                    if corrected_field and corrected_field in valid_fields:
+                        direction = parts[1] if len(parts) > 1 else ""
+                        corrected_order_by.append(f"{corrected_field} {direction}".strip() if direction else corrected_field)
+                        logger.info(f"Corrected order_by field: {field} -> {corrected_field}")
+                        continue
+                corrected_order_by.append(order_expr)
+
+        if corrected_order_by:
+            corrected["order_by"] = corrected_order_by
+
+        return corrected
+
+    def _find_similar_field(self, field: str, valid_fields: set) -> str:
+        """
+        查找相似的字段名（用于模糊匹配）
+
+        Args:
+            field: LLM 使用的字段名
+            valid_fields: 有效的字段名集合
+
+        Returns:
+            匹配的字段名，如果没有匹配返回空字符串
+        """
+        field_lower = field.lower().replace("_", "").replace(".", "")
+
+        # 直接匹配
+        for valid in valid_fields:
+            valid_clean = valid.lower().replace("_", "").replace(".", "")
+            if field_lower == valid_clean:
+                return valid
+
+        # 包含匹配
+        for valid in valid_fields:
+            if field_lower in valid.lower() or valid.lower() in field_lower:
+                return valid
+
+        return ""
+
+    def _execute_simple_query(self, query: 'StructuredQuery', user: Employee) -> dict:
+        """
+        执行简单查询（使用 Service 优化性能）
+
+        简单查询定义：无 JOIN，过滤器 <= 1，字段数 <= 3
+        """
+        from core.ontology.query import FilterOperator
+
+        entity = query.entity
+        fields = query.fields
+
+        # 根据 entity 和 fields 使用对应的 Service
+        if entity == "Guest":
+            if "name" in fields:
+                # 获取客人姓名列表
+                active_stays = self.db.query(StayRecord).filter(
+                    StayRecord.status == StayRecordStatus.ACTIVE
+                ).all()
+
+                rows = []
+                for stay in active_stays:
+                    row = {}
+                    if "name" in fields:
+                        row["name"] = stay.guest.name if stay.guest else ""
+                    if "phone" in fields:
+                        row["phone"] = stay.guest.phone if stay.guest else ""
+                    rows.append(row)
+
+                return {
+                    "message": f"共 {len(rows)} 条记录",
+                    "suggested_actions": [],
+                    "query_result": {
+                        "display_type": "table",
+                        "columns": [self._get_display_name(f) for f in fields],
+                        "column_keys": fields,
+                        "rows": rows,
+                        "summary": f"共 {len(rows)} 条记录"
+                    }
+                }
+
+        elif entity == "Room":
+            # 只有在没有复杂过滤条件时才使用简单查询
+            # 如果有过滤器，使用 QueryEngine 以支持所有操作符
+            if query.filters:
+                # 回退到 QueryEngine
+                from core.ontology.query_engine import QueryEngine
+                from core.ontology.registry import registry
+                engine = QueryEngine(self.db, registry)
+                result = engine.execute(query, user)
+                return {
+                    "message": result["summary"],
+                    "suggested_actions": [],
+                    "query_result": result
+                }
+
+            # 无过滤条件的简单查询
+            rooms = self.room_service.get_rooms()
+            rows = []
+            for room in rooms:
+                row = {}
+                for field in fields:
+                    if field == "room_number":
+                        row["room_number"] = room.room_number
+                    elif field == "status":
+                        row["status"] = room.status.value if hasattr(room.status, 'value') else room.status
+                    elif field == "floor":
+                        row["floor"] = room.floor
+                    elif field == "room_type":
+                        row["room_type"] = room.room_type.name if room.room_type else ""
+                rows.append(row)
+
+            return {
+                "message": f"共 {len(rows)} 条记录",
+                "suggested_actions": [],
+                "query_result": {
+                    "display_type": "table",
+                    "columns": [self._get_display_name(f) for f in fields],
+                    "column_keys": fields,
+                    "rows": rows,
+                    "summary": f"共 {len(rows)} 条记录"
+                }
+            }
+
+        # 默认使用 QueryEngine
+        from core.ontology.query_engine import QueryEngine
+        from core.ontology.registry import registry
+        engine = QueryEngine(self.db, registry)
+        result = engine.execute(query, user)
+
+        return {
+            "message": result["summary"],
+            "suggested_actions": [],
+            "query_result": result
+        }
+
+    def _get_display_name(self, field: str) -> str:
+        """获取字段的显示名称"""
+        DISPLAY_NAMES = {
+            "name": "姓名",
+            "phone": "电话",
+            "room_number": "房号",
+            "room_type": "房型",
+            "status": "状态",
+            "floor": "楼层",
+            "check_in_date": "入住日期",
+            "check_out_date": "退房日期",
+            "task_type": "任务类型",
+            "reservation_no": "预订号",
+            "total_amount": "总金额",
+            "is_settled": "已结清",
+        }
+        return DISPLAY_NAMES.get(field, field)
 
     def _checkin_response(self, entities: dict, user: Employee) -> dict:
         # 根据实体查找目标
@@ -1792,6 +2561,17 @@ class AIService:
                 return {
                     'success': True,
                     'message': f'{room.room_number}号房状态已更新为 {room.status.value}'
+                }
+
+            # ontology_query: NL2OntologyQuery - 动态字段选择查询
+            if action_type == 'ontology_query':
+                result = self._execute_ontology_query(params, user)
+                # 整合返回格式
+                query_result = result.get('query_result', {})
+                return {
+                    'success': True,
+                    'message': result.get('message', '查询完成'),
+                    'query_result': query_result
                 }
 
             return {

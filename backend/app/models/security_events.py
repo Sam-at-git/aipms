@@ -3,9 +3,9 @@
 定义可检测的安全事件类型、严重程度和告警阈值
 """
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean
 from app.database import Base
 
@@ -48,7 +48,7 @@ class SecurityEventModel(Base):
     id = Column(Integer, primary_key=True, index=True)
     event_type = Column(String(50), nullable=False, index=True)
     severity = Column(String(20), nullable=False, index=True)
-    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    timestamp = Column(DateTime, nullable=False, default=datetime.now(UTC), index=True)
     source_ip = Column(String(50))
     user_id = Column(Integer, index=True)
     user_name = Column(String(100))
@@ -57,7 +57,7 @@ class SecurityEventModel(Base):
     is_acknowledged = Column(Boolean, default=False)
     acknowledged_by = Column(Integer)
     acknowledged_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now(UTC))
 
 
 # Pydantic 模型用于 API
@@ -75,9 +75,7 @@ class SecurityEvent(BaseModel):
     is_acknowledged: bool = False
     acknowledged_by: Optional[int] = None
     acknowledged_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SecurityEventCreate(BaseModel):

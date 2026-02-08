@@ -3,7 +3,9 @@ import type {
   Room, RoomType, Reservation, StayRecord, Task, Employee,
   Bill, RatePlan, DashboardStats, LoginResponse, AuditLog, ActionSummary,
   Guest, GuestStayHistory, GuestReservationHistory,
-  MessagesListResponse, SearchResultsResponse, AvailableDatesResponse, AIResponseWithHistory
+  MessagesListResponse, SearchResultsResponse, AvailableDatesResponse, AIResponseWithHistory,
+  DebugSession, DebugSessionDetail, SessionDetailResponse, ReplayRequest,
+  ReplayResponse, DebugStatistics, SessionsListResponse, ReplaysListResponse
 } from '../types'
 
 const api = axios.create({
@@ -457,11 +459,12 @@ export const guestApi = {
 // ============== AI ==============
 
 export const aiApi = {
-  chat: async (message: string, topicId?: string, followUpContext?: Record<string, unknown>): Promise<AIResponseWithHistory> => {
+  chat: async (message: string, topicId?: string, followUpContext?: Record<string, unknown>, language?: string | null): Promise<AIResponseWithHistory> => {
     const res = await api.post('/ai/chat', {
       content: message,
       topic_id: topicId,
-      follow_up_context: followUpContext
+      follow_up_context: followUpContext,
+      language: language || undefined
     })
     return res.data
   },
@@ -474,6 +477,10 @@ export const aiApi = {
 // ============== 会话历史 ==============
 
 export const conversationApi = {
+  getLastActive: async (): Promise<MessagesListResponse> => {
+    const res = await api.get('/conversations/last-active')
+    return res.data
+  },
   getMessages: async (params?: {
     limit?: number
     before?: string
@@ -496,6 +503,23 @@ export const conversationApi = {
   },
   getAvailableDates: async (): Promise<AvailableDatesResponse> => {
     const res = await api.get('/conversations/dates')
+    return res.data
+  },
+  // 管理员端点
+  adminGetUsers: async (): Promise<{ users: { user_id: number }[] }> => {
+    const res = await api.get('/conversations/admin/users')
+    return res.data
+  },
+  adminGetUserDates: async (userId: number): Promise<AvailableDatesResponse> => {
+    const res = await api.get(`/conversations/admin/user/${userId}/dates`)
+    return res.data
+  },
+  adminGetUserMessages: async (userId: number, params?: {
+    date_str?: string
+    keyword?: string
+    limit?: number
+  }): Promise<MessagesListResponse> => {
+    const res = await api.get(`/conversations/admin/user/${userId}/messages`, { params })
     return res.data
   }
 }
@@ -700,7 +724,27 @@ export const ontologyApi = {
       params: entity ? { entity } : undefined
     })
     return res.data
-  }
+  },
+
+  // ============== 接口系统 (Phase 2.5) ==============
+  getInterfaces: async (): Promise<Record<string, import('../types').OntologyInterfaceDef>> => {
+    const res = await api.get('/ontology/interfaces')
+    return res.data
+  },
+  getInterface: async (name: string): Promise<import('../types').OntologyInterfaceDef> => {
+    const res = await api.get(`/ontology/interfaces/${name}`)
+    return res.data
+  },
+  getEntityInterfaces: async (entityName: string): Promise<import('../types').InterfaceImplementation> => {
+    const res = await api.get(`/ontology/entities/${entityName}/interfaces`)
+    return res.data
+  },
+
+  // ============== Schema 导出 (Phase 2.5) ==============
+  exportSchema: async (): Promise<import('../types').OntologySchemaExport> => {
+    const res = await api.get('/ontology/schema/export')
+    return res.data
+  },
 }
 
 // ============== 安全管理 ==============
@@ -792,3 +836,63 @@ export const securityApi = {
 }
 
 export default api
+
+// ============== Debug API (Sysadmin Only) ==============
+
+export const debugApi = {
+  // List debug sessions with filters
+  listSessions: async (params?: {
+    status?: string
+    user_id?: number
+    limit?: number
+    offset?: number
+  }): Promise<SessionsListResponse> => {
+    const res = await api.get('/debug/sessions', { params })
+    return res.data
+  },
+
+  // Get session detail with attempts
+  getSessionDetail: async (sessionId: string): Promise<SessionDetailResponse> => {
+    const res = await api.get(`/debug/sessions/${sessionId}`)
+    return res.data
+  },
+
+  // Get debug statistics
+  getStatistics: async (): Promise<DebugStatistics> => {
+    const res = await api.get('/debug/statistics')
+    return res.data
+  },
+
+  // Replay a session
+  replaySession: async (request: ReplayRequest): Promise<ReplayResponse> => {
+    const res = await api.post('/debug/replay', request)
+    return res.data
+  },
+
+  // Get replay result
+  getReplayResult: async (replayId: string): Promise<ReplayResponse> => {
+    const res = await api.get(`/debug/replay/${replayId}`)
+    return res.data
+  },
+
+  // List replays
+  listReplays: async (params?: {
+    original_session_id?: string
+    limit?: number
+  }): Promise<ReplaysListResponse> => {
+    const res = await api.get('/debug/replays', { params })
+    return res.data
+  },
+
+  // Delete a session
+  deleteSession: async (sessionId: string): Promise<{ message: string; session_id: string }> => {
+    const res = await api.delete(`/debug/sessions/${sessionId}`)
+    return res.data
+  },
+
+  // Cleanup old sessions
+  cleanupOldSessions: async (days: number): Promise<{ message: string; deleted_count: number; days: number }> => {
+    const res = await api.post('/debug/cleanup', null, { params: { days } })
+    return res.data
+  }
+}

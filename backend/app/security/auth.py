@@ -2,12 +2,12 @@
 认证与授权模块
 遵循 Palantir 原则：安全内嵌，属性级访问控制
 """
-from datetime import datetime, timedelta
+import bcrypt
+from datetime import datetime, timedelta, UTC
 from typing import Optional, List
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.ontology import Employee, EmployeeRole
@@ -17,23 +17,23 @@ SECRET_KEY = "pms-secret-key-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 
 def get_password_hash(password: str) -> str:
     """密码哈希"""
-    return pwd_context.hash(password)
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """验证密码"""
-    return pwd_context.verify(plain_password, hashed_password)
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
 
 def create_access_token(employee_id: int, role: EmployeeRole) -> str:
     """创建 JWT token"""
-    expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+    expire = datetime.now(UTC) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
     to_encode = {
         "sub": str(employee_id),
         "role": role.value,

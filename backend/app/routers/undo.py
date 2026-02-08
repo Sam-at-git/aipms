@@ -5,7 +5,7 @@
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.database import get_db
 from app.security.auth import get_current_user, require_receptionist_or_manager, require_manager
@@ -26,9 +26,7 @@ class SnapshotResponse(BaseModel):
     entity_id: int
     is_undone: bool
     expires_at: str
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UndoResult(BaseModel):

@@ -15,6 +15,8 @@ dependencies = [
     "httpx>=0.26.0",
     "python-multipart>=0.0.6",
     "openai>=1.0.0",
+    "pyyaml>=6.0.3",
+    "sqlite-vec>=0.1.6",
 ]
 
 [build-system]

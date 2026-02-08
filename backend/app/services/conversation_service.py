@@ -415,6 +415,23 @@ class ConversationService:
 
         return messages
 
+    def get_last_active_conversation(self, user_id: int) -> tuple[List[ConversationMessage], Optional[str]]:
+        """
+        获取用户最后一次活跃对话的所有消息
+
+        Args:
+            user_id: 用户 ID
+
+        Returns:
+            (消息列表, 日期字符串) 元组，无记录时返回 ([], None)
+        """
+        dates = self.get_available_dates(user_id)
+        if not dates:
+            return [], None
+        last_date = dates[0]  # 最新日期
+        messages = self.get_messages_by_date(user_id, last_date)
+        return messages, last_date
+
     def get_last_message(self, user_id: int) -> Optional[ConversationMessage]:
         """
         获取最后一条消息
@@ -427,6 +444,27 @@ class ConversationService:
         """
         messages, _ = self.get_messages(user_id, limit=1)
         return messages[0] if messages else None
+
+    def get_users_with_conversations(self) -> List[int]:
+        """
+        获取所有有聊天记录的用户 ID 列表
+
+        Returns:
+            用户 ID 列表（按 ID 排序）
+        """
+        user_ids = []
+        if not self.base_dir.exists():
+            return user_ids
+        for entry in self.base_dir.iterdir():
+            if entry.is_dir():
+                try:
+                    user_id = int(entry.name)
+                    # 确认目录下有 .jsonl 文件
+                    if list(entry.glob('*.jsonl')):
+                        user_ids.append(user_id)
+                except ValueError:
+                    continue
+        return sorted(user_ids)
 
     def generate_topic_id(self) -> str:
         """生成新的话题 ID"""

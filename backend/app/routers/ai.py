@@ -36,6 +36,7 @@ class AIMessageWithContext(BaseModel):
     content: str
     topic_id: Optional[str] = None
     follow_up_context: Optional[dict] = None  # 追问上下文
+    language: Optional[str] = None  # 语言偏好: "zh" | "en" | None(自动检测)
 
 
 class AIResponseWithHistory(BaseModel):
@@ -116,7 +117,8 @@ def chat(
         user=current_user,
         conversation_history=conversation_history,
         topic_id=message.topic_id,
-        follow_up_context=follow_up_context
+        follow_up_context=follow_up_context,
+        language=message.language
     )
 
     # 确定 topic_id
@@ -169,14 +171,28 @@ def execute_action(
         return {"message": "操作已取消"}
 
     service = AIService(db)
-    result = service.execute_action(confirmation.action.model_dump(), current_user)
 
-    # 保存执行结果
-    action_desc = confirmation.action.description or confirmation.action.action_type
-    conv_service.save_message_pair(
-        user_id=current_user.id,
-        user_content=f"[确认执行: {action_desc}]",
-        assistant_content=result.get('message', '操作已完成')
-    )
+    try:
+        result = service.execute_action(confirmation.action.model_dump(), current_user)
 
-    return result
+        # 保存执行结果
+        action_desc = confirmation.action.description or confirmation.action.action_type
+        conv_service.save_message_pair(
+            user_id=current_user.id,
+            user_content=f"[确认执行: {action_desc}]",
+            assistant_content=result.get('message', '操作已完成')
+        )
+
+        return result
+    except Exception as e:
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error executing action: {e}\n{traceback.format_exc()}")
+
+        # 返回错误信息给前端
+        return {
+            "success": False,
+            "message": f"操作执行失败: {str(e)}",
+            "error": str(e)
+        }

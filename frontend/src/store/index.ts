@@ -37,6 +37,7 @@ interface ChatState {
   isSearching: boolean
   searchKeyword: string
   historyLoaded: boolean
+  language: string | null  // null = auto-detect, "zh", "en"
   addMessage: (message: ChatMessage) => void
   prependMessages: (messages: ChatMessage[]) => void
   setMessages: (messages: ChatMessage[]) => void
@@ -48,6 +49,7 @@ interface ChatState {
   setIsSearching: (isSearching: boolean) => void
   setSearchKeyword: (keyword: string) => void
   setHistoryLoaded: (loaded: boolean) => void
+  setLanguage: (lang: string | null) => void
   clearMessages: () => void
   clearSearch: () => void
 }
@@ -62,6 +64,7 @@ export const useChatStore = create<ChatState>((set) => ({
   isSearching: false,
   searchKeyword: '',
   historyLoaded: false,
+  language: localStorage.getItem('chat_language') as string | null,
   addMessage: (message) => set((state) => ({
     messages: [...state.messages, message]
   })),
@@ -77,6 +80,14 @@ export const useChatStore = create<ChatState>((set) => ({
   setIsSearching: (isSearching) => set({ isSearching }),
   setSearchKeyword: (keyword) => set({ searchKeyword: keyword }),
   setHistoryLoaded: (loaded) => set({ historyLoaded: loaded }),
+  setLanguage: (lang) => {
+    if (lang) {
+      localStorage.setItem('chat_language', lang)
+    } else {
+      localStorage.removeItem('chat_language')
+    }
+    set({ language: lang })
+  },
   clearMessages: () => set({
     messages: [],
     hasMore: false,

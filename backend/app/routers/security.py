@@ -2,7 +2,7 @@
 安全事件路由
 提供安全事件查询、统计、告警管理API
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -29,7 +29,7 @@ async def list_security_events(
     current_user: Employee = Depends(require_sysadmin)
 ):
     """获取安全事件列表"""
-    start_time = datetime.utcnow() - timedelta(hours=hours)
+    start_time = datetime.now(UTC) - timedelta(hours=hours)
 
     # 转换枚举
     event_type_enum = None

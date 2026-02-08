@@ -1,652 +1,523 @@
+#!/usr/bin/env python3
 """
-模拟一年运营数据脚本
-生成周期：2025年2月7日 - 2026年2月6日
-规则：周末入住率90-100%，工作日60-85%
+生成半年运营数据脚本
 """
-import sys
-sys.path.insert(0, '.')
-
 import random
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta, date
 from decimal import Decimal
-from app.database import SessionLocal, init_db
+from sqlalchemy.orm import Session
+from app.database import SessionLocal, engine, Base
 from app.models.ontology import (
-    Room, RoomType, RoomStatus, Guest, Reservation, ReservationStatus,
-    StayRecord, StayRecordStatus, Bill, Payment, PaymentMethod, Employee, EmployeeRole
+    Room, RoomType, Guest, Reservation, StayRecord, Bill,
+    Payment, Task, Employee, TaskStatus, TaskType,
+    ReservationStatus, StayRecordStatus, PaymentMethod,
+    GuestTier, RoomStatus
 )
 
+# 常用中文姓名
+SURNAMES = ["王", "李", "张", "刘", "陈", "杨", "黄", "赵", "周", "吴", "徐", "孙", "马", "朱", "胡", "郭", "何", "高", "林", "罗"]
+NAMES = ["伟", "芳", "娜", "敏", "静", "丽", "强", "磊", "军", "洋", "勇", "艳", "杰", "涛", "明", "超", "秀英", "娟", "英", "华", "红", "平", "刚", "桂英", "玉兰"]
 
-# ============ 随机数据生成器 ============
+CITIES = ["北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "武汉", "西安", "重庆", "天津", "苏州"]
 
-CHINESE_SURNAMES = [
-    '王', '李', '张', '刘', '陈', '杨', '黄', '赵', '周', '吴',
-    '徐', '孙', '马', '胡', '朱', '郭', '何', '罗', '高', '林'
-]
+SPECIAL_REQUESTS = ["需要高楼层", "要安静房间", "不要靠马路", "需要无烟房", "希望有窗", "延迟退房", "提前入住", "需要接站", "生日布置", "蜜月房间", "", "", ""]
+CANCEL_REASONS = ["行程变更", "临时有事", "找到其他住宿", "天气原因", "身体不适", "工作调整", ""]
+MAINTENANCE_NOTES = ["空调不制冷", "水龙头漏水", "灯泡损坏", "门锁故障", "电视遥控器失灵", "WiFi信号弱", "马桶冲水有问题", "窗户卡住", "墙纸脱落", "地毯污渍"]
 
-CHINESE_NAMES = [
-    '伟', '芳', '娜', '敏', '静', '丽', '强', '磊', '军', '洋',
-    '勇', '艳', '杰', '娟', '涛', '明', '超', '秀英', '霞', '平',
-    '刚', '桂英', '玉兰', '萍', '毅', '浩', '宇', '轩', '然', '凯'
-]
-
-def generate_random_name():
-    """生成随机中文姓名"""
-    surname = random.choice(CHINESE_SURNAMES)
-    if random.random() < 0.3:
-        # 单名
-        return surname + random.choice(CHINESE_NAMES)
-    else:
-        # 双名
-        return surname + random.choice(CHINESE_NAMES) + random.choice(CHINESE_NAMES)
+RESERVATION_COUNTER = 0
 
 
-def generate_random_phone():
-    """生成随机手机号"""
-    return f"1{random.choice([3, 5, 7, 8, 9])}{random.randint(100000000, 999999999)}"
+def random_phone():
+    return f"13{random.randint(0, 9)}{random.randint(1000, 9999)}{random.randint(1000, 9999)}"
 
 
-def generate_id_number():
-    """生成随机身份证号"""
-    return f"{random.randint(110000, 650000)}{random.randint(19900101, 20051231)}{random.randint(1000, 9999)}"
+def random_name():
+    return f"{random.choice(SURNAMES)}{random.choice(NAMES)}"
 
 
-# ============ 入住率配置 ============
-
-START_DATE = date(2025, 2, 7)
-END_DATE = date(2026, 2, 6)
-
-WEEKEND_OCCUPANCY_MIN = 0.90  # 周末最低 90%
-WEEKEND_OCCUPANCY_MAX = 1.00  # 周末最高 100%
-WEEKDAY_OCCUPANCY_MIN = 0.60  # 工作日最低 60%
-WEEKDAY_OCCUPANCY_MAX = 0.85  # 工作日最高 85%
+def get_price_for_date(room_type_id: int, target_date: date, base_prices: dict) -> Decimal:
+    base = base_prices[room_type_id]
+    if target_date.weekday() >= 5:
+        return base * Decimal('1.2')
+    return base
 
 
-def is_weekend(d: date) -> bool:
-    """判断是否为周末"""
-    return d.weekday() in [5, 6]  # 5=周六, 6=周日
-
-
-def get_target_occupancy(d: date) -> float:
-    """获取指定日期的目标入住率"""
-    if is_weekend(d):
-        return random.uniform(WEEKEND_OCCUPANCY_MIN, WEEKEND_OCCUPANCY_MAX)
-    else:
-        return random.uniform(WEEKDAY_OCCUPANCY_MIN, WEEKDAY_OCCUPANCY_MAX)
-
-
-def get_room_type_distribution():
-    """返回房型分布比例（与实际房间数量匹配）"""
-    # 根据init_data.py的房间分布：
-    # 标间：2楼5间 + 3楼5间 + 4楼5间 = 15间
-    # 大床房：2楼5间 + 3楼5间 + 4楼3间 + 5楼2间 = 15间
-    # 豪华间：4楼2间 + 5楼8间 = 10间
-    return {'标间': 15, '大床房': 15, '豪华间': 10}
-
-
-# ============ 核心生成逻辑 ============
-
-class OperationalDataGenerator:
-    """运营数据生成器"""
-
-    def __init__(self, db):
-        self.db = db
-        self.rooms = []
-        self.room_types = []
-        self.employees = []
-        self.guests = {}  # phone -> Guest
-        self.used_reservation_numbers = set()
-
-        # 房间占用记录：date -> set(room_id)
-        self.room_occupancy = {}
-
-        # 生成的数据
-        self.generated_guests = []
-        self.generated_reservations = []
-        self.generated_stay_records = []
-        self.generated_bills = []
-        self.generated_payments = []
-
-    def load_existing_data(self):
-        """加载现有基础数据"""
-        self.rooms = self.db.query(Room).filter(Room.is_active == True).all()
-        self.room_types = self.db.query(RoomType).all()
-        self.employees = self.db.query(Employee).filter(Employee.is_active == True).all()
-
-        print(f"加载 {len(self.rooms)} 间房间")
-        print(f"加载 {len(self.room_types)} 种房型")
-        print(f"加载 {len(self.employees)} 名员工")
-
-        # 初始化占用记录
-        for d in range((END_DATE - START_DATE).days + 1):
-            current_date = START_DATE + timedelta(days=d)
-            self.room_occupancy[current_date] = set()
-
-    def get_or_create_guest(self, phone: str) -> Guest:
-        """获取或创建客人"""
-        if phone in self.guests:
-            return self.guests[phone]
-
-        existing = self.db.query(Guest).filter(Guest.phone == phone).first()
-        if existing:
-            self.guests[phone] = existing
-            return existing
+def generate_guests(db: Session, count: int = 200):
+    guests = []
+    for i in range(count):
+        is_repeat = random.random() < 0.3
+        tier = GuestTier.NORMAL
+        if is_repeat:
+            tier_roll = random.random()
+            if tier_roll < 0.6: tier = GuestTier.SILVER
+            elif tier_roll < 0.85: tier = GuestTier.GOLD
+            else: tier = GuestTier.PLATINUM
 
         guest = Guest(
-            name=generate_random_name(),
-            phone=phone,
-            id_number=generate_id_number(),
-            tier=random.choices(
-                ['normal', 'silver', 'gold', 'platinum'],
-                weights=[70, 20, 8, 2]
-            )[0],
-            total_stays=0,
-            total_amount=Decimal('0'),
-            is_blacklisted=False
+            name=random_name(),
+            id_type="身份证",
+            id_number=f"{random.randint(110000, 650000)}{random.randint(1970, 2002)}{random.randint(1, 12):02d}{random.randint(1, 28):02d}{random.randint(1000, 9999)}",
+            phone=random_phone(),
+            email=f"guest{i}@example.com" if random.random() < 0.5 else None,
+            tier=tier.value,
+            total_stays=random.randint(1, 20) if is_repeat else 1,
+            total_amount=Decimal(str(random.randint(500, 50000))) if is_repeat else Decimal('0'),
+            is_blacklisted=random.random() < 0.01,
+            notes=f"从 {random.choice(CITIES)} 来" if random.random() < 0.3 else None
         )
-        self.db.add(guest)
-        self.db.flush()
+        db.add(guest)
+        guests.append(guest)
+    db.commit()
+    return guests
 
-        self.guests[phone] = guest
-        self.generated_guests.append(guest)
-        return guest
 
-    def generate_reservation_number(self) -> str:
-        """生成唯一预订号"""
-        while True:
-            res_no = f"RES{datetime.now().strftime('%Y%m%d')}{random.randint(1000, 9999)}"
-            if res_no not in self.used_reservation_numbers:
-                self.used_reservation_numbers.add(res_no)
-                return res_no
+def generate_reservations(db, guests, rooms, room_types, base_prices, employees, start_date, end_date):
+    global RESERVATION_COUNTER
+    reservations = []
+    current_date = start_date
 
-    def get_available_rooms(self, target_date: date, room_type_id: int = None) -> list[Room]:
-        """获取指定日期可用的房间"""
-        occupied = self.room_occupancy.get(target_date, set())
+    while current_date <= end_date:
+        weekday = current_date.weekday()
+        month = current_date.month
+        if month in [8, 10]: base_bookings = 8
+        elif month in [1, 2]: base_bookings = 3
+        else: base_bookings = 5
 
-        available = []
-        for room in self.rooms:
-            if room.id in occupied:
-                continue
-            if room_type_id and room.room_type_id != room_type_id:
-                continue
-            available.append(room)
+        if weekday >= 5: daily_bookings = base_bookings + random.randint(2, 5)
+        else: daily_bookings = base_bookings + random.randint(-2, 3)
 
-        return available
+        for _ in range(max(1, daily_bookings)):
+            days_ahead = random.randint(1, 14)
+            check_in = current_date + timedelta(days=days_ahead)
+            if check_in > end_date: continue
 
-    def is_room_available(self, room: Room, start_date: date, end_date: date) -> bool:
-        """检查房间在日期范围内是否可用"""
-        for d in range((end_date - start_date).days):
-            check_date = start_date + timedelta(days=d)
-            if room.id in self.room_occupancy.get(check_date, set()):
-                return False
-        return True
+            nights = random.choices([1, 2, 3, 4, 5, 6, 7], weights=[30, 35, 20, 8, 4, 2, 1])[0]
+            check_out = check_in + timedelta(days=nights)
 
-    def occupy_room(self, room: Room, start_date: date, end_date: date):
-        """占用房间（记录入住）"""
-        for d in range((end_date - start_date).days):
-            check_date = start_date + timedelta(days=d)
-            if check_date not in self.room_occupancy:
-                self.room_occupancy[check_date] = set()
-            self.room_occupancy[check_date].add(room.id)
+            guest = random.choice(guests)
+            room_type_id = random.choice(list(room_types.keys()))
 
-    def get_room_type_by_name(self, name: str) -> RoomType:
-        """根据名称获取房型"""
-        for rt in self.room_types:
-            if rt.name == name:
-                return rt
-        return self.room_types[0]
+            total_amount = Decimal('0')
+            for i in range(nights):
+                night_date = check_in + timedelta(days=i)
+                total_amount += get_price_for_date(room_type_id, night_date, base_prices)
 
-    def get_front_desk_staff(self) -> Employee:
-        """获取前台员工"""
-        front_desk = [e for e in self.employees if e.role == EmployeeRole.RECEPTIONIST]
-        return random.choice(front_desk) if front_desk else self.employees[0]
+            if check_in < date.today():
+                status_roll = random.random()
+                if status_roll < 0.7: status = ReservationStatus.COMPLETED
+                elif status_roll < 0.85: status = ReservationStatus.CANCELLED
+                else: status = ReservationStatus.NO_SHOW
+            elif check_in == date.today():
+                status = random.choice([ReservationStatus.CONFIRMED, ReservationStatus.CHECKED_IN])
+            else:
+                if random.random() < 0.1: status = ReservationStatus.CANCELLED
+                else: status = ReservationStatus.CONFIRMED
 
-    def get_room_price(self, room: Room, check_in_date: date) -> Decimal:
-        """获取房间价格（考虑周末）"""
-        room_type = next(rt for rt in self.room_types if rt.id == room.room_type_id)
+            RESERVATION_COUNTER += 1
+            reservation_no = f"RES{check_in.strftime('%Y%m%d')}{RESERVATION_COUNTER:05d}"
 
-        # 周末价
-        if is_weekend(check_in_date):
-            weekend_prices = {'标间': Decimal('358.00'), '大床房': Decimal('398.00'), '豪华间': Decimal('558.00')}
-            return weekend_prices.get(room_type.name, room_type.base_price)
-
-        return room_type.base_price
-
-    def is_holiday(self, d: date) -> bool:
-        """判断是否为节假日（简化版）"""
-        # 春节 (2025年: 1月28日-2月3日, 2026年: 2月17日-2月23日)
-        spring_festival_2025_start = date(2025, 1, 28)
-        spring_festival_2025_end = date(2025, 2, 5)
-        spring_festival_2026_start = date(2026, 2, 14)
-        spring_festival_2026_end = date(2026, 2, 23)
-
-        # 国庆节 (10月1-7日)
-        national_day_start = date(d.year, 10, 1)
-        national_day_end = date(d.year, 10, 7)
-
-        # 劳动节 (5月1-5日)
-        labor_day_start = date(d.year, 5, 1)
-        labor_day_end = date(d.year, 5, 5)
-
-        # 端午节 (2025年: 5月31日-6月2日, 2026年: 6月19日-6月21日)
-        dragon_boat_2025_start = date(2025, 5, 31)
-        dragon_boat_2025_end = date(2025, 6, 2)
-        dragon_boat_2026_start = date(2026, 6, 19)
-        dragon_boat_2026_end = date(2026, 6, 21)
-
-        # 中秋节 (2025年: 10月6日-10月8日, 2026年: 9月25日-9月27日)
-        mid_autumn_2025_start = date(2025, 10, 6)
-        mid_autumn_2025_end = date(2025, 10, 8)
-        mid_autumn_2026_start = date(2026, 9, 25)
-        mid_autumn_2026_end = date(2026, 9, 27)
-
-        # 清明节 (4月4-6日)
-        qingming_start = date(d.year, 4, 4)
-        qingming_end = date(d.year, 4, 6)
-
-        # 元旦 (1月1-3日)
-        new_year_start = date(d.year, 1, 1)
-        new_year_end = date(d.year, 1, 3)
-
-        return (
-            (spring_festival_2025_start <= d <= spring_festival_2025_end) or
-            (spring_festival_2026_start <= d <= spring_festival_2026_end) or
-            (national_day_start <= d <= national_day_end) or
-            (labor_day_start <= d <= labor_day_end) or
-            (dragon_boat_2025_start <= d <= dragon_boat_2025_end) or
-            (dragon_boat_2026_start <= d <= dragon_boat_2026_end) or
-            (mid_autumn_2025_start <= d <= mid_autumn_2025_end) or
-            (mid_autumn_2026_start <= d <= mid_autumn_2026_end) or
-            (qingming_start <= d <= qingming_end) or
-            (new_year_start <= d <= new_year_end)
-        )
-
-    def get_seasonal_factor(self, d: date) -> float:
-        """获取季节性因子（影响入住率）"""
-        # 春季(3-5月): 1.0, 夏季(6-8月): 1.05, 秋季(9-11月): 1.0, 冬季(12-2月): 0.95
-        month = d.month
-        if month in [6, 7, 8]:
-            return 1.05  # 夏季旅游旺季
-        elif month in [12, 1, 2]:
-            return 0.95  # 冬季略淡
-        else:
-            return 1.0
-
-    def generate_day_reservations(self, target_date: date):
-        """为指定日期生成预订和入住"""
-        # 获取基础入住率
-        base_occupancy = get_target_occupancy(target_date)
-
-        # 应用季节性因子
-        seasonal_factor = self.get_seasonal_factor(target_date)
-
-        # 节假日额外提升入住率
-        if self.is_holiday(target_date):
-            seasonal_factor *= 1.05  # 节假日更高
-
-        target_occupancy = min(1.0, base_occupancy * seasonal_factor)
-        total_rooms = len(self.rooms)
-        target_occupied = int(total_rooms * target_occupancy)
-
-        # 计算当前已被占用的房间数
-        already_occupied = len(self.room_occupancy.get(target_date, set()))
-        needed = max(0, target_occupied - already_occupied)
-
-        if needed <= 0:
-            return
-
-        # 获取可用房间
-        available_rooms = self.get_available_rooms(target_date)
-
-        # 随机选择需要的房间数量
-        selected_rooms = random.sample(available_rooms, min(needed, len(available_rooms)))
-
-        for room in selected_rooms:
-            self.generate_single_reservation(room, target_date)
-
-    def generate_single_reservation(self, room: Room, check_in_date: date):
-        """生成单个预订"""
-        # 随机决定入住天数：1-5天，周末倾向于更长
-        if is_weekend(check_in_date):
-            stay_days = random.choices([1, 2, 3, 4], weights=[20, 40, 30, 10])[0]
-        else:
-            stay_days = random.choices([1, 2, 3, 4], weights=[40, 35, 20, 5])[0]
-
-        check_out_date = check_in_date + timedelta(days=stay_days)
-
-        # 确保不超过结束日期
-        if check_out_date > END_DATE + timedelta(days=7):  # 允许超出一周退房
-            check_out_date = END_DATE + timedelta(days=1)
-            stay_days = (check_out_date - check_in_date).days
-
-        if stay_days <= 0:
-            return
-
-        # 创建/获取客人
-        phone = generate_random_phone()
-        guest = self.get_or_create_guest(phone)
-
-        # 决定是否有预订（80%有预订，20% walk-in）
-        has_reservation = random.random() < 0.8
-
-        room_type = next(rt for rt in self.room_types if rt.id == room.room_type_id)
-        price_per_night = self.get_room_price(room, check_in_date)
-        total_amount = price_per_night * stay_days
-
-        front_desk = self.get_front_desk_staff()
-
-        if has_reservation:
-            # 创建预订
             reservation = Reservation(
-                reservation_no=self.generate_reservation_number(),
+                reservation_no=reservation_no,
                 guest_id=guest.id,
-                room_type_id=room_type.id,
-                check_in_date=check_in_date,
-                check_out_date=check_out_date,
-                adult_count=random.choices([1, 2], weights=[30, 70])[0],
-                child_count=random.choices([0, 1], weights=[80, 20])[0],
-                status=ReservationStatus.CONFIRMED,
+                room_type_id=room_type_id,
+                check_in_date=check_in,
+                check_out_date=check_out,
+                room_count=1,
+                adult_count=random.choices([1, 2, 3, 4], weights=[10, 70, 15, 5])[0],
+                child_count=random.choices([0, 1, 2], weights=[80, 15, 5])[0],
+                status=status,
                 total_amount=total_amount,
-                prepaid_amount=Decimal('0'),
-                special_requests=random.choices(['', '高层房间', '无烟房', '安静房间'], weights=[70, 10, 10, 10])[0],
-                estimated_arrival=f"{random.randint(12, 22)}:00",
-                created_by=front_desk.id
+                prepaid_amount=total_amount * Decimal('0.3') if status == ReservationStatus.CONFIRMED else Decimal('0'),
+                special_requests=random.choice(SPECIAL_REQUESTS) or None,
+                estimated_arrival=f"{random.randint(12, 22)}:00" if random.random() < 0.5 else None,
+                cancel_reason=random.choice(CANCEL_REASONS) if status == ReservationStatus.CANCELLED else None,
+                created_at=datetime.combine(current_date, datetime.min.time()) + timedelta(hours=random.randint(8, 20)),
+                created_by=random.choice([e for e in employees if e.role in ['manager', 'receptionist']]).id
             )
-            self.db.add(reservation)
-            self.db.flush()
-            self.generated_reservations.append(reservation)
-            reservation_id = reservation.id
-        else:
-            reservation_id = None
+            db.add(reservation)
+            reservations.append(reservation)
 
-        # 创建入住记录
+        current_date += timedelta(days=1)
+
+    db.commit()
+    return reservations
+
+
+def generate_stay_records(db, reservations, rooms, employees, room_types, base_prices):
+    stay_records = []
+    bills = []
+    payments = []
+    room_occupancy = {}
+
+    checked_in = [r for r in reservations if r.status in [ReservationStatus.CHECKED_IN, ReservationStatus.COMPLETED]]
+
+    for res in sorted(checked_in, key=lambda r: r.check_in_date):
+        check_in_date = res.check_in_date
+
+        available_rooms = []
+        for room in rooms:
+            if room.room_type_id != res.room_type_id: continue
+            if room.id in room_occupancy and room_occupancy[room.id] > check_in_date: continue
+            available_rooms.append(room)
+
+        if not available_rooms: continue
+
+        room = random.choice(available_rooms)
+        room_occupancy[room.id] = res.check_out_date
+
         check_in_time = datetime.combine(check_in_date, datetime.min.time()) + timedelta(
-            hours=random.randint(13, 22),
-            minutes=random.randint(0, 59)
-        )
+            hours=random.randint(14, 18), minutes=random.randint(0, 59))
 
-        stay_record = StayRecord(
-            reservation_id=reservation_id,
-            guest_id=guest.id,
+        check_out_time = None
+        if res.status == ReservationStatus.COMPLETED:
+            check_out_time = datetime.combine(res.check_out_date, datetime.min.time()) + timedelta(
+                hours=random.randint(8, 12), minutes=random.randint(0, 59))
+
+        room_charge = Decimal('0')
+        nights = (res.check_out_date - check_in_date).days
+        for i in range(nights):
+            night_date = check_in_date + timedelta(days=i)
+            room_charge += get_price_for_date(room.room_type_id, night_date, base_prices)
+
+        stay = StayRecord(
+            reservation_id=res.id,
+            guest_id=res.guest_id,
             room_id=room.id,
             check_in_time=check_in_time,
-            expected_check_out=check_out_date,
+            check_out_time=check_out_time,
+            expected_check_out=res.check_out_date,
             deposit_amount=Decimal(str(random.randint(200, 500))),
-            status=StayRecordStatus.ACTIVE,
-            created_by=front_desk.id
+            status=StayRecordStatus.CHECKED_OUT if check_out_time else StayRecordStatus.ACTIVE,
+            created_at=check_in_time,
+            created_by=random.choice([e for e in employees if e.role in ['manager', 'receptionist']]).id
         )
-        self.db.add(stay_record)
-        self.db.flush()
-        self.generated_stay_records.append(stay_record)
+        db.add(stay)
+        db.flush()
+        stay_records.append(stay)
 
-        # 创建账单
-        bill = Bill(
-            stay_record_id=stay_record.id,
-            total_amount=total_amount,
-            paid_amount=Decimal('0'),
-            is_settled=False
-        )
-        self.db.add(bill)
-        self.db.flush()
-        self.generated_bills.append(bill)
+        bill = Bill(stay_record_id=stay.id, total_amount=room_charge, paid_amount=Decimal('0'), is_settled=False)
 
-        # 随机决定是否预付（30%预付）
-        if random.random() < 0.3:
-            prepaid_ratio = random.uniform(0.3, 1.0)
-            prepaid_amount = total_amount * Decimal(str(prepaid_ratio))
-            prepaid_amount = prepaid_amount.quantize(Decimal('0.01'))
+        if check_out_time:
+            payment_roll = random.random()
+            if payment_roll < 0.85:
+                paid = room_charge
+                bill.is_settled = True
+            elif payment_roll < 0.95:
+                paid = room_charge * Decimal('0.5')
+                bill.is_settled = False
+            else:
+                paid = Decimal('0')
+                bill.is_settled = False
 
-            payment = Payment(
-                bill_id=bill.id,
-                amount=prepaid_amount,
-                method=random.choices([PaymentMethod.CASH, PaymentMethod.CARD], weights=[40, 60])[0],
-                created_by=front_desk.id
-            )
-            self.db.add(payment)
-            self.generated_payments.append(payment)
+            bill.total_amount = room_charge
+            bill.paid_amount = paid
 
-            # 更新账单
-            bill.paid_amount = prepaid_amount
-            if has_reservation:
-                reservation = self.db.query(Reservation).filter(Reservation.id == reservation_id).first()
-                if reservation:
-                    reservation.prepaid_amount = prepaid_amount
-
-        # 标记房间被占用
-        self.occupy_room(room, check_in_date, check_out_date)
-
-        # 更新客人统计
-        guest.total_stays += 1
-        guest.total_amount += total_amount
-
-        # 有预订的更新状态
-        if has_reservation:
-            reservation.status = ReservationStatus.CHECKED_IN
-
-    def generate_checkouts(self, target_date: date):
-        """处理指定日期的退房"""
-        # 查找应该在这一天退房的活跃入住记录
-        checking_out = []
-        for stay in self.generated_stay_records:
-            if stay.status == StayRecordStatus.ACTIVE:
-                expected_checkout = stay.expected_check_out if isinstance(stay.expected_check_out, date) else stay.expected_check_out
-                if expected_checkout == target_date:
-                    checking_out.append(stay)
-
-        for stay in checking_out:
-            # 随机决定是否延迟退房（10%概率）
-            if random.random() < 0.1:
-                continue  # 延迟退房，稍后处理
-
-            self.process_checkout(stay, target_date)
-
-    def process_checkout(self, stay: StayRecord, checkout_date: date):
-        """处理退房"""
-        checkout_time = datetime.combine(checkout_date, datetime.min.time()) + timedelta(
-            hours=random.randint(8, 13),
-            minutes=random.randint(0, 59)
-        )
-
-        stay.check_out_time = checkout_time
-        stay.status = StayRecordStatus.CHECKED_OUT
-
-        # 获取账单并计算最终金额
-        bill = stay.bill
-        if bill:
-            # 如果有未付金额，生成支付
-            if bill.balance > 0:
+            if paid > 0:
                 payment = Payment(
-                    bill_id=bill.id,
-                    amount=bill.balance,
-                    method=random.choices([PaymentMethod.CASH, PaymentMethod.CARD], weights=[50, 50])[0],
-                    created_by=self.get_front_desk_staff().id
+                    bill_id=0,
+                    amount=paid,
+                    method=random.choice([PaymentMethod.CASH, PaymentMethod.CARD]),
+                    payment_time=check_out_time + timedelta(minutes=random.randint(5, 30)),
+                    remark="房费结清" if bill.is_settled else "部分支付",
+                    created_by=random.choice([e for e in employees if e.role in ['manager', 'receptionist']]).id
                 )
-                self.db.add(payment)
-                self.generated_payments.append(payment)
-                bill.paid_amount += bill.balance
+                db.add(payment)
+                db.flush()
+                payments.append(payment)
 
-            bill.is_settled = True
+        db.add(bill)
+        db.flush()
+        bills.append(bill)
 
-        # 释放房间（但checkout_date当天仍算占用）
-        room = stay.room
-        # 退房后房间变成vacant_dirty状态（这里只记录数据释放，不修改房间状态因为那是实时状态）
+    db.commit()
+    return stay_records, bills, payments
 
-    def generate_cancellations(self):
-        """生成少量取消预订"""
-        # 随机取消一些已确认的预订（约5%）
-        confirmed_reservations = [r for r in self.generated_reservations if r.status == ReservationStatus.CONFIRMED]
 
-        num_to_cancel = int(len(confirmed_reservations) * 0.05)
+def generate_tasks(db, stay_records, rooms, employees, start_date, end_date):
+    tasks = []
+    cleaners = [e for e in employees if e.role == 'cleaner'] or employees
 
-        for reservation in random.sample(confirmed_reservations, min(num_to_cancel, len(confirmed_reservations))):
-            # 只取消还没入住的
-            has_stay = any(s.reservation_id == reservation.id for s in self.generated_stay_records)
-            if not has_stay:
-                reservation.status = ReservationStatus.CANCELLED
-                reservation.cancel_reason = random.choice([
-                    '临时有事', '行程变更', '找到了更合适的酒店', '身体不适'
-                ])
+    for stay in stay_records:
+        if stay.status == StayRecordStatus.CHECKED_OUT and stay.check_out_time:
+            task_created = stay.check_out_time + timedelta(minutes=random.randint(5, 30))
+            if task_created.date() > end_date: continue
 
-                # 释放占用的房间
-                self.release_room_occupancy(reservation.check_in_date, reservation.check_out_date, reservation.room_type_id)
+            completion_delay = random.choices([0, 1], weights=[70, 30])[0]
+            task_completed = task_created + timedelta(hours=random.randint(1, 6), days=completion_delay)
 
-    def release_room_occupancy(self, start_date: date, end_date: date, room_type_id: int):
-        """释放取消预订的房间占用"""
-        # 找到这个预订对应的房间并释放
-        for d in range((end_date - start_date).days):
-            check_date = start_date + timedelta(days=d)
-            if check_date in self.room_occupancy:
-                # 这个处理比较复杂，简化处理：不做精确释放
-                pass
+            status = TaskStatus.COMPLETED
+            started_at = task_created + timedelta(minutes=random.randint(10, 60))
+            completed_at = task_completed
 
-    def update_room_statuses(self):
-        """更新所有房间的最终状态"""
-        # 检查今天（模拟结束日）的入住情况
-        today = END_DATE
-        active_stays = [s for s in self.generated_stay_records if s.status == StayRecordStatus.ACTIVE]
+            if random.random() < 0.05:
+                status = TaskStatus.ASSIGNED
+                completed_at = None
 
-        for stay in active_stays:
-            room = stay.room
-            room.status = RoomStatus.OCCUPIED
+            task = Task(
+                room_id=stay.room_id,
+                task_type=TaskType.CLEANING,
+                status=status,
+                assignee_id=random.choice(cleaners).id,
+                priority=random.choices([1, 2, 3], weights=[50, 40, 10])[0],
+                notes="退房后清洁",
+                created_at=task_created,
+                started_at=started_at,
+                completed_at=completed_at,
+                created_by=random.choice([e for e in employees if e.role in ['manager', 'receptionist']]).id
+            )
+            db.add(task)
+            tasks.append(task)
 
-        # 其余房间设为空闲清洁状态
-        occupied_room_ids = {s.room_id for s in active_stays}
-        for room in self.rooms:
-            if room.id not in occupied_room_ids:
-                room.status = RoomStatus.VACANT_CLEAN
+    for room in rooms:
+        maintenance_count = random.choices([0, 0, 1, 1, 2, 3], weights=[30, 30, 20, 12, 6, 2])[0]
+        for _ in range(maintenance_count):
+            task_date = start_date + timedelta(days=random.randint(0, (end_date - start_date).days))
+            task_created = datetime.combine(task_date, datetime.min.time()) + timedelta(hours=random.randint(8, 18))
+            task_completed = task_created + timedelta(days=random.randint(1, 3), hours=random.randint(2, 8))
 
-    def generate(self):
-        """生成所有数据"""
-        print("\n" + "=" * 50)
-        print("开始生成运营数据")
-        print("=" * 50)
+            task = Task(
+                room_id=room.id,
+                task_type=TaskType.MAINTENANCE,
+                status=TaskStatus.COMPLETED,
+                assignee_id=random.choice(cleaners).id if random.random() < 0.6 else None,
+                priority=random.choices([2, 3, 4], weights=[40, 40, 20])[0],
+                notes=random.choice(MAINTENANCE_NOTES),
+                created_at=task_created,
+                started_at=task_created + timedelta(hours=random.randint(1, 4)),
+                completed_at=task_completed,
+                created_by=random.choice([e for e in employees if e.role == 'manager']).id
+            )
+            db.add(task)
+            tasks.append(task)
 
-        # 按日期生成
-        total_days = (END_DATE - START_DATE).days + 1
-        print(f"总天数: {total_days} 天")
+    db.commit()
+    return tasks
 
-        for i in range(total_days):
-            current_date = START_DATE + timedelta(days=i)
-            is_wed = is_weekend(current_date)
-            is_hol = self.is_holiday(current_date)
-            target_occ = get_target_occupancy(current_date)
 
-            # 每30天或最后一天打印一次进度
-            if (i + 1) % 30 == 0 or i == total_days - 1:
-                print(f"[{i+1}/{total_days}] {current_date.strftime('%Y-%m-%d')} "
-                      f"{'周末' if is_wed else '工作日'}{' 节假日' if is_hol else ''} - 目标入住率: {target_occ*100:.0f}%")
+def update_room_status(db, stay_records, tasks):
+    db.query(Room).update({"status": RoomStatus.VACANT_CLEAN})
+    db.flush()
 
-            # 生成当天的预订和入住
-            self.generate_day_reservations(current_date)
+    for stay in stay_records:
+        if stay.status == StayRecordStatus.ACTIVE:
+            room = db.query(Room).get(stay.room_id)
+            if room: room.status = RoomStatus.OCCUPIED
 
-            # 处理当天的退房
-            self.generate_checkouts(current_date)
+    for task in tasks:
+        if task.status in [TaskStatus.PENDING, TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]:
+            room = db.query(Room).get(task.room_id)
+            if room: room.status = RoomStatus.VACANT_DIRTY
 
-        # 生成取消预订
-        print("\n生成取消预订...")
-        self.generate_cancellations()
+    db.commit()
 
-        # 更新房间状态
-        print("更新房间状态...")
-        self.update_room_statuses()
 
-        # 提交所有数据
-        print("\n提交数据到数据库...")
-        self.db.commit()
+def generate_walk_ins(db, guests, rooms, employees, room_types, base_prices, start_date, end_date):
+    stay_records = []
+    bills = []
+    payments = []
+    receptionists = [e for e in employees if e.role in ['manager', 'receptionist']]
 
-        # 统计信息
-        self.print_statistics()
+    current_date = start_date
+    while current_date <= end_date:
+        walk_in_count = random.choices([0, 1, 2, 3], weights=[20, 50, 25, 5])[0]
+        if current_date.weekday() >= 5:
+            walk_in_count = random.choices([0, 1, 2, 3, 4], weights=[10, 40, 30, 15, 5])[0]
 
-    def print_statistics(self):
-        """打印统计信息"""
-        print("\n" + "=" * 50)
-        print("数据生成完成！")
-        print("=" * 50)
+        for _ in range(walk_in_count):
+            # Find available rooms
+            occupied = set()
+            for s in db.query(StayRecord).all():
+                if s.check_in_time.date() <= current_date <= (s.check_out_time.date() if s.check_out_time else date.today()):
+                    if s.status == StayRecordStatus.ACTIVE: occupied.add(s.room_id)
+            for s in stay_records:
+                if s.check_in_time.date() <= current_date <= (s.check_out_time.date() if s.check_out_time else date.today()):
+                    if s.status == StayRecordStatus.ACTIVE: occupied.add(s.room_id)
 
-        print(f"\n新增客人: {len(self.generated_guests)} 位")
-        print(f"生成预订: {len(self.generated_reservations)} 条")
+            available = [r for r in rooms if r.id not in occupied]
+            if not available: continue
 
-        # 预订状态统计
-        res_status = {}
-        for r in self.generated_reservations:
-            status = r.status.value if hasattr(r.status, 'value') else r.status
-            res_status[status] = res_status.get(status, 0) + 1
-        print("  预订状态分布:")
-        for status, count in res_status.items():
-            print(f"    - {status}: {count}")
+            room = random.choice(available)
+            guest = random.choice(guests)
+            nights = random.choices([1, 2, 3, 4, 5], weights=[40, 35, 15, 7, 3])[0]
+            check_in_date = current_date
+            check_out_date = current_date + timedelta(days=nights)
 
-        print(f"\n生成入住记录: {len(self.generated_stay_records)} 条")
+            room_charge = Decimal('0')
+            for i in range(nights):
+                room_charge += get_price_for_date(room.room_type_id, check_in_date + timedelta(days=i), base_prices)
 
-        # 入住状态统计
-        stay_status = {}
-        for s in self.generated_stay_records:
-            status = s.status.value if hasattr(s.status, 'value') else s.status
-            stay_status[status] = stay_status.get(status, 0) + 1
-        print("  入住状态分布:")
-        for status, count in stay_status.items():
-            print(f"    - {status}: {count}")
+            check_in_time = datetime.combine(check_in_date, datetime.min.time()) + timedelta(
+                hours=random.randint(14, 20), minutes=random.randint(0, 59))
 
-        print(f"\n生成账单: {len(self.generated_bills)} 条")
-        print(f"生成支付记录: {len(self.generated_payments)} 条")
+            is_active = (current_date + timedelta(days=nights)) > date.today()
+            status = StayRecordStatus.ACTIVE if is_active else StayRecordStatus.CHECKED_OUT
+            check_out_time = None
+            if not is_active:
+                check_out_time = datetime.combine(check_out_date, datetime.min.time()) + timedelta(hours=random.randint(8, 12))
 
-        # 房间分布
-        print(f"\n房间总数: {len(self.rooms)} 间")
-        room_status_count = {}
-        for room in self.rooms:
-            status = room.status.value if hasattr(room.status, 'value') else room.status
-            room_status_count[status] = room_status_count.get(status, 0) + 1
-        print("  房间状态分布:")
-        for status, count in room_status_count.items():
-            print(f"    - {status}: {count}")
+            stay = StayRecord(
+                reservation_id=None,
+                guest_id=guest.id,
+                room_id=room.id,
+                check_in_time=check_in_time,
+                check_out_time=check_out_time,
+                expected_check_out=check_out_date,
+                deposit_amount=Decimal(str(random.randint(200, 500))),
+                status=status,
+                created_at=check_in_time,
+                created_by=random.choice(receptionists).id
+            )
+            db.add(stay)
+            db.flush()
+            stay_records.append(stay)
 
-        # 计算实际入住率
-        total_room_nights = sum(len(occ) for occ in self.room_occupancy.values())
-        total_possible_nights = len(self.rooms) * len(self.room_occupancy)
-        actual_occupancy = total_room_nights / total_possible_nights if total_possible_nights > 0 else 0
+            bill = Bill(stay_record_id=stay.id, total_amount=room_charge, paid_amount=Decimal('0'), is_settled=False)
 
-        print(f"\n总体入住率: {actual_occupancy * 100:.1f}%")
-        print(f"总间夜数: {total_room_nights}")
-        print(f"可售间夜数: {total_possible_nights}")
+            if check_out_time and random.random() < 0.8:
+                paid = room_charge * Decimal(random.uniform(0.5, 1))
+                payment = Payment(
+                    bill_id=0,
+                    amount=paid,
+                    method=random.choice([PaymentMethod.CASH, PaymentMethod.CARD]),
+                    payment_time=check_out_time + timedelta(minutes=random.randint(5, 60)),
+                    created_by=random.choice(receptionists).id
+                )
+                db.add(payment)
+                db.flush()
+                payments.append(payment)
+                bill.paid_amount = paid
+                bill.is_settled = paid >= room_charge
 
-        # 月度统计
-        print("\n" + "-" * 50)
-        print("月度入住率统计:")
-        print("-" * 50)
+            db.add(bill)
+            db.flush()
+            bills.append(bill)
 
-        monthly_stats = {}
-        for d, occupied_rooms in self.room_occupancy.items():
-            month_key = d.strftime('%Y-%m')
-            if month_key not in monthly_stats:
-                monthly_stats[month_key] = {'occupied': 0, 'days': 0}
-            monthly_stats[month_key]['occupied'] += len(occupied_rooms)
-            monthly_stats[month_key]['days'] += 1
+        current_date += timedelta(days=1)
 
-        for month in sorted(monthly_stats.keys()):
-            stats = monthly_stats[month]
-            avg_occupancy = stats['occupied'] / (stats['days'] * len(self.rooms)) * 100
-            print(f"  {month}: {avg_occupancy:.1f}%")
+    db.commit()
+    return stay_records, bills, payments
 
 
 def main():
-    """主函数"""
-    print("=" * 50)
-    print("AIPMS 运营数据生成器")
-    print("=" * 50)
-    print(f"模拟周期: {START_DATE} 至 {END_DATE} ({(END_DATE - START_DATE).days + 1}天)")
-    print(f"周末入住率: {WEEKEND_OCCUPANCY_MIN * 100}% - {WEEKEND_OCCUPANCY_MAX * 100}%")
-    print(f"工作日入住率: {WEEKDAY_OCCUPANCY_MIN * 100}% - {WEEKDAY_OCCUPANCY_MAX * 100}%")
-    print(f"包含节假日: 春节、国庆、劳动节、端午、中秋、清明、元旦")
+    print("=" * 60)
+    print("生成半年运营数据")
+    print("=" * 60)
 
-    # 创建会话
+    Base.metadata.create_all(bind=engine)
     db = SessionLocal()
 
     try:
-        generator = OperationalDataGenerator(db)
-        generator.load_existing_data()
-        generator.generate()
+        print("\n清空现有数据...")
+        for model in [Payment, Bill, StayRecord, Task, Reservation, Guest, Room, RoomType, Employee]:
+            db.query(model).delete()
+        db.commit()
+        print("✓ 数据清空完成")
 
-        print("\n" + "=" * 50)
-        print("所有数据已写入数据库！")
-        print("=" * 50)
+        print("\n创建房型...")
+        room_types_data = [
+            {"name": "标间", "base_price": Decimal("288.00"), "max_occupancy": 2},
+            {"name": "大床房", "base_price": Decimal("368.00"), "max_occupancy": 2},
+            {"name": "豪华间", "base_price": Decimal("588.00"), "max_occupancy": 3},
+        ]
+        room_types = {}
+        base_prices = {}
+        for rt_data in room_types_data:
+            rt = RoomType(**rt_data)
+            db.add(rt)
+            db.flush()
+            room_types[rt.id] = rt
+            base_prices[rt.id] = rt_data["base_price"]
+        print(f"✓ 创建了 {len(room_types)} 种房型")
+
+        print("\n创建房间...")
+        rooms = []
+        floor_room_nums = {1: range(101, 115), 2: range(201, 215), 3: range(301, 312)}
+        room_type_ids = list(room_types.keys())
+        for floor, room_nums in floor_room_nums.items():
+            for room_num in room_nums:
+                rt_id = room_type_ids[0] if floor == 1 else (
+                    random.choices(room_type_ids, weights=[60, 35, 5])[0] if floor == 2 else
+                    random.choices(room_type_ids, weights=[20, 50, 30])[0]
+                )
+                room = Room(room_number=str(room_num), floor=floor, room_type_id=rt_id, status=RoomStatus.VACANT_CLEAN)
+                rooms.append(room)
+                db.add(room)
+        db.commit()
+        print(f"✓ 创建了 {len(rooms)} 间房间")
+
+        print("\n创建员工...")
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        employees_data = [
+            {"username": "sysadmin", "name": "系统管理员", "phone": "13800000000", "role": "sysadmin"},
+            {"username": "manager", "name": "张经理", "phone": "13800001111", "role": "manager"},
+            {"username": "front1", "name": "李前台", "phone": "13800001112", "role": "receptionist"},
+            {"username": "front2", "name": "王前台", "phone": "13800001113", "role": "receptionist"},
+            {"username": "front3", "name": "赵前台", "phone": "13800001114", "role": "receptionist"},
+            {"username": "cleaner1", "name": "刘阿姨", "phone": "13800002111", "role": "cleaner"},
+            {"username": "cleaner2", "name": "陈阿姨", "phone": "13800002112", "role": "cleaner"},
+        ]
+        employees = []
+        for emp_data in employees_data:
+            emp = Employee(username=emp_data["username"], password_hash=pwd_context.hash(emp_data["username"]),
+                          name=emp_data["name"], phone=emp_data["phone"], role=emp_data["role"], is_active=True)
+            employees.append(emp)
+            db.add(emp)
+        db.commit()
+        print(f"✓ 创建了 {len(employees)} 名员工")
+
+        start_date = date.today() - timedelta(days=180)
+        end_date = date.today()
+        print(f"\n生成数据范围: {start_date} 至 {end_date}")
+
+        print("\n生成客人数据...")
+        guests = generate_guests(db, 300)
+        print(f"✓ 生成了 {len(guests)} 位客人")
+
+        print("\n生成预订数据...")
+        reservations = generate_reservations(db, guests, rooms, room_types, base_prices, employees, start_date, end_date)
+        print(f"✓ 生成了 {len(reservations)} 条预订记录")
+
+        print("\n生成入住记录数据...")
+        stay_records, bills, payments = generate_stay_records(db, reservations, rooms, employees, room_types, base_prices)
+        print(f"✓ 生成了 {len(stay_records)} 条入住记录")
+        print(f"✓ 生成了 {len(bills)} 条账单")
+        print(f"✓ 生成了 {len(payments)} 条支付记录")
+
+        print("\n生成直接入住数据...")
+        walkin_stays, walkin_bills, walkin_payments = generate_walk_ins(db, guests, rooms, employees, room_types, base_prices, start_date, end_date)
+        print(f"✓ 生成了 {len(walkin_stays)} 条直接入住记录")
+
+        all_stays = stay_records + walkin_stays
+
+        print("\n生成任务数据...")
+        tasks = generate_tasks(db, all_stays, rooms, employees, start_date, end_date)
+        print(f"✓ 生成了 {len(tasks)} 条任务记录")
+
+        print("\n更新房间状态...")
+        update_room_status(db, all_stays, tasks)
+
+        print("\n" + "=" * 60)
+        print("数据生成完成！统计信息：")
+        print("=" * 60)
+        for k, v in [("房型", len(room_types)), ("房间", len(rooms)), ("员工", len(employees)),
+                     ("客人", db.query(Guest).count()), ("预订", db.query(Reservation).count()),
+                     ("入住记录", db.query(StayRecord).count()), ("账单", db.query(Bill).count()),
+                     ("支付", db.query(Payment).count()), ("任务", db.query(Task).count())]:
+            print(f"  {k}: {v}")
+
+        print("\n预订状态分布:")
+        for status in ["confirmed", "checked_in", "completed", "cancelled", "no_show"]:
+            print(f"  {status}: {db.query(Reservation).filter_by(status=status).count()}")
+
+        print("\n当前房间状态:")
+        for status in ["vacant_clean", "occupied", "vacant_dirty", "out_of_order"]:
+            print(f"  {status}: {db.query(Room).filter_by(status=status).count()}")
+
+        print("\n" + "=" * 60)
+        print("默认登录账号（密码与用户名相同）：")
+        print("  sysadmin, manager, front1, cleaner1")
+        print("=" * 60)
 
     except Exception as e:
         print(f"\n错误: {e}")
@@ -657,5 +528,5 @@ def main():
         db.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

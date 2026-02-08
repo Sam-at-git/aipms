@@ -10,6 +10,8 @@ import logging
 
 from core.ontology.base import BaseEntity
 from core.engine.state_machine import StateMachine, StateMachineConfig, StateTransition
+from core.ontology.interface import implements
+from core.domain.interfaces import BookableResource, Maintainable
 from app.services.metadata import ontology_entity, ontology_action
 
 if TYPE_CHECKING:
@@ -80,6 +82,7 @@ def _create_room_state_machine(initial_status: str) -> StateMachine:
 
 # ============== Room 领域实体 ==============
 
+@implements(BookableResource, Maintainable)
 @ontology_entity(
     name="Room",
     description="酒店房间本体 - 数字孪生的核心实体",

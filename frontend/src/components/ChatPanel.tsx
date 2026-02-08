@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, Check, X, Search, ChevronUp, ChevronDown } from 'lucide-react'
+import { Send, Loader2, Check, X, Search, ChevronUp, ChevronDown, Globe } from 'lucide-react'
 import { useChatStore } from '../store'
 import { aiApi, conversationApi } from '../services/api'
-import type { AIAction, ChatMessage, CandidateOption, ConversationMessage, FollowUpInfo } from '../types'
+import { getChatText } from '../i18n/chat'
+import type { AIAction, ChatMessage, CandidateOption, ConversationMessage, FollowUpInfo, QueryResultData } from '../types'
 
 // 日期分隔组件
 function DateSeparator({ date }: { date: string }) {
@@ -27,6 +28,56 @@ function DateSeparator({ date }: { date: string }) {
       </div>
     </div>
   )
+}
+
+// 查询结果展示组件
+function QueryResultDisplay({ result }: { result: QueryResultData }) {
+  if (result.display_type === 'table' && result.rows && result.columns) {
+    return (
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="bg-dark-700">
+              {result.columns.map((col, i) => (
+                <th key={i} className="px-2 py-1 text-left text-dark-300 font-medium border-b border-dark-600">
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {result.rows.map((row, rowIdx) => (
+              <tr key={rowIdx} className="hover:bg-dark-700/50">
+                {(result.column_keys || result.columns!).map((key, colIdx) => (
+                  <td key={colIdx} className="px-2 py-1 text-dark-200 border-b border-dark-800">
+                    {String(row[key as string] ?? '')}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="text-[10px] text-dark-500 mt-1">{result.rows.length} 条记录</p>
+      </div>
+    )
+  }
+
+  if (result.display_type === 'chart' && result.data) {
+    // 简单的统计卡片展示（预留图表接口）
+    const entries = Object.entries(result.data).filter(([, v]) => typeof v === 'number' || typeof v === 'string')
+    return (
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        {entries.slice(0, 6).map(([key, value]) => (
+          <div key={key} className="bg-dark-700 rounded px-2 py-1.5">
+            <div className="text-[10px] text-dark-400">{key}</div>
+            <div className="text-sm font-medium text-dark-200">{String(value)}</div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return null
 }
 
 // 将服务端消息转换为本地格式
@@ -64,6 +115,8 @@ export default function ChatPanel() {
   const [showForm, setShowForm] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
   const [searchInput, setSearchInput] = useState('')
+  const [selectedDate, setSelectedDate] = useState('')
+  const [availableDates, setAvailableDates] = useState<string[]>([])
   const [isLoadingMore, setIsLoadingMore] = useState(false)
 
   const {
@@ -85,7 +138,9 @@ export default function ChatPanel() {
     setSearchResults,
     setIsSearching,
     setHistoryLoaded,
-    clearSearch
+    clearSearch,
+    language,
+    setLanguage
   } = useChatStore()
 
   const messagesContainerRef = useRef<HTMLDivElement>(null)
@@ -113,7 +168,7 @@ export default function ChatPanel() {
 
     const loadHistory = async () => {
       try {
-        const response = await conversationApi.getMessages({ limit: 50 })
+        const response = await conversationApi.getLastActive()
         const localMessages = response.messages.map(convertToLocalMessage)
         setMessages(localMessages)
         setHasMore(response.has_more)
@@ -231,7 +286,8 @@ export default function ChatPanel() {
             id: (Date.now() + 1).toString(),
             role: 'assistant',
             content: result.message || '操作已完成',
-            timestamp: new Date()
+            timestamp: new Date(),
+            query_result: result.query_result
           })
           setPendingAction(null)
           setFollowUpInfo(null)
@@ -287,7 +343,8 @@ export default function ChatPanel() {
       const response = await aiApi.chat(
         trimmedInput,
         currentTopicId || undefined,
-        followUpContext
+        followUpContext,
+        language
       )
 
       console.log('DEBUG chat response:', {
@@ -304,6 +361,7 @@ export default function ChatPanel() {
         content: response.message,
         timestamp: new Date(),
         actions: response.suggested_actions,
+        query_result: response.query_result,
         context: {
           topic_id: response.topic_id,
           // 保存追问上下文用于下次请求
@@ -384,7 +442,8 @@ export default function ChatPanel() {
         {
           action_type: followUpInfo.action_type,
           collected_fields: allFields
-        }
+        },
+        language
       )
 
       const aiMessage: ChatMessage = {
@@ -441,21 +500,32 @@ export default function ChatPanel() {
     try {
       const result = await aiApi.execute(action, true)
 
-      addMessage({
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: result.message || '操作已完成',
-        timestamp: new Date()
-      })
+      // 检查操作是否成功
+      if (result.success === false) {
+        addMessage({
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: result.message || '操作执行失败，请稍后重试。',
+          timestamp: new Date()
+        })
+      } else {
+        addMessage({
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: result.message || '操作已完成',
+          timestamp: new Date(),
+          query_result: result.query_result
+        })
+      }
 
       // 清空追问状态
       setFollowUpInfo(null)
       setFormValues({})
-    } catch {
+    } catch (error) {
       addMessage({
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: '操作失败，请稍后重试。',
+        content: `操作失败: ${error instanceof Error ? error.message : '请稍后重试'}`,
         timestamp: new Date()
       })
     } finally {
@@ -551,18 +621,29 @@ export default function ChatPanel() {
     setLoading(true)
     try {
       const result = await aiApi.execute(finalAction, true)
-      addMessage({
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: result.message || '操作已完成。',
-        timestamp: new Date()
-      })
+      // 检查操作是否成功
+      if (result.success === false) {
+        addMessage({
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: result.message || '操作执行失败，请稍后重试。',
+          timestamp: new Date()
+        })
+      } else {
+        addMessage({
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: result.message || '操作已完成。',
+          timestamp: new Date(),
+          query_result: result.query_result
+        })
+      }
       setPendingAction(null)
-    } catch {
+    } catch (error) {
       addMessage({
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: '操作执行失败，请稍后重试。',
+        content: `操作执行失败: ${error instanceof Error ? error.message : '请稍后重试'}`,
         timestamp: new Date()
       })
       setPendingAction(null)
@@ -580,18 +661,47 @@ export default function ChatPanel() {
 
   // 搜索功能
   const handleSearch = async () => {
-    if (!searchInput.trim()) return
+    if (!searchInput.trim() && !selectedDate) return
 
     setIsSearching(true)
     try {
-      const response = await conversationApi.search({ keyword: searchInput.trim(), limit: 50 })
-      setSearchResults(response.messages)
+      if (searchInput.trim()) {
+        // 关键词搜索（可带日期范围）
+        const response = await conversationApi.search({
+          keyword: searchInput.trim(),
+          start_date: selectedDate || undefined,
+          end_date: selectedDate || undefined,
+          limit: 50
+        })
+        setSearchResults(response.messages)
+      } else if (selectedDate) {
+        // 仅按日期加载
+        const messages = await conversationApi.getMessagesByDate(selectedDate)
+        setSearchResults(messages)
+      }
     } catch (error) {
       console.error('Search failed:', error)
     } finally {
       setIsSearching(false)
     }
   }
+
+  // 加载可用日期列表
+  const loadAvailableDates = async () => {
+    try {
+      const response = await conversationApi.getAvailableDates()
+      setAvailableDates(response.dates)
+    } catch (error) {
+      console.error('Failed to load dates:', error)
+    }
+  }
+
+  // 展开搜索时加载可用日期
+  useEffect(() => {
+    if (showSearch) {
+      loadAvailableDates()
+    }
+  }, [showSearch])
 
   const handleSearchKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -616,20 +726,45 @@ export default function ChatPanel() {
               placeholder="搜索聊天记录..."
               className="flex-1 bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary-500"
             />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="bg-dark-800 border border-dark-700 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-primary-500"
+            />
             <button
               onClick={handleSearch}
-              disabled={isSearching || !searchInput.trim()}
+              disabled={isSearching || (!searchInput.trim() && !selectedDate)}
               className="px-3 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
             >
               {isSearching ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
             </button>
             <button
-              onClick={() => { setShowSearch(false); clearSearch() }}
+              onClick={() => { setShowSearch(false); clearSearch(); setSelectedDate(''); setAvailableDates([]) }}
               className="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg transition-colors"
             >
               <X size={16} />
             </button>
           </div>
+
+          {/* 可用日期快捷选择 */}
+          {availableDates.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {availableDates.slice(0, 10).map(d => (
+                <button
+                  key={d}
+                  onClick={() => { setSelectedDate(d); }}
+                  className={`text-xs px-2 py-1 rounded-full transition-colors ${
+                    selectedDate === d
+                      ? 'bg-primary-600 text-white'
+                      : 'bg-dark-800 text-dark-400 hover:bg-dark-700'
+                  }`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* 搜索结果 */}
           {searchResults.length > 0 && (
@@ -685,10 +820,28 @@ export default function ChatPanel() {
         {Array.from(groupedMessages.entries()).map(([dateKey, dateMessages]) => (
           <div key={dateKey}>
             <DateSeparator date={dateKey} />
-            {dateMessages.map(msg => (
+            {dateMessages.map(msg => {
+              const isSystemCmd = msg.role === 'user' && msg.content.trim().startsWith('#') && msg.content.trim().length > 1 && !/^#\d/.test(msg.content.trim())
+              const isSystemResponse = msg.role === 'assistant' && (msg.context as any)?.type === 'system_command'
+              return (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} mb-4`}>
-                <div className={`chat-bubble ${msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'}`}>
+                <div className={`chat-bubble ${
+                  isSystemCmd ? 'bg-indigo-900/40 border border-indigo-700/50 rounded-lg px-3 py-2 max-w-[80%]' :
+                  isSystemResponse ? 'bg-indigo-950/30 border border-indigo-800/30 rounded-lg px-3 py-2 max-w-[80%]' :
+                  msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'
+                }`}>
+                  {isSystemCmd && (
+                    <span className="inline-block text-[10px] bg-indigo-700/50 text-indigo-300 px-1.5 py-0.5 rounded mb-1">
+                      系统指令
+                    </span>
+                  )}
+                  {isSystemResponse && (
+                    <span className="inline-block text-[10px] bg-indigo-800/40 text-indigo-400 px-1.5 py-0.5 rounded mb-1">
+                      系统响应
+                    </span>
+                  )}
                   <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+                  {msg.query_result && <QueryResultDisplay result={msg.query_result} />}
 
                   {/* 建议动作 */}
                   {msg.actions && msg.actions.length > 0 && (
@@ -779,13 +932,17 @@ export default function ChatPanel() {
                           {action.requires_confirmation && (!action.missing_fields || action.missing_fields.length === 0) && (
                             <div className="flex gap-2">
                               <button
-                                onClick={() => handleAction(action, true)}
+                                onClick={() => followUpInfo ? handleFormSubmit() : handleAction(action, true)}
                                 className="flex items-center gap-1 px-2 py-1 bg-primary-600 hover:bg-primary-700 rounded text-xs"
                               >
                                 <Check size={12} /> 提交
                               </button>
                               <button
-                                onClick={() => handleAction(action, false)}
+                                onClick={() => {
+                                  setFollowUpInfo(null)
+                                  setFormValues({})
+                                  handleAction(action, false)
+                                }}
                                 className="flex items-center gap-1 px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs"
                               >
                                 <X size={12} /> 取消
@@ -803,7 +960,7 @@ export default function ChatPanel() {
                   </div>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         ))}
 
@@ -833,12 +990,24 @@ export default function ChatPanel() {
           >
             <Search size={18} />
           </button>
+          <button
+            onClick={() => {
+              // 循环: null(自动) → zh → en → null(自动)
+              const next = language === null ? 'zh' : language === 'zh' ? 'en' : null
+              setLanguage(next)
+            }}
+            className="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg transition-colors text-xs font-medium flex items-center gap-1"
+            title={`语言: ${language === null ? '自动' : language === 'zh' ? '中文' : 'EN'}`}
+          >
+            <Globe size={14} />
+            <span>{language === null ? getChatText('lang_auto', language) : language === 'zh' ? getChatText('lang_zh', language) : getChatText('lang_en', language)}</span>
+          </button>
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder="输入消息..."
+            placeholder={getChatText('input_placeholder', language)}
             className="flex-1 bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary-500"
             disabled={isLoading}
           />

@@ -2,54 +2,21 @@
 AIPMS 主应用入口
 基于 Palantir 架构思想的酒店管理系统
 """
+import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
-from app.routers import auth, rooms, reservations, checkin, checkout, tasks, billing, employees, reports, ai, prices, settings, audit_logs, guests, conversations, undo, ontology, security
-
-# 创建应用
-app = FastAPI(
-    title="AIPMS - 智能酒店管理系统",
-    description="基于 Palantir 架构思想的本体运行时酒店管理系统",
-    version="1.0.0"
-)
-
-# CORS 配置
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应限制具体域名
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 注册路由
-app.include_router(auth.router)
-app.include_router(guests.router)
-app.include_router(rooms.router)
-app.include_router(reservations.router)
-app.include_router(checkin.router)
-app.include_router(checkout.router)
-app.include_router(tasks.router)
-app.include_router(billing.router)
-app.include_router(employees.router)
-app.include_router(reports.router)
-app.include_router(prices.router)
-app.include_router(audit_logs.router)
-app.include_router(ai.router)
-app.include_router(conversations.router)
-app.include_router(settings.router)
-app.include_router(undo.router)
-app.include_router(ontology.router)
-app.include_router(security.router)
+from app.routers import auth, rooms, reservations, checkin, checkout, tasks, billing, employees, reports, ai, prices, settings, audit_logs, guests, conversations, undo, ontology, security, debug
 
 
-@app.on_event("startup")
-def startup():
-    """应用启动时初始化
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理
 
     SPEC-64: 初始化本体注册中心和业务规则
     """
+    # 启动时执行
     # 初始化数据库
     init_db()
 
@@ -87,6 +54,66 @@ def startup():
 
     except Exception as e:
         print(f"本体注册中心初始化警告: {e}")
+
+    # ========== 可选：初始化语义搜索索引 ==========
+    # 通过环境变量 AUTO_BUILD_SCHEMA_INDEX 控制是否自动构建
+    if os.getenv("AUTO_BUILD_SCHEMA_INDEX", "false").lower() == "true":
+        try:
+            from app.services.schema_index_service import SchemaIndexService
+
+            print("正在构建语义搜索索引...")
+            service = SchemaIndexService()
+            service.build_index()
+
+            stats = service.get_stats()
+            print(f"✓ 语义搜索索引构建完成！共 {stats['total_items']} 项")
+
+        except Exception as e:
+            print(f"语义搜索索引构建警告: {e}")
+
+    yield
+
+    # 关闭时执行（如果需要清理资源）
+    pass
+
+
+# 创建应用
+app = FastAPI(
+    title="AIPMS - 智能酒店管理系统",
+    description="基于 Palantir 架构思想的本体运行时酒店管理系统",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS 配置
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 生产环境应限制具体域名
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 注册路由
+app.include_router(auth.router)
+app.include_router(guests.router)
+app.include_router(rooms.router)
+app.include_router(reservations.router)
+app.include_router(checkin.router)
+app.include_router(checkout.router)
+app.include_router(tasks.router)
+app.include_router(billing.router)
+app.include_router(employees.router)
+app.include_router(reports.router)
+app.include_router(prices.router)
+app.include_router(audit_logs.router)
+app.include_router(ai.router)
+app.include_router(conversations.router)
+app.include_router(settings.router)
+app.include_router(undo.router)
+app.include_router(ontology.router)
+app.include_router(security.router)
+app.include_router(debug.router)
 
 
 @app.get("/")

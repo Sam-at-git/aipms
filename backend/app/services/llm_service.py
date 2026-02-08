@@ -287,11 +287,34 @@ class TopicRelevance:
     FOLLOWUP_ANSWER = "followup_answer"  # 回答系统追问
 
 
+def detect_language(text: str) -> str:
+    """
+    检测文本语言（中文 vs 英文）
+
+    通过中文字符比例判断：
+    - 中文字符占比 > 30% → "zh"
+    - 否则 → "en"
+    """
+    if not text:
+        return "zh"
+    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    ratio = chinese_chars / len(text)
+    return "zh" if ratio > 0.3 else "en"
+
+
+# 多语言提示词后缀
+LANGUAGE_PROMPTS = {
+    "zh": "请用中文回复用户。",
+    "en": "Please respond to the user in English.",
+}
+
+
 class LLMService:
     """LLM 服务"""
 
     # 支持的操作类型
     ACTION_TYPES = [
+        "ontology_query",  # NL2OntologyQuery - 动态查询
         "checkout", "create_task", "walkin_checkin", "checkin",
         "create_reservation", "extend_stay", "change_room",
         "cancel_reservation", "assign_task", "start_task",
@@ -321,11 +344,29 @@ class LLMService:
 6. **房间相关：优先使用 room_number（字符串）而非 room_id，让后端自动转换**
 
 **支持的操作类型 (action_type):**
+- ontology_query: 本体查询（动态字段选择，支持关联查询）
+  - 用于：查询任意实体的任意字段组合
+  - params 结构：
+    {{
+      "entity": "实体名 (Guest/Room/Reservation/StayRecord/Task/Bill/Employee)",
+      "fields": ["要返回的字段列表"],
+      "filters": [{{"field": "字段", "operator": "eq/gt/gte/lt/lte/in/like", "value": "值"}}],
+      "joins": [{{"entity": "关联实体", "filters": {{"字段": "值"}}}}],
+      "limit": 数字（可选，默认100）
+    }}
+  - operator: eq(等于), ne(不等于), gt(大于), gte(大于等于), lt(小于), lte(小于等于), in(在列表中), like(模糊匹配)
+  - 重要：查询"空闲房间"时，status 应该使用 in 操作符，值设为 ["vacant_clean", "vacant_dirty"]
+  - 示例：
+    - "所有在住的客人姓名" → {{"entity": "Guest", "fields": ["name"], "joins": [{{"entity": "StayRecord", "filters": {{"status": "ACTIVE"}}}}]}}
+    - "201房间的类型和状态" → {{"entity": "Room", "fields": ["room_type", "status"], "filters": [{{"field": "room_number", "operator": "eq", "value": "201"}}]}}
+    - "今天入住的客人姓名" → {{"entity": "Guest", "fields": ["name"], "joins": [{{"entity": "StayRecord", "filters": {{"check_in_date": "today"}}}}]}}
+    - "空闲房间列表" → {{"entity": "Room", "fields": ["room_number", "floor", "room_type", "status"], "filters": [{{"field": "status", "operator": "in", "value": ["vacant_clean", "vacant_dirty"]}}]}}
 - query_rooms: 查看房态
 - query_reservations: 查询预订
 - query_guests: 查询在住客人
 - query_tasks: 查询任务
 - query_reports: 查询统计报表
+- query_smart: 结构化数据查询（返回表格/图表），需要 params: {entity: "room/reservation/guest/task/report", query_type: "list/status/count/summary", filters: {}}
 - checkin: 预订入住（需要 reservation_id 和 room_number）
 - walkin_checkin: 散客入住（需要 room_number, guest_name, guest_phone, expected_check_out）
 - checkout: 退房（需要 stay_record_id）
@@ -515,17 +556,117 @@ create_task: room_number, task_type
         else:
             self.client = None
 
+        # Phase 2.5: 初始化 PromptBuilder 用于本体感知
+        try:
+            from core.ai.prompt_builder import PromptBuilder
+            self._prompt_builder = PromptBuilder()
+        except ImportError:
+            self._prompt_builder = None
+
+        # Schema 缓存
+        self._query_schema_cache = None
+
+    def on_ontology_changed(self):
+        """本体变化时调用 - 清除 PromptBuilder 缓存"""
+        if self._prompt_builder:
+            self._prompt_builder.invalidate_cache()
+        self._query_schema_cache = None
+
+    def get_query_schema(self) -> str:
+        """
+        获取用于查询解析的 Ontology Schema
+
+        Returns:
+            Schema 描述字符串
+        """
+        if self._query_schema_cache is not None:
+            return self._query_schema_cache
+
+        if self._prompt_builder:
+            self._query_schema_cache = self._prompt_builder.build_query_schema()
+        else:
+            # 回退：硬编码的基本 schema
+            self._query_schema_cache = """
+**可查询实体:**
+- `Guest`: 客人信息
+  - 字段: name, phone, id_type, id_number, tier
+- `Room`: 房间信息
+  - 字段: room_number, floor, status, room_type
+- `Reservation`: 预订信息
+  - 字段: reservation_no, check_in_date, check_out_date, status
+- `StayRecord`: 住宿记录
+  - 字段: check_in_time, expected_check_out, status
+- `Task`: 任务
+  - 字段: task_type, status, room_number
+- `Bill`: 账单
+  - 字段: total_amount, is_settled
+- `Employee`: 员工
+  - 字段: username, name, role
+
+**实体关系:**
+- `Guest` -> `StayRecord` (客人有住宿记录)
+- `Guest` -> `Reservation` (客人有预订)
+- `Room` -> `StayRecord` (房间有住宿记录)
+- `Room` -> `Task` (房间有任务)
+- `StayRecord` -> `Room` (住宿记录关联房间)
+- `StayRecord` -> `Guest` (住宿记录关联客人)
+"""
+
+        return self._query_schema_cache
+
+    def build_system_prompt_with_schema(
+        self,
+        language: Optional[str] = None,
+        include_schema: bool = False
+    ) -> str:
+        """
+        构建包含 Schema 的系统提示词
+
+        Args:
+            language: 语言 ("zh"/"en")
+            include_schema: 是否包含查询 Schema
+
+        Returns:
+            完整的系统提示词
+        """
+        # 基础提示词
+        system_prompt = self.SYSTEM_PROMPT
+
+        # 语言提示
+        if language:
+            lang_hint = LANGUAGE_PROMPTS.get(language, LANGUAGE_PROMPTS["zh"])
+            system_prompt += f"\n\n{lang_hint}"
+
+        # 查询 Schema（用于 ontology_query）
+        if include_schema:
+            system_prompt += f"\n\n{self.get_query_schema()}"
+
+        # 注入业务规则（从 core/ontology 读取）
+            try:
+                from core.ontology.business_rules import get_business_rules
+                rules_registry = get_business_rules()
+                business_rules_prompt = rules_registry.export_for_llm()
+                if business_rules_prompt:
+                    system_prompt += f"\n\n**业务规则:**\n{business_rules_prompt}"
+            except ImportError:
+                pass  # 业务规则模块不可用，继续
+
+        return system_prompt
+        if self._prompt_builder:
+            self._prompt_builder.invalidate_cache()
+
     def is_enabled(self) -> bool:
         """检查 LLM 是否可用"""
         return self.enabled
 
-    def chat(self, message: str, context: Optional[Dict] = None) -> Dict[str, Any]:
+    def chat(self, message: str, context: Optional[Dict] = None, language: Optional[str] = None) -> Dict[str, Any]:
         """
         与 LLM 对话，获取结构化响应
 
         Args:
             message: 用户消息
             context: 上下文信息（如当前用户、房间列表等）
+            language: 回复语言 ("zh"/"en")，None 则自动检测
 
         Returns:
             包含 message, suggested_actions, context 的字典
@@ -540,6 +681,15 @@ create_task: room_number, task_type
         # 构建上下文信息
         context_info = self._build_context_info(context)
 
+        # 语言检测与提示
+        lang = language or detect_language(message)
+        lang_hint = LANGUAGE_PROMPTS.get(lang, LANGUAGE_PROMPTS["zh"])
+        system_prompt = self.SYSTEM_PROMPT + f"\n\n{lang_hint}"
+
+        # 注入查询 Schema（如果 context 中有 include_query_schema）
+        if context and context.get('include_query_schema'):
+            system_prompt += f"\n\n{self.get_query_schema()}"
+
         # 显式注入当前日期
         today = date.today()
         date_context = f"\n**当前日期: {today.year}年{today.month}月{today.day}日 ({today.strftime('%A')})**"
@@ -552,7 +702,7 @@ create_task: room_number, task_type
                 response = self.client.chat.completions.create(
                     model=settings.LLM_MODEL,
                     messages=[
-                        {"role": "system", "content": self.SYSTEM_PROMPT},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"{context_info}{date_context}\n\n用户输入: {message}"}
                     ],
                     temperature=settings.LLM_TEMPERATURE,
@@ -562,7 +712,7 @@ create_task: room_number, task_type
             except Exception as json_error:
                 # 某些 API 不支持 json_object 模式，回退到普通模式
                 # 在系统提示词中强调返回 JSON
-                enhanced_prompt = self.SYSTEM_PROMPT + "\n\n**重要：请务必只返回纯 JSON 格式，不要添加任何其他文字说明。**"
+                enhanced_prompt = system_prompt + "\n\n**重要：请务必只返回纯 JSON 格式，不要添加任何其他文字说明。**"
 
                 response = self.client.chat.completions.create(
                     model=settings.LLM_MODEL,

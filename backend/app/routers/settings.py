@@ -7,7 +7,7 @@ import os
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from app.database import get_db
 from app.models.ontology import Employee
 from app.models.schemas import LLMSettings, LLMTestRequest
@@ -28,9 +28,7 @@ class ConfigHistoryResponse(BaseModel):
     changed_at: str
     change_reason: Optional[str]
     is_current: bool
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get("/llm", response_model=LLMSettings)
@@ -46,7 +44,10 @@ def get_llm_settings(
         llm_max_tokens=settings.LLM_MAX_TOKENS,
         enable_llm=settings.ENABLE_LLM,
         system_prompt=LLMService.SYSTEM_PROMPT,
-        has_env_key=bool(os.environ.get("OPENAI_API_KEY"))  # 标识是否有环境变量 key
+        has_env_key=bool(os.environ.get("OPENAI_API_KEY")),  # 标识是否有环境变量 key
+        embedding_enabled=settings.EMBEDDING_ENABLED,
+        embedding_base_url=settings.EMBEDDING_BASE_URL,
+        embedding_model=settings.EMBEDDING_MODEL
     )
 
 
@@ -65,7 +66,10 @@ def update_llm_settings(
         "llm_temperature": settings.LLM_TEMPERATURE,
         "llm_max_tokens": settings.LLM_MAX_TOKENS,
         "enable_llm": settings.ENABLE_LLM,
-        "system_prompt": LLMService.SYSTEM_PROMPT
+        "system_prompt": LLMService.SYSTEM_PROMPT,
+        "embedding_enabled": settings.EMBEDDING_ENABLED,
+        "embedding_base_url": settings.EMBEDDING_BASE_URL,
+        "embedding_model": settings.EMBEDDING_MODEL
     }
 
     # 更新环境变量
@@ -86,6 +90,11 @@ def update_llm_settings(
 
     os.environ["ENABLE_LLM"] = "true" if data.enable_llm else "false"
 
+    # 更新 embedding 设置
+    os.environ["EMBEDDING_ENABLED"] = "true" if data.embedding_enabled else "false"
+    os.environ["EMBEDDING_BASE_URL"] = data.embedding_base_url
+    os.environ["EMBEDDING_MODEL"] = data.embedding_model
+
     # 更新 settings 实例
     settings.OPENAI_API_KEY = data.openai_api_key if data.openai_api_key != "***" else settings.OPENAI_API_KEY
     settings.OPENAI_BASE_URL = data.openai_base_url
@@ -93,10 +102,17 @@ def update_llm_settings(
     settings.LLM_TEMPERATURE = data.llm_temperature
     settings.LLM_MAX_TOKENS = data.llm_max_tokens
     settings.ENABLE_LLM = data.enable_llm
+    settings.EMBEDDING_ENABLED = data.embedding_enabled
+    settings.EMBEDDING_BASE_URL = data.embedding_base_url
+    settings.EMBEDDING_MODEL = data.embedding_model
 
     # 更新系统提示词
     if data.system_prompt:
         LLMService.SYSTEM_PROMPT = data.system_prompt
+
+    # 重置 embedding 服务以应用新配置
+    from core.ai import reset_embedding_service
+    reset_embedding_service()
 
     # 记录变更后的配置
     new_settings = {
@@ -105,7 +121,10 @@ def update_llm_settings(
         "llm_temperature": settings.LLM_TEMPERATURE,
         "llm_max_tokens": settings.LLM_MAX_TOKENS,
         "enable_llm": settings.ENABLE_LLM,
-        "system_prompt": LLMService.SYSTEM_PROMPT
+        "system_prompt": LLMService.SYSTEM_PROMPT,
+        "embedding_enabled": settings.EMBEDDING_ENABLED,
+        "embedding_base_url": settings.EMBEDDING_BASE_URL,
+        "embedding_model": settings.EMBEDDING_MODEL
     }
 
     # 记录配置历史
@@ -203,6 +222,50 @@ def get_llm_providers(
             }
         ]
     }
+
+
+class EmbeddingTestRequest(BaseModel):
+    """Embedding 连接测试请求"""
+    base_url: str
+    model: str
+
+
+@router.post("/embedding/test")
+def test_embedding_connection(
+    data: EmbeddingTestRequest,
+    current_user: Employee = Depends(require_sysadmin)
+):
+    """测试 Embedding 连接"""
+    try:
+        from openai import OpenAI
+
+        # Ollama 不需要真实的 API key，但需要一个非空字符串
+        api_key = "ollama" if "localhost:11434" in data.base_url or "ollama" in data.base_url.lower() else None
+
+        client = OpenAI(
+            api_key=api_key or "dummy",
+            base_url=data.base_url,
+            timeout=10.0
+        )
+
+        # 测试 embedding
+        response = client.embeddings.create(
+            model=data.model,
+            input="测试文本"
+        )
+
+        dimension = len(response.data[0].embedding)
+
+        return {
+            "success": True,
+            "message": f"连接成功！Embedding 维度: {dimension}"
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"连接失败: {str(e)}"
+        }
 
 
 @router.get("/llm/history", response_model=List[ConfigHistoryResponse])

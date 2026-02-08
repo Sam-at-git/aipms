@@ -2,7 +2,7 @@
 安全事件服务
 负责记录、检测、查询和管理安全事件
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -40,7 +40,7 @@ class SecurityEventService:
         event = SecurityEventModel(
             event_type=event_type.value,
             severity=severity.value,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             source_ip=source_ip,
             user_id=user_id,
             user_name=user_name,
@@ -57,7 +57,7 @@ class SecurityEventService:
         # 发布安全事件到事件总线
         self._publish_event(Event(
             event_type="security.event_recorded",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             data={
                 "id": event.id,
                 "event_type": event_type.value,
@@ -87,7 +87,7 @@ class SecurityEventService:
             return
 
         # 查询时间窗口内的相同类型事件
-        window_start = datetime.utcnow() - timedelta(minutes=threshold['window_minutes'])
+        window_start = datetime.now(UTC) - timedelta(minutes=threshold['window_minutes'])
 
         query = db.query(SecurityEventModel).filter(
             SecurityEventModel.event_type == event_type.value,
@@ -163,12 +163,12 @@ class SecurityEventService:
         if event:
             event.is_acknowledged = True
             event.acknowledged_by = acknowledged_by
-            event.acknowledged_at = datetime.utcnow()
+            event.acknowledged_at = datetime.now(UTC)
 
             # 发布确认事件
             self._publish_event(Event(
                 event_type="security.event_acknowledged",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 data={
                     "event_id": event_id,
                     "acknowledged_by": acknowledged_by
@@ -191,14 +191,14 @@ class SecurityEventService:
         ).update({
             SecurityEventModel.is_acknowledged: True,
             SecurityEventModel.acknowledged_by: acknowledged_by,
-            SecurityEventModel.acknowledged_at: datetime.utcnow()
+            SecurityEventModel.acknowledged_at: datetime.now(UTC)
         }, synchronize_session=False)
 
         return count
 
     def get_statistics(self, db: Session, hours: int = 24) -> Dict[str, Any]:
         """获取安全事件统计"""
-        start_time = datetime.utcnow() - timedelta(hours=hours)
+        start_time = datetime.now(UTC) - timedelta(hours=hours)
 
         events = db.query(SecurityEventModel).filter(
             SecurityEventModel.timestamp >= start_time
@@ -229,7 +229,7 @@ class SecurityEventService:
         limit: int = 20
     ) -> List[SecurityEventModel]:
         """获取最近的高危事件"""
-        start_time = datetime.utcnow() - timedelta(hours=hours)
+        start_time = datetime.now(UTC) - timedelta(hours=hours)
 
         return db.query(SecurityEventModel).filter(
             SecurityEventModel.timestamp >= start_time,
@@ -247,7 +247,7 @@ class SecurityEventService:
         limit: int = 50
     ) -> List[SecurityEventModel]:
         """获取用户的安全事件历史"""
-        start_time = datetime.utcnow() - timedelta(days=days)
+        start_time = datetime.now(UTC) - timedelta(days=days)
 
         return db.query(SecurityEventModel).filter(
             SecurityEventModel.user_id == user_id,
@@ -256,7 +256,7 @@ class SecurityEventService:
 
     def cleanup_old_events(self, db: Session, days: int = 90) -> int:
         """清理旧的安全事件（保留指定天数内的事件）"""
-        cutoff_time = datetime.utcnow() - timedelta(days=days)
+        cutoff_time = datetime.now(UTC) - timedelta(days=days)
 
         count = db.query(SecurityEventModel).filter(
             SecurityEventModel.timestamp < cutoff_time

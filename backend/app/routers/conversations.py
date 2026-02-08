@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from app.models.ontology import Employee
 from app.services.conversation_service import ConversationService, ConversationMessage
-from app.security.auth import get_current_user
+from app.security.auth import get_current_user, require_sysadmin
 
 
 router = APIRouter(prefix="/conversations", tags=["会话历史"])
@@ -64,6 +64,7 @@ class MessagesListResponse(BaseModel):
     messages: List[ConversationMessageResponse]
     has_more: bool
     oldest_timestamp: Optional[str] = None
+    active_date: Optional[str] = None
 
 
 class SearchResultsResponse(BaseModel):
@@ -76,6 +77,32 @@ class AvailableDatesResponse(BaseModel):
 
 
 # ============== 路由 ==============
+
+@router.get("/last-active", response_model=MessagesListResponse)
+def get_last_active_conversation(
+    current_user: Employee = Depends(get_current_user),
+    service: ConversationService = Depends(get_conversation_service)
+):
+    """
+    获取用户最后一次活跃对话的所有消息
+
+    登录后首次调用，加载上次聊天记录。无记录时返回空列表。
+    """
+    messages, date_str = service.get_last_active_conversation(
+        user_id=current_user.id
+    )
+
+    oldest_timestamp = None
+    if messages:
+        oldest_timestamp = messages[0].timestamp
+
+    return MessagesListResponse(
+        messages=[ConversationMessageResponse.from_model(m) for m in messages],
+        has_more=False,
+        oldest_timestamp=oldest_timestamp,
+        active_date=date_str
+    )
+
 
 @router.get("/messages", response_model=MessagesListResponse)
 def get_messages(
@@ -175,3 +202,82 @@ def get_available_dates(
     """
     dates = service.get_available_dates(user_id=current_user.id)
     return AvailableDatesResponse(dates=dates)
+
+
+# ============== 管理员端点 ==============
+
+class AdminUserInfo(BaseModel):
+    user_id: int
+
+
+class AdminUsersResponse(BaseModel):
+    users: List[AdminUserInfo]
+
+
+@router.get("/admin/users", response_model=AdminUsersResponse)
+def admin_get_users_with_conversations(
+    current_user: Employee = Depends(require_sysadmin),
+    service: ConversationService = Depends(get_conversation_service)
+):
+    """
+    【管理员】获取有聊天记录的用户列表
+
+    仅 sysadmin 可访问
+    """
+    user_ids = service.get_users_with_conversations()
+    return AdminUsersResponse(
+        users=[AdminUserInfo(user_id=uid) for uid in user_ids]
+    )
+
+
+@router.get("/admin/user/{user_id}/dates", response_model=AvailableDatesResponse)
+def admin_get_user_dates(
+    user_id: int,
+    current_user: Employee = Depends(require_sysadmin),
+    service: ConversationService = Depends(get_conversation_service)
+):
+    """
+    【管理员】获取指定用户的聊天日期列表
+
+    仅 sysadmin 可访问
+    """
+    dates = service.get_available_dates(user_id=user_id)
+    return AvailableDatesResponse(dates=dates)
+
+
+@router.get("/admin/user/{user_id}/messages", response_model=MessagesListResponse)
+def admin_get_user_messages(
+    user_id: int,
+    date_str: Optional[str] = Query(default=None, description="日期 YYYY-MM-DD"),
+    keyword: Optional[str] = Query(default=None, description="搜索关键词"),
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: Employee = Depends(require_sysadmin),
+    service: ConversationService = Depends(get_conversation_service)
+):
+    """
+    【管理员】获取指定用户的聊天记录
+
+    仅 sysadmin 可访问。支持按日期和关键词过滤。
+    """
+    if keyword:
+        messages = service.search_messages(
+            user_id=user_id,
+            keyword=keyword,
+            start_date=date_str,
+            end_date=date_str,
+            limit=limit
+        )
+    elif date_str:
+        messages = service.get_messages_by_date(user_id=user_id, date_str=date_str)
+    else:
+        messages, _ = service.get_messages(user_id=user_id, limit=limit)
+
+    oldest_timestamp = None
+    if messages:
+        oldest_timestamp = messages[0].timestamp
+
+    return MessagesListResponse(
+        messages=[ConversationMessageResponse.from_model(m) for m in messages],
+        has_more=False,
+        oldest_timestamp=oldest_timestamp
+    )

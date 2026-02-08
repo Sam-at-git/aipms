@@ -19,8 +19,10 @@ import type {
   PermissionMatrix,
   BusinessRule,
   OntologyAction,
+  OntologyInterfaceDef,
+  OntologyTabType,
 } from '../types'
-import { Database, RefreshCw, Box, Network, GitBranch, Shield, AlertTriangle } from 'lucide-react'
+import { Database, RefreshCw, Box, Network, GitBranch, Shield, AlertTriangle, Package, Wrench, DollarSign, BarChart3, X, Download, Copy, Check } from 'lucide-react'
 
 // Entity color mapping
 const entityColors: Record<string, string> = {
@@ -43,11 +45,37 @@ const securityLevelColors: Record<string, string> = {
 }
 
 // Tab type
-type TabType = 'data' | 'semantic' | 'kinetic' | 'dynamic'
+type TabType = OntologyTabType
+
+// Interface icon and color mapping
+const interfaceIcons: Record<string, React.ReactNode> = {
+  BookableResource: <Package size={20} />,
+  Maintainable: <Wrench size={20} />,
+  Billable: <DollarSign size={20} />,
+  Trackable: <BarChart3 size={20} />,
+}
+
+const interfaceColors: Record<string, string> = {
+  BookableResource: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  Maintainable: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+  Billable: 'bg-green-500/20 text-green-400 border-green-500/30',
+  Trackable: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+}
+
+const defaultInterfaceColor = 'bg-dark-700/50 text-dark-300 border-dark-600'
+
+// Interface tag color (inline, simpler for node rendering)
+const interfaceTagColors: Record<string, { bg: string; text: string }> = {
+  BookableResource: { bg: '#3b82f620', text: '#60a5fa' },
+  Maintainable: { bg: '#f9731620', text: '#fb923c' },
+  Billable: { bg: '#10b98120', text: '#34d399' },
+  Trackable: { bg: '#8b5cf620', text: '#a78bfa' },
+}
 
 // Custom node component
 const EntityNode = ({ data }: { data: any }) => {
   const bgColor = entityColors[data.name] || '#6b7280'
+  const interfaces: string[] = data.interfaces || []
 
   return (
     <div
@@ -67,6 +95,24 @@ const EntityNode = ({ data }: { data: any }) => {
             style={{ color: bgColor }}
           >
             {data.total}
+          </div>
+        )}
+        {interfaces.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1 justify-center">
+            {interfaces.map(iface => {
+              const colors = interfaceTagColors[iface] || { bg: '#6b728020', text: '#9ca3af' }
+              const shortName = iface.replace('Resource', '').replace('able', '')
+              return (
+                <span
+                  key={iface}
+                  className="text-[10px] px-1.5 py-0.5 rounded"
+                  style={{ backgroundColor: colors.bg, color: colors.text }}
+                  title={iface}
+                >
+                  {shortName}
+                </span>
+              )
+            })}
           </div>
         )}
       </div>
@@ -108,9 +154,9 @@ const DataTab: React.FC<DataTabProps> = ({
   }, [selectedEntity, schema])
 
   return (
-    <div className="flex-1 flex gap-4 min-h-0">
+    <div className="flex-1 flex gap-4 min-h-0" style={{ minHeight: '600px' }}>
       {/* Left: Graph */}
-      <div className="flex-1 bg-dark-900 rounded-lg overflow-hidden">
+      <div className="flex-1 bg-dark-900 rounded-lg overflow-hidden" style={{ minHeight: '600px' }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -119,9 +165,11 @@ const DataTab: React.FC<DataTabProps> = ({
           onNodeClick={onNodeClick}
           nodeTypes={nodeTypes}
           fitView
-          fitViewOptions={{ padding: 0.2 }}
-          minZoom={0.3}
-          maxZoom={1.5}
+          fitViewOptions={{ padding: 0.15, minZoom: 0.5, maxZoom: 1 }}
+          minZoom={0.1}
+          maxZoom={2}
+          defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
+          style={{ width: '100%', height: '100%' }}
         >
           <Controls className="!bg-dark-800 !border-dark-700" />
           <Background color="#374151" gap={20} />
@@ -386,6 +434,8 @@ const SemanticEntityDetail: React.FC<SemanticEntityDetailProps> = ({ entity }) =
                 <th className="pb-2 font-medium">Python Type</th>
                 <th className="pb-2 font-medium">Constraints</th>
                 <th className="pb-2 font-medium">Security</th>
+                <th className="pb-2 font-medium">Sensitivity</th>
+                <th className="pb-2 font-medium">Flags</th>
                 <th className="pb-2 font-medium">Description</th>
               </tr>
             </thead>
@@ -394,7 +444,7 @@ const SemanticEntityDetail: React.FC<SemanticEntityDetailProps> = ({ entity }) =
                 <tr key={attr.name} className="border-b border-dark-800">
                   <td className="py-2 text-white">
                     <div className="flex items-center gap-2">
-                      {attr.name}
+                      {attr.display_name || attr.name}
                       {attr.is_primary_key && (
                         <span className="text-xs bg-primary-500/20 text-primary-400 px-1 rounded">
                           PK
@@ -406,6 +456,9 @@ const SemanticEntityDetail: React.FC<SemanticEntityDetailProps> = ({ entity }) =
                         </span>
                       )}
                     </div>
+                    {attr.display_name && attr.display_name !== attr.name && (
+                      <div className="text-xs text-dark-500 font-mono">{attr.name}</div>
+                    )}
                     {attr.foreign_key_target && (
                       <div className="text-xs text-dark-500">→ {attr.foreign_key_target}</div>
                     )}
@@ -422,6 +475,39 @@ const SemanticEntityDetail: React.FC<SemanticEntityDetailProps> = ({ entity }) =
                     <span className={`text-xs px-2 py-0.5 rounded ${securityLevelColors[attr.security_level]}`}>
                       {attr.security_level}
                     </span>
+                  </td>
+                  <td className="py-2">
+                    <div className="flex items-center gap-1">
+                      {attr.pii && (
+                        <span className="text-xs bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded" title="Personal Identifiable Information">
+                          PII
+                        </span>
+                      )}
+                      {attr.phi && (
+                        <span className="text-xs bg-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded" title="Protected Health Information">
+                          PHI
+                        </span>
+                      )}
+                      {!attr.pii && !attr.phi && (
+                        <span className="text-dark-600 text-xs">-</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="py-2">
+                    <div className="flex items-center gap-1">
+                      {attr.searchable && (
+                        <span className="text-xs text-primary-400" title="Searchable">S</span>
+                      )}
+                      {attr.indexed && (
+                        <span className="text-xs text-cyan-400" title="Indexed">I</span>
+                      )}
+                      {attr.is_rich_text && (
+                        <span className="text-xs text-yellow-400" title="Rich Text">R</span>
+                      )}
+                      {!attr.searchable && !attr.indexed && !attr.is_rich_text && (
+                        <span className="text-dark-600 text-xs">-</span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-2 text-dark-400 text-xs">{attr.description || '-'}</td>
                 </tr>
@@ -1063,6 +1149,252 @@ const BusinessRulesView: React.FC<BusinessRulesViewProps> = ({ businessRules }) 
   )
 }
 
+// ============== Interfaces Tab Components ==============
+
+interface InterfacesTabProps {
+  interfacesData: Record<string, OntologyInterfaceDef> | null
+  loading: boolean
+}
+
+const InterfacesTab: React.FC<InterfacesTabProps> = ({ interfacesData, loading }) => {
+  const [selectedInterface, setSelectedInterface] = useState<string | null>(null)
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-dark-400">Loading interfaces...</div>
+      </div>
+    )
+  }
+
+  if (!interfacesData || Object.keys(interfacesData).length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center text-dark-400">
+          <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
+          <p>No interfaces registered</p>
+        </div>
+      </div>
+    )
+  }
+
+  const selectedData = selectedInterface ? interfacesData[selectedInterface] : null
+
+  return (
+    <div className="flex-1 flex gap-4 min-h-0">
+      {/* Cards grid */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Object.entries(interfacesData).map(([name, iface]) => {
+            const colorClass = interfaceColors[name] || defaultInterfaceColor
+            const icon = interfaceIcons[name] || <Package size={20} />
+            return (
+              <button
+                key={name}
+                onClick={() => setSelectedInterface(name)}
+                className={`text-left p-4 rounded-lg border transition-all hover:scale-[1.02] ${
+                  selectedInterface === name
+                    ? 'ring-2 ring-primary-500 ' + colorClass
+                    : 'bg-dark-800 border-dark-700 hover:border-dark-600'
+                }`}
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <div className={`p-2 rounded-lg ${colorClass.split(' ').slice(0, 1).join(' ')}`}>
+                    {icon}
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-white">{name}</h3>
+                    {iface.description && (
+                      <p className="text-xs text-dark-400">{iface.description}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-dark-400">Properties</span>
+                    <span className="text-dark-300">{Object.keys(iface.required_properties).length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-dark-400">Actions</span>
+                    <span className="text-dark-300">{iface.required_actions.length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-dark-400">Implementations</span>
+                    <span className={iface.implementations.length > 0 ? 'text-green-400' : 'text-dark-500'}>
+                      {iface.implementations.length}
+                    </span>
+                  </div>
+                </div>
+
+                {iface.implementations.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {iface.implementations.map(impl => (
+                      <span
+                        key={impl}
+                        className="text-xs bg-dark-700 text-dark-300 px-2 py-0.5 rounded"
+                      >
+                        {impl}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Detail drawer */}
+      {selectedData && selectedInterface && (
+        <div className="w-96 bg-dark-900 rounded-lg p-4 overflow-y-auto border border-dark-700">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white">{selectedInterface}</h3>
+            <button
+              onClick={() => setSelectedInterface(null)}
+              className="p-1 hover:bg-dark-700 rounded"
+            >
+              <X size={16} className="text-dark-400" />
+            </button>
+          </div>
+
+          {selectedData.description && (
+            <p className="text-dark-400 text-sm mb-4">{selectedData.description}</p>
+          )}
+
+          {/* Required Properties */}
+          <div className="mb-4">
+            <h4 className="text-sm font-medium text-dark-300 mb-2">Required Properties</h4>
+            {Object.keys(selectedData.required_properties).length > 0 ? (
+              <div className="space-y-1">
+                {Object.entries(selectedData.required_properties).map(([prop, type]) => (
+                  <div key={prop} className="flex items-center justify-between bg-dark-800 rounded px-3 py-2 text-sm">
+                    <span className="text-white">{prop}</span>
+                    <span className="text-dark-400 font-mono text-xs">{type}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-dark-500 text-sm">None</p>
+            )}
+          </div>
+
+          {/* Required Actions */}
+          <div className="mb-4">
+            <h4 className="text-sm font-medium text-dark-300 mb-2">Required Actions</h4>
+            {selectedData.required_actions.length > 0 ? (
+              <div className="space-y-1">
+                {selectedData.required_actions.map(action => (
+                  <div key={action} className="bg-dark-800 rounded px-3 py-2 text-sm text-white">
+                    {action}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-dark-500 text-sm">None</p>
+            )}
+          </div>
+
+          {/* Implementations */}
+          <div>
+            <h4 className="text-sm font-medium text-dark-300 mb-2">Implementations</h4>
+            {selectedData.implementations.length > 0 ? (
+              <div className="space-y-1">
+                {selectedData.implementations.map(impl => (
+                  <div
+                    key={impl}
+                    className="bg-dark-800 rounded px-3 py-2 text-sm text-primary-400 flex items-center gap-2"
+                  >
+                    <div
+                      className="w-3 h-3 rounded"
+                      style={{ backgroundColor: entityColors[impl] || '#6b7280' }}
+                    />
+                    {impl}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-dark-500 text-sm italic">No implementations yet</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============== Schema Export Button ==============
+
+const SchemaExportButton: React.FC = () => {
+  const [showMenu, setShowMenu] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const handleExportJSON = async () => {
+    try {
+      const schema = await ontologyApi.exportSchema()
+      const blob = new Blob([JSON.stringify(schema, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const now = new Date()
+      const ts = now.toISOString().replace(/[-:T]/g, '').slice(0, 15)
+      a.href = url
+      a.download = `ontology-schema-${ts}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      setShowMenu(false)
+    } catch (err) {
+      console.error('Failed to export schema:', err)
+    }
+  }
+
+  const handleCopyToClipboard = async () => {
+    try {
+      const schema = await ontologyApi.exportSchema()
+      await navigator.clipboard.writeText(JSON.stringify(schema, null, 2))
+      setCopied(true)
+      setTimeout(() => {
+        setCopied(false)
+        setShowMenu(false)
+      }, 1500)
+    } catch (err) {
+      console.error('Failed to copy schema:', err)
+    }
+  }
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setShowMenu(!showMenu)}
+        className="flex items-center gap-2 px-3 py-1.5 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors text-sm"
+      >
+        <Download size={16} />
+        Export Schema
+      </button>
+      {showMenu && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
+          <div className="absolute right-0 top-full mt-1 w-48 bg-dark-800 border border-dark-700 rounded-lg shadow-xl z-20 overflow-hidden">
+            <button
+              onClick={handleExportJSON}
+              className="w-full text-left px-4 py-2.5 text-sm text-dark-300 hover:bg-dark-700 flex items-center gap-2"
+            >
+              <Download size={14} />
+              Export as JSON
+            </button>
+            <button
+              onClick={handleCopyToClipboard}
+              className="w-full text-left px-4 py-2.5 text-sm text-dark-300 hover:bg-dark-700 flex items-center gap-2"
+            >
+              {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+              {copied ? 'Copied!' : 'Copy to Clipboard'}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ============== Main Ontology Component ==============
 
 const Ontology: React.FC = () => {
@@ -1083,19 +1415,22 @@ const Ontology: React.FC = () => {
     permission_matrix: PermissionMatrix
     business_rules: BusinessRule[]
   } | null>(null)
+  const [interfacesData, setInterfacesData] = useState<Record<string, OntologyInterfaceDef> | null>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      // Always load schema and statistics for data tab
-      const [schemaRes, statsRes] = await Promise.all([
+      // Load schema, statistics and interfaces for data tab
+      const [schemaRes, statsRes, ifacesRes] = await Promise.all([
         ontologyApi.getSchema(),
-        ontologyApi.getStatistics()
+        ontologyApi.getStatistics(),
+        ontologyApi.getInterfaces().catch(() => ({} as Record<string, OntologyInterfaceDef>)),
       ])
       setSchema(schemaRes)
       setStatistics(statsRes)
-      generateGraph(schemaRes, statsRes)
+      setInterfacesData(ifacesRes)
+      generateGraph(schemaRes, statsRes, ifacesRes)
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load ontology data')
     } finally {
@@ -1114,11 +1449,14 @@ const Ontology: React.FC = () => {
       } else if (tab === 'dynamic' && !dynamicData) {
         const data = await ontologyApi.getDynamic()
         setDynamicData(data)
+      } else if (tab === 'interfaces' && !interfacesData) {
+        const data = await ontologyApi.getInterfaces()
+        setInterfacesData(data)
       }
     } catch (err: any) {
       console.error(`Failed to load ${tab} data:`, err)
     }
-  }, [semanticData, kineticData, dynamicData])
+  }, [semanticData, kineticData, dynamicData, interfacesData])
 
   useEffect(() => {
     loadData()
@@ -1128,7 +1466,22 @@ const Ontology: React.FC = () => {
     loadTabData(activeTab)
   }, [activeTab, loadTabData])
 
-  const generateGraph = useCallback((schema: OntologySchema, stats: OntologyStatistics) => {
+  const generateGraph = useCallback((schema: OntologySchema, stats: OntologyStatistics, ifaceData?: Record<string, OntologyInterfaceDef> | null) => {
+    // Build reverse map: entity -> [interface names]
+    const entityInterfaces: Record<string, string[]> = {}
+    if (ifaceData) {
+      Object.entries(ifaceData).forEach(([ifaceName, iface]) => {
+        iface.implementations.forEach(impl => {
+          // Match both "RoomEntity" and "Room" style names
+          const shortName = impl.replace('Entity', '')
+          if (!entityInterfaces[impl]) entityInterfaces[impl] = []
+          if (!entityInterfaces[shortName]) entityInterfaces[shortName] = []
+          entityInterfaces[impl].push(ifaceName)
+          entityInterfaces[shortName].push(ifaceName)
+        })
+      })
+    }
+
     const entityNodes: Node[] = schema.entities.map((entity, index) => {
       const angle = (2 * Math.PI * index) / schema.entities.length - Math.PI / 2
       const radius = 280
@@ -1145,7 +1498,8 @@ const Ontology: React.FC = () => {
           label: entity.description,
           name: entity.name,
           total: stat?.total || 0,
-          attributes: entity.attributes
+          attributes: entity.attributes,
+          interfaces: entityInterfaces[entity.name] || [],
         }
       }
     })
@@ -1179,6 +1533,7 @@ const Ontology: React.FC = () => {
     { id: 'semantic', label: 'Semantic', icon: <Box size={16} /> },
     { id: 'kinetic', label: 'Kinetic', icon: <Network size={16} /> },
     { id: 'dynamic', label: 'Dynamic', icon: <GitBranch size={16} /> },
+    { id: 'interfaces', label: 'Interfaces', icon: <Package size={16} /> },
   ]
 
   if (loading && activeTab === 'data') {
@@ -1216,13 +1571,16 @@ const Ontology: React.FC = () => {
           <Database className="w-6 h-6 text-primary-400" />
           <h1 className="text-xl font-semibold">Ontology View</h1>
         </div>
-        <button
-          onClick={loadData}
-          className="flex items-center gap-2 px-3 py-1.5 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors text-sm"
-        >
-          <RefreshCw size={16} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <SchemaExportButton />
+          <button
+            onClick={loadData}
+            className="flex items-center gap-2 px-3 py-1.5 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors text-sm"
+          >
+            <RefreshCw size={16} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -1265,6 +1623,9 @@ const Ontology: React.FC = () => {
         )}
         {activeTab === 'dynamic' && (
           <DynamicTab dynamicData={dynamicData} loading={loading && !dynamicData} />
+        )}
+        {activeTab === 'interfaces' && (
+          <InterfacesTab interfacesData={interfacesData} loading={loading && !interfacesData} />
         )}
       </div>
 

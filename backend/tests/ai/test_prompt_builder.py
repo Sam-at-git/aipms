@@ -12,6 +12,9 @@ from core.ai.prompt_builder import (
     build_system_prompt,
 )
 
+# 导入模型以触发 registry 注册
+import app.models.ontology
+
 
 class TestPromptContext:
     """PromptContext 测试"""
@@ -78,7 +81,7 @@ class TestPromptBuilder:
         description = builder._build_entity_descriptions()
 
         # 应该包含实体标题
-        assert "**支持的实体:**" in description
+        assert "**本体实体:**" in description
 
     def test_build_action_descriptions(self):
         """测试操作描述构建"""

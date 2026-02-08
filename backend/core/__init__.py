@@ -38,6 +38,26 @@ from core.ontology.metadata import (
 from core.ontology.registry import OntologyRegistry, registry
 from core.ontology.security import SecurityLevel
 from core.ontology.link import Link, LinkCollection
+from core.ontology.semantic_query import (
+    SemanticQuery,
+    SemanticFilter,
+    PathSegment,
+    ResolvedPath,
+    FilterOperator,
+    semantic_filter_from_dict,
+    semantic_query_from_dict,
+)
+from core.ontology.semantic_path_resolver import (
+    SemanticPathResolver,
+    PathResolutionError,
+)
+from core.ontology.business_rules import (
+    BusinessRule as QueryBusinessRule,
+    BusinessRuleRegistry,
+    RuleType,
+    business_rules,
+    get_business_rules,
+)
 
 # OODA 循环
 from core.ooda.intent import (
@@ -72,6 +92,28 @@ from core.ai.hitl import (
     create_default_hitl_strategy,
     create_safe_hitl_strategy,
 )
+from core.ai.reflexion import (
+    ErrorType,
+    ExecutionError,
+    ReflectionResult,
+    AttemptRecord,
+    ReflexionLoop,
+)
+from core.ai.debug_logger import (
+    DebugLogger,
+    DebugSession,
+    AttemptLog,
+)
+from core.ai.replay import (
+    ReplayEngine,
+    ReplayOverrides,
+    ReplayConfig,
+    ReplayResult,
+    ReplayDiff,
+    SessionDiff,
+    AttemptDiff,
+    PerformanceDiff,
+)
 
 __version__ = "0.1.0"
 
@@ -92,6 +134,15 @@ __all__ = [
     "SecurityLevel",
     "Link",
     "LinkCollection",
+    "SemanticQuery",
+    "SemanticFilter",
+    "PathSegment",
+    "ResolvedPath",
+    "FilterOperator",
+    "semantic_filter_from_dict",
+    "semantic_query_from_dict",
+    "SemanticPathResolver",
+    "PathResolutionError",
     # OODA 循环
     "IntentResult",
     "MissingField",
@@ -116,4 +167,20 @@ __all__ = [
     "ActionRisk",
     "create_default_hitl_strategy",
     "create_safe_hitl_strategy",
+    "ErrorType",
+    "ExecutionError",
+    "ReflectionResult",
+    "AttemptRecord",
+    "ReflexionLoop",
+    "DebugLogger",
+    "DebugSession",
+    "AttemptLog",
+    "ReplayEngine",
+    "ReplayOverrides",
+    "ReplayConfig",
+    "ReplayResult",
+    "ReplayDiff",
+    "SessionDiff",
+    "AttemptDiff",
+    "PerformanceDiff",
 ]

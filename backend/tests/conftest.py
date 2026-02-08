@@ -264,3 +264,19 @@ def sample_guest_2(db_session):
     db_session.commit()
     db_session.refresh(guest)
     return guest
+
+
+@pytest.fixture
+def sample_employee(db_session):
+    """创建测试员工"""
+    employee = Employee(
+        username="test_employee",
+        password_hash=get_password_hash("password123"),
+        name="测试员工",
+        role=EmployeeRole.RECEPTIONIST,
+        is_active=True
+    )
+    db_session.add(employee)
+    db_session.commit()
+    db_session.refresh(employee)
+    return employee

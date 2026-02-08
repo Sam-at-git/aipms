@@ -10,6 +10,10 @@ interface LLMSettings {
   enable_llm: boolean
   system_prompt: string
   has_env_key: boolean
+  // Embedding settings
+  embedding_enabled: boolean
+  embedding_base_url: string
+  embedding_model: string
 }
 
 interface LLMProvider {
@@ -28,13 +32,18 @@ export default function Settings() {
     llm_max_tokens: 1000,
     enable_llm: true,
     system_prompt: '',
-    has_env_key: false
+    has_env_key: false,
+    embedding_enabled: true,
+    embedding_base_url: 'http://localhost:11434/v1',
+    embedding_model: 'nomic-embed-text'
   })
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [testingEmbedding, setTestingEmbedding] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; response?: string } | null>(null)
+  const [embeddingTestResult, setEmbeddingTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [saveSuccess, setSaveSuccess] = useState(false)
 
   // 获取设置
@@ -138,6 +147,34 @@ export default function Settings() {
     }
   }
 
+  // 测试 Embedding
+  const handleTestEmbedding = async () => {
+    setTestingEmbedding(true)
+    setEmbeddingTestResult(null)
+
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch('/api/settings/embedding/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          base_url: settings.embedding_base_url,
+          model: settings.embedding_model
+        })
+      })
+
+      const data = await res.json()
+      setEmbeddingTestResult(data)
+    } catch (error) {
+      setEmbeddingTestResult({ success: false, message: '测试失败: ' + error })
+    } finally {
+      setTestingEmbedding(false)
+    }
+  }
+
   // 选择预设服务商
   const selectProvider = (provider: LLMProvider) => {
     setSettings({
@@ -209,6 +246,24 @@ export default function Settings() {
             {testResult.response && (
               <p className="text-dark-400 mt-2 text-sm">AI 回复: {testResult.response}</p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Embedding 测试结果 */}
+      {embeddingTestResult && (
+        <div className={`mb-6 p-4 rounded-lg flex items-start gap-3 ${
+          embeddingTestResult.success ? 'bg-green-900/30 border border-green-700' : 'bg-red-900/30 border border-red-700'
+        }`}>
+          {embeddingTestResult.success ? (
+            <Check className="text-green-400 mt-0.5" size={20} />
+          ) : (
+            <X className="text-red-400 mt-0.5" size={20} />
+          )}
+          <div>
+            <p className={embeddingTestResult.success ? 'text-green-300' : 'text-red-300'}>
+              {embeddingTestResult.message}
+            </p>
           </div>
         </div>
       )}
@@ -339,6 +394,92 @@ export default function Settings() {
                 />
                 <p className="text-xs text-dark-500 mt-1">最大回复长度</p>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 系统提示词 */}
+        <div className="bg-dark-900 rounded-lg p-6 border border-dark-800">
+          <h2 className="text-lg font-semibold mb-4">系统提示词</h2>
+          <textarea
+            value={settings.system_prompt}
+            onChange={(e) => setSettings({ ...settings, system_prompt: e.target.value })}
+            rows={10}
+            className="w-full bg-dark-950 border border-dark-700 rounded-lg px-4 py-3 focus:outline-none focus:border-primary-500 font-mono text-sm"
+            placeholder="输入系统提示词..."
+          />
+          <p className="text-xs text-dark-500 mt-2">修改提示词可以调整 AI 的行为和回复风格</p>
+        </div>
+
+        {/* Embedding 配置 */}
+        <div className="bg-dark-900 rounded-lg p-6 border border-dark-800">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold">语义搜索配置 (Embedding)</h2>
+            <button
+              onClick={handleTestEmbedding}
+              disabled={testingEmbedding || !settings.embedding_enabled}
+              className="px-3 py-1.5 bg-dark-800 hover:bg-dark-700 rounded-lg flex items-center gap-2 disabled:opacity-50 transition-colors text-sm"
+            >
+              {testingEmbedding ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <TestTube size={14} />
+              )}
+              测试
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between mb-4 pb-4 border-b border-dark-800">
+            <div>
+              <p className="text-dark-300">启用语义搜索</p>
+              <p className="text-sm text-dark-500 mt-1">用于智能匹配和语义理解</p>
+            </div>
+            <button
+              onClick={() => setSettings({ ...settings, embedding_enabled: !settings.embedding_enabled })}
+              className={`relative w-14 h-7 rounded-full transition-colors ${
+                settings.embedding_enabled ? 'bg-primary-600' : 'bg-dark-700'
+              }`}
+            >
+              <span className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-transform ${
+                settings.embedding_enabled ? 'translate-x-7' : 'translate-x-1'
+              }`} />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {/* Base URL */}
+            <div>
+              <label className="block text-sm text-dark-400 mb-2">Embedding API 地址</label>
+              <input
+                type="text"
+                value={settings.embedding_base_url}
+                onChange={(e) => setSettings({ ...settings, embedding_base_url: e.target.value })}
+                className="w-full bg-dark-950 border border-dark-700 rounded-lg px-4 py-2.5 focus:outline-none focus:border-primary-500"
+                placeholder="http://localhost:11434/v1"
+              />
+              <p className="text-xs text-dark-500 mt-1">本地 Ollama: http://localhost:11434/v1</p>
+            </div>
+
+            {/* 模型 */}
+            <div>
+              <label className="block text-sm text-dark-400 mb-2">Embedding 模型</label>
+              <input
+                type="text"
+                value={settings.embedding_model}
+                onChange={(e) => setSettings({ ...settings, embedding_model: e.target.value })}
+                list="embedding-models-suggest"
+                className="w-full bg-dark-950 border border-dark-700 rounded-lg px-4 py-2.5 focus:outline-none focus:border-primary-500"
+                placeholder="nomic-embed-text"
+              />
+              <datalist id="embedding-models-suggest">
+                <option value="nomic-embed-text" />
+                <option value="nomic-embed-text:latest" />
+                <option value="mxbai-embed-large" />
+                <option value="mxbai-embed-large:latest" />
+                <option value="text-embedding-3-small" />
+                <option value="text-embedding-ada-002" />
+              </datalist>
+              <p className="text-xs text-dark-500 mt-1">推荐使用 nomic-embed-text (本地 Ollama)</p>
             </div>
           </div>
         </div>

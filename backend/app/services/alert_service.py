@@ -2,7 +2,7 @@
 告警服务
 监听安全事件并在达到阈值时触发告警
 """
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 import logging
@@ -55,7 +55,7 @@ class AlertService:
         # 发布告警事件（供WebSocket推送或其他通知渠道）
         event_bus.publish(Event(
             event_type="alert.triggered",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             data={
                 "alert_type": "security",
                 "security_event": security_event,

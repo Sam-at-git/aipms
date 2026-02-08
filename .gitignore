@@ -40,3 +40,4 @@ backend/data/conversations/
 # Lock files (optional, keep if you want reproducible builds)
 # uv.lock
 # package-lock.json
+docs/

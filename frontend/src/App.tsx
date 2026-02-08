@@ -17,6 +17,11 @@ import AuditLogs from './pages/AuditLogs'
 import Customers from './pages/Customers'
 import Ontology from './pages/Ontology'
 import SecurityDashboard from './pages/SecurityDashboard'
+import Chat from './pages/Chat'
+import ConversationAdmin from './pages/ConversationAdmin'
+import DebugPanel from './pages/DebugPanel'
+import SessionDetail from './pages/SessionDetail'
+import ReplayResult from './pages/ReplayResult'
 
 // 受保护路由
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -59,6 +64,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
       <Route
         path="/"
         element={
@@ -84,6 +90,10 @@ export default function App() {
         <Route path="settings" element={<Settings />} />
         <Route path="ontology" element={<Ontology />} />
         <Route path="security" element={<SecurityDashboard />} />
+        <Route path="conversation-admin" element={<ConversationAdmin />} />
+        <Route path="debug" element={<DebugPanel />} />
+        <Route path="debug/sessions/:sessionId" element={<SessionDetail />} />
+        <Route path="debug/replay/:replayId" element={<ReplayResult />} />
       </Route>
     </Routes>
   )
@@ -94,7 +104,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, BedDouble, CalendarCheck, Users, ClipboardList,
   DollarSign, UserCog, BarChart3, LogOut, Menu, MessageSquare, Settings as SettingsIcon, Tag, FileText, UserCircle,
-  Database, Shield
+  Database, Shield, Bug
 } from 'lucide-react'
 import { useUIStore } from './store'
 
@@ -110,9 +120,12 @@ const navItems = [
   { path: '/audit-logs', icon: FileText, label: '审计日志', roles: ['sysadmin'] },
   { path: '/ontology', icon: Database, label: '本体视图', roles: ['sysadmin'] },
   { path: '/security', icon: Shield, label: '安全管理', roles: ['sysadmin'] },
+  { path: '/conversation-admin', icon: MessageSquare, label: '聊天管理', roles: ['sysadmin'] },
+  { path: '/debug', icon: Bug, label: '调试面板', roles: ['sysadmin'] },
   { path: '/employees', icon: UserCog, label: '员工管理', roles: ['sysadmin', 'manager'] },
   { path: '/reports', icon: BarChart3, label: '统计报表', roles: ['sysadmin', 'manager'] },
   { path: '/settings', icon: SettingsIcon, label: '系统设置', roles: ['sysadmin'] },
+  { path: '/chat', icon: MessageSquare, label: '独立聊天', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'] },
 ]
 
 function AppLayout() {

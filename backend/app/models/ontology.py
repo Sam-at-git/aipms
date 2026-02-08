@@ -2,6 +2,9 @@
 本体对象定义 (Ontology Objects)
 遵循 Palantir 架构：所有业务实体通过对象、属性、链接进行建模
 每个属性带有安全等级标记，支持属性级访问控制
+
+领域层关键字定义：通过 @ontology_entity 和 @ontology_property 装饰器
+定义与意图识别相关的关键字，实现框架与领域的解耦。
 """
 from datetime import datetime, date
 from decimal import Decimal
@@ -13,6 +16,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from app.database import Base
+
+# 导入 searchable 装饰器
+from core.ontology.metadata import ontology_entity, ontology_property
 
 
 # ============== 枚举定义 ==============
@@ -108,6 +114,11 @@ class RoomType(Base):
     rate_plans = relationship("RatePlan", back_populates="room_type")
 
 
+@ontology_entity(
+    name="Room",
+    description="房间对象 - 数字孪生的核心实体",
+    keywords=['房间', '房态', '空房', '标间', '大床房', '豪华间', '标准间', '大床', '豪华']
+)
 class Room(Base):
     """
     房间对象 - 数字孪生的核心实体
@@ -131,6 +142,11 @@ class Room(Base):
     tasks = relationship("Task", back_populates="room")
 
 
+@ontology_entity(
+    name="Guest",
+    description="客人对象",
+    keywords=['客人', '住客', '客户', '旅客', '访客']
+)
 class Guest(Base):
     """
     客人对象
@@ -159,6 +175,11 @@ class Guest(Base):
     stay_records = relationship("StayRecord", back_populates="guest")
 
 
+@ontology_entity(
+    name="Reservation",
+    description="预订对象 - 预订阶段的聚合根",
+    keywords=['预订', '预约', '订房', '订单', '预订单']
+)
 class Reservation(Base):
     """
     预订对象 - 预订阶段的聚合根
@@ -192,6 +213,11 @@ class Reservation(Base):
     creator = relationship("Employee", foreign_keys=[created_by])
 
 
+@ontology_entity(
+    name="StayRecord",
+    description="住宿记录对象 - 住宿期间的聚合根",
+    keywords=['住宿', '入住', '在住', '入住记录', '退房记录']
+)
 class StayRecord(Base):
     """
     住宿记录对象 - 住宿期间的聚合根
@@ -269,6 +295,11 @@ class Payment(Base):
     operator = relationship("Employee")
 
 
+@ontology_entity(
+    name="Task",
+    description="任务对象 - 用于清洁和维修任务管理",
+    keywords=['任务', '工单', '清洁', '打扫', '维修', '保养']
+)
 class Task(Base):
     """
     任务对象

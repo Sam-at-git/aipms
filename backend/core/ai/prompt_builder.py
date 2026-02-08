@@ -8,8 +8,9 @@ PromptBuilder - 动态提示词构建器
 
 SPEC-51: 动态注入本体元数据
 SPEC-52: 完整的 build_system_prompt() 实现
+SPEC-13: 语义查询语法提示词 (Semantic Query Syntax)
 """
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import date, timedelta
 from dataclasses import dataclass, field
 
@@ -50,9 +51,11 @@ class PromptBuilder:
     - 权限矩阵注入
     - 日期上下文注入
     - 模板变量替换
+    - 语义查询语法注入（SPEC-13）
 
     SPEC-51: 动态注入本体元数据
     SPEC-52: 完整的 build_system_prompt() 实现
+    SPEC-13: 语义查询语法提示词
     """
 
     # 基础系统提示词模板
@@ -67,6 +70,8 @@ class PromptBuilder:
 6. **房间相关：优先使用 room_number（字符串）而非 room_id，让后端自动转换**
 
 {role_context}
+
+{semantic_query_syntax}
 
 {entity_descriptions}
 
@@ -141,6 +146,7 @@ class PromptBuilder:
         - 状态机定义（状态、转换）
         - 业务规则（名称、描述）
         - 权限矩阵（角色允许的操作）
+        - 语义查询语法（SPEC-13）
 
         Args:
             context: 提示词上下文
@@ -154,6 +160,7 @@ class PromptBuilder:
 
         # 构建各部分描述
         role_context = self._build_role_context(context) if context.user_role else ""
+        semantic_query_syntax = self._build_semantic_query_syntax() if context.include_entities else ""
         entity_descriptions = self._build_entity_descriptions() if context.include_entities else ""
         action_descriptions = self._build_action_descriptions() if context.include_actions else ""
         state_machine_descriptions = self._build_state_machine_descriptions() if context.include_state_machines else ""
@@ -166,6 +173,7 @@ class PromptBuilder:
 
         prompt = template.format(
             role_context=role_context,
+            semantic_query_syntax=semantic_query_syntax,
             entity_descriptions=entity_descriptions,
             action_descriptions=action_descriptions,
             state_machine_descriptions=state_machine_descriptions,
@@ -368,6 +376,222 @@ class PromptBuilder:
         ]
 
         return "\n".join(lines)
+
+    def _build_semantic_query_syntax(self) -> str:
+        """
+        构建语义查询语法说明 (SPEC-13)
+
+        生成用于 SemanticQuery 的完整语法说明，包括：
+        - 路径语法规则
+        - 可用实体及路径示例
+        - 过滤操作符
+        - 查询示例
+
+        Returns:
+            语义查询语法提示词部分
+        """
+        from core.ontology.query_engine import RELATIONSHIP_MAP
+
+        lines = [
+            "**Semantic Query Syntax (语义查询语法)**",
+            "",
+            "你不需要编写 SQL JOIN。使用点分路径（dot-notation）导航实体关系。",
+            "",
+            "## 路径语法规则",
+            "",
+            "- **简单字段**: `name`, `status`, `room_number`",
+            "- **单跳关联**: `stays.room_number`, `room.room_type`",
+            "- **多跳导航**: `stays.room.room_type.name`",
+            "- **深度导航**: 支持最多 10 跳（但通常 2-3 跳已足够）",
+            "",
+            "## 可用实体及路径",
+        ]
+
+        # 动态生成实体路径说明（基于 RELATIONSHIP_MAP）
+        entity_paths = self._generate_entity_paths(RELATIONSHIP_MAP)
+
+        for entity_name, paths in entity_paths.items():
+            lines.append(f"\n### {entity_name}")
+            for path_desc in paths:
+                lines.append(f"- {path_desc}")
+
+        # 过滤操作符
+        lines.extend([
+            "",
+            "## 过滤操作符",
+            "",
+            "- `eq` - 等于",
+            "- `ne` - 不等于",
+            "- `gt` - 大于",
+            "- `gte` - 大于等于",
+            "- `lt` - 小于",
+            "- `lte` - 小于等于",
+            "- `in` - 在列表中",
+            "- `not_in` - 不在列表中",
+            "- `like` - 模糊匹配（支持 % 通配符）",
+            "- `between` - 在范围内",
+        ])
+
+        # 查询示例
+        lines.extend([
+            "",
+            "## 查询示例",
+            "",
+            "### 示例 1: 查询所有在住客人",
+            "```json",
+            "{",
+            '  "root_object": "Guest",',
+            '  "fields": ["name", "phone"],',
+            '  "filters": [',
+            '    {"path": "stays.status", "operator": "eq", "value": "ACTIVE"}',
+            "  ]",
+            "}",
+            "```",
+            "",
+            "### 示例 2: 查询特定房间的在住客人",
+            "```json",
+            "{",
+            '  "root_object": "Guest",',
+            '  "fields": ["name", "phone"],',
+            '  "filters": [',
+            '    {"path": "stays.status", "operator": "eq", "value": "ACTIVE"},',
+            '    {"path": "stays.room.room_number", "operator": "eq", "value": "201"}',
+            "  ]",
+            "}",
+            "```",
+            "",
+            "### 示例 3: 查询本月的入住记录",
+            "```json",
+            "{",
+            '  "root_object": "StayRecord",',
+            '  "fields": ["guest.name", "check_in_time", "room.room_number"],',
+            '  "filters": [',
+            '    {"path": "check_in_time", "operator": "gte", "value": "2026-02-01"},',
+            '    {"path": "check_in_time", "operator": "lt", "value": "2026-03-01"}',
+            "  ],",
+            '  "order_by": ["check_in_time DESC"],',
+            '  "limit": 50',
+            "}",
+            "```",
+            "",
+            "### 示例 4: 查询 VIP 客人的入住历史",
+            "```json",
+            "{",
+            '  "root_object": "StayRecord",',
+            '  "fields": ["guest.name", "check_in_time", "room.room_number", "room.room_type.name"],',
+            '  "filters": [',
+            '    {"path": "guest.tier", "operator": "eq", "value": "VIP"}',
+            "  ],",
+            '  "order_by": ["check_in_time DESC"],',
+            '  "limit": 20',
+            "}",
+            "```",
+            "",
+            "## 重要规则",
+            "",
+            "1. **路径必须使用关系属性名**（如 `stays` 而非 `stay_records`）",
+            "2. **日期字段使用 ISO 格式**（YYYY-MM-DD）",
+            "3. **状态值使用枚举值**（如 ACTIVE, VACANT_CLEAN, CHECKED_IN）",
+            "4. **多个过滤器之间是 AND 关系**",
+            "5. **limit 默认为 100，最大 1000**",
+        ])
+
+        return "\n".join(lines)
+
+    def _generate_entity_paths(self, relationship_map: Dict[str, Dict[str, Tuple[str, str]]]) -> Dict[str, List[str]]:
+        """
+        生成实体路径说明
+
+        Args:
+            relationship_map: 关系映射字典
+
+        Returns:
+            实体名到路径说明列表的映射
+        """
+        # 常用字段的路径模板
+        common_fields = {
+            "Guest": ["id", "name", "phone", "email", "tier", "id_number"],
+            "Room": ["id", "room_number", "status", "floor"],
+            "StayRecord": ["id", "status", "check_in_time", "check_out_time"],
+            "Reservation": ["id", "status", "check_in_date", "check_out_date"],
+            "Task": ["id", "type", "status", "priority"],
+            "Bill": ["id", "total_amount", "status"],
+            "RoomType": ["id", "name", "price", "base_occupancy"],
+        }
+
+        # 关系路径模板
+        relationship_paths = {
+            "Guest": [
+                ("stay_records", "stays", [
+                    "stays.status - 住宿记录状态",
+                    "stays.check_in_time - 入住时间",
+                    "stays.check_out_time - 退房时间",
+                ]),
+                ("stay_records", "stays.room", [
+                    "stays.room.room_number - 住宿房间号",
+                    "stays.room.status - 房间状态",
+                ]),
+                ("stay_records", "stays.room.room_type", [
+                    "stays.room.room_type.name - 房型名称",
+                    "stays.room.room_type.price - 房型价格",
+                ]),
+            ],
+            "Room": [
+                ("room_type", "room_type", [
+                    "room_type.name - 房型名称",
+                    "room_type.price - 房型价格",
+                ]),
+                ("tasks", "tasks", [
+                    "tasks.type - 任务类型",
+                    "tasks.status - 任务状态",
+                ]),
+            ],
+            "StayRecord": [
+                ("guest", "guest", [
+                    "guest.name - 客人姓名",
+                    "guest.phone - 客人电话",
+                    "guest.tier - 客人等级",
+                ]),
+                ("room", "room", [
+                    "room.room_number - 房间号",
+                    "room.status - 房间状态",
+                ]),
+                ("room", "room.room_type", [
+                    "room.room_type.name - 房型名称",
+                    "room.room_type.price - 房型价格",
+                ]),
+            ],
+            "Reservation": [
+                ("guest", "guest", [
+                    "guest.name - 预订客人姓名",
+                    "guest.phone - 预订客人电话",
+                ]),
+                ("room_type", "room_type", [
+                    "room_type.name - 预订房型名称",
+                    "room_type.price - 房型价格",
+                ]),
+            ],
+            "Task": [
+                ("room", "room", [
+                    "room.room_number - 关联房间号",
+                    "room.status - 房间状态",
+                ]),
+            ],
+        }
+
+        result = {}
+
+        for entity_name, fields in common_fields.items():
+            paths = [f"- **{f}** - 直接字段" for f in fields]
+
+            # 添加关系路径
+            if entity_name in relationship_paths:
+                for _, rel_name, rel_fields in relationship_paths[entity_name]:
+                    paths.extend([f"- **{f}**" for f in rel_fields])
+
+            result[entity_name] = paths
+
+        return result
 
     def _apply_custom_variables(self, text: str, variables: Dict[str, Any]) -> str:
         """应用自定义变量替换"""

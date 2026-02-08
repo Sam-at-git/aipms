@@ -214,6 +214,7 @@ export interface AIResponse {
   candidates?: CandidateOption[]
   follow_up?: FollowUpInfo
   topic_id?: string
+  query_result?: QueryResultData
 }
 
 // 缺失字段定义（用于追问模式）
@@ -269,6 +270,7 @@ export interface ChatMessage {
   timestamp: Date
   actions?: AIAction[]
   context?: MessageContext
+  query_result?: QueryResultData
 }
 
 // 消息上下文
@@ -307,6 +309,16 @@ export interface SearchResultsResponse {
 // 可用日期响应
 export interface AvailableDatesResponse {
   dates: string[]
+}
+
+// 查询结果数据
+export interface QueryResultData {
+  display_type: 'text' | 'table' | 'chart'
+  columns?: string[]
+  column_keys?: string[]
+  rows?: Record<string, unknown>[]
+  data?: Record<string, unknown>
+  summary?: Record<string, unknown>
 }
 
 // 带历史信息的 AI 响应
@@ -413,6 +425,14 @@ export interface OntologyAttribute {
   description: string
   security_level: 'PUBLIC' | 'INTERNAL' | 'CONFIDENTIAL' | 'RESTRICTED'
   foreign_key_target: string | null
+  // Phase 2.5 enhanced fields
+  display_name?: string
+  searchable?: boolean
+  indexed?: boolean
+  is_rich_text?: boolean
+  pii?: boolean
+  phi?: boolean
+  mask_strategy?: string
 }
 
 export interface OntologyRelationshipDetail {
@@ -503,4 +523,60 @@ export interface BusinessRule {
   action: string
   severity: 'error' | 'warning' | 'info'
 }
+
+// ============== 接口系统类型 (Interface System - Phase 2.5) ==============
+
+export interface OntologyInterfaceDef {
+  description?: string
+  required_properties: Record<string, string>
+  required_actions: string[]
+  implementations: string[]
+}
+
+export interface InterfaceImplementation {
+  entity: string
+  interfaces: string[]
+}
+
+// ============== Schema 导出类型 (Schema Export - Phase 2.5) ==============
+
+export interface EntitySchema {
+  name?: string
+  description: string
+  table_name: string
+  is_aggregate_root: boolean
+  properties: Record<string, any>
+  actions: string[]
+  interfaces: string[]
+  state_machine?: any
+  related_entities?: string[]
+}
+
+export interface ActionSchema {
+  action_type: string
+  entity: string
+  description: string
+  params: any[]
+  requires_confirmation: boolean
+  allowed_roles: string[]
+}
+
+export interface StateMachineSchema {
+  entity: string
+  states: string[]
+  initial_state: string
+  transitions: any[]
+}
+
+export interface OntologySchemaExport {
+  entity_types: Record<string, EntitySchema>
+  interfaces: Record<string, OntologyInterfaceDef>
+  actions: Record<string, ActionSchema>
+  state_machines: Record<string, StateMachineSchema>
+}
+
+export type OntologyTabType = 'data' | 'semantic' | 'kinetic' | 'dynamic' | 'interfaces'
+
+// ============== Debug Panel Types (SPEC-19) ==============
+export * from './debug'
 

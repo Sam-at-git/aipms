@@ -71,6 +71,13 @@ try:
 except ImportError:
     CORE_METADATA_AVAILABLE = False
 
+# 导入 DebugLogger (调试追踪)
+try:
+    from core.ai.debug_logger import DebugLogger
+    DEBUG_LOGGER_AVAILABLE = True
+except ImportError:
+    DEBUG_LOGGER_AVAILABLE = False
+
 
 class SystemCommandHandler:
     """处理以 # 开头的系统指令（仅 sysadmin）"""
@@ -217,6 +224,12 @@ class AIService:
         self.param_parser = ParamParserService(db)
         self.system_command_handler = SystemCommandHandler()
 
+        # SPEC-08: ActionRegistry (lazy initialized)
+        self._action_registry = None
+
+        # DebugLogger (调试追踪)
+        self.debug_logger = DebugLogger() if DEBUG_LOGGER_AVAILABLE else None
+
         # 初始化新的 core/ai/ 组件 (如果可用)
         self._init_core_components()
 
@@ -243,6 +256,146 @@ class AIService:
                 register_all_rules(rule_engine)
             except Exception:
                 pass  # 规则可能已经注册
+
+    # ========== SPEC-08: ActionRegistry 集成 ==========
+
+    def get_action_registry(self):
+        """
+        获取全局动作注册表实例（懒加载）。
+
+        SPEC-08: 集成 ActionRegistry 到 AIService
+
+        Returns:
+            ActionRegistry 实例
+        """
+        if self._action_registry is None:
+            try:
+                from app.services.actions import get_action_registry
+                self._action_registry = get_action_registry()
+                logger.info(f"ActionRegistry initialized with {len(self._action_registry.list_actions())} actions")
+            except Exception as e:
+                logger.warning(f"Failed to initialize ActionRegistry: {e}")
+                self._action_registry = False  # 标记为不可用
+        return self._action_registry if self._action_registry is not False else None
+
+    def use_action_registry(self) -> bool:
+        """
+        检查是否可以使用 ActionRegistry。
+
+        Returns:
+            True 如果 ActionRegistry 可用
+        """
+        registry = self.get_action_registry()
+        return registry is not None
+
+    def dispatch_via_registry(
+        self,
+        action_name: str,
+        params: dict,
+        user: Employee
+    ) -> dict:
+        """
+        通过 ActionRegistry 分发动作。
+
+        SPEC-08: 新推荐的动作执行方式
+
+        Args:
+            action_name: 动作名称（如 "walkin_checkin"）
+            params: 参数字典
+            user: 当前用户
+
+        Returns:
+            {
+                "success": True/False,
+                "message": "...",
+                "data": {...}  # 可选，动作返回的数据
+            }
+
+        Raises:
+            ValueError: 动作不存在
+            ValidationError: 参数验证失败
+            PermissionError: 权限不足
+        """
+        registry = self.get_action_registry()
+        if registry is None:
+            raise ValueError("ActionRegistry is not available")
+
+        context = {
+            "db": self.db,
+            "user": user,
+            "param_parser": self.param_parser
+        }
+
+        result = registry.dispatch(action_name, params, context)
+
+        # 统一返回格式
+        return {
+            "success": result.get("success", True),
+            "message": result.get("message", ""),
+            "data": {k: v for k, v in result.items() if k not in ("success", "message")}
+        }
+
+    def get_relevant_tools(self, query: str, top_k: int = 5) -> list:
+        """
+        获取相关工具（OpenAI Tools 格式）。
+
+        SPEC-08: 用于动态工具注入到 LLM 提示词
+
+        Args:
+            query: 用户查询（用于语义搜索）
+            top_k: 返回工具数量上限
+
+        Returns:
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "walkin_checkin",
+                        "description": "...",
+                        "parameters": {...JSON Schema...}
+                    }
+                },
+                ...
+        """
+        registry = self.get_action_registry()
+        if registry is None:
+            return []
+
+        # 如果 ActionRegistry 支持 get_relevant_tools，使用它
+        if hasattr(registry, 'get_relevant_tools'):
+            return registry.get_relevant_tools(query, top_k)
+
+        # 否则返回所有工具
+        return registry.export_all_tools()
+
+    def list_registered_actions(self) -> list:
+        """
+        列出所有已注册的动作。
+
+        SPEC-08: 用于 API 端点
+
+        Returns:
+            动作定义列表
+        """
+        registry = self.get_action_registry()
+        if registry is None:
+            return []
+
+        return [
+            {
+                "name": action.name,
+                "entity": action.entity,
+                "description": action.description,
+                "category": action.category,
+                "requires_confirmation": action.requires_confirmation,
+                "allowed_roles": list(action.allowed_roles),
+                "undoable": action.undoable,
+                "parameters": action.parameters_schema.model_json_schema()
+            }
+            for action in registry.list_actions()
+        ]
+
+    # ========== SPEC-08 End ==========
 
     def _parse_relative_date(self, date_input: Union[str, date]) -> Optional[date]:
         """
@@ -764,11 +917,28 @@ class AIService:
         message = message.strip()
         new_topic_id = topic_id
         include_context = False
+        start_time = datetime.now()
+
+        # ========== DebugLogger: 创建会话 ==========
+        debug_session_id = None
+        if self.debug_logger:
+            debug_session_id = self.debug_logger.create_session(
+                input_message=message,
+                user=user
+            )
 
         # ========== 系统指令处理 ==========
         if self.system_command_handler.is_system_command(message):
             result = self.system_command_handler.execute(message, user, self.db)
             result['topic_id'] = new_topic_id
+            if debug_session_id:
+                execution_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+                self.debug_logger.complete_session(
+                    debug_session_id,
+                    result=result,
+                    status="success",
+                    execution_time_ms=execution_time_ms
+                )
             return result
 
         # ========== 追问模式处理 ==========
@@ -776,7 +946,7 @@ class AIService:
         if follow_up_context and follow_up_context.get('action_type'):
             result = self._process_followup_input(message, follow_up_context, user)
             result['topic_id'] = new_topic_id
-            return result
+            return self._complete_debug_session(debug_session_id, result, start_time, "success")
 
         # 检查话题相关性并决定是否携带上下文
         if conversation_history and self.llm_service.is_enabled():
@@ -820,7 +990,35 @@ class AIService:
                 # 注入查询 Schema（用于 ontology_query）
                 context['include_query_schema'] = True
 
+                # ========== DebugLogger: 记录检索上下文 ==========
+                if debug_session_id and self.debug_logger:
+                    retrieved_schema = {
+                        "room_summary": context.get("room_summary"),
+                        "room_types_count": len(context.get("room_types", [])),
+                        "active_stays_count": len(context.get("active_stays", [])),
+                        "pending_tasks_count": len(context.get("pending_tasks", [])),
+                    }
+                    retrieved_tools = [{"name": "chat", "service": "LLMService"}]
+                    self.debug_logger.update_session_retrieval(
+                        debug_session_id,
+                        retrieved_schema=retrieved_schema,
+                        retrieved_tools=retrieved_tools
+                    )
+
                 result = self.llm_service.chat(message, context, language=language)
+
+                # ========== DebugLogger: 记录 LLM 调用 ==========
+                if debug_session_id and self.debug_logger:
+                    # 尝试从 llm_service 获取 prompt 和 token 信息
+                    llm_info = self._extract_llm_debug_info()
+                    if llm_info:
+                        self.debug_logger.update_session_llm(
+                            debug_session_id,
+                            prompt=llm_info.get("prompt", ""),
+                            response=str(result),
+                            tokens_used=llm_info.get("tokens_used"),
+                            model=llm_info.get("model", "unknown")
+                        )
 
                 # 如果 LLM 返回了有效的操作，则处理并返回
                 if result.get("suggested_actions") and not result.get("context", {}).get("error"):
@@ -882,7 +1080,7 @@ class AIService:
                             print(f"DEBUG: Complete action set, actions count: {len(result['suggested_actions'])}")
 
                     result['topic_id'] = new_topic_id
-                    return result
+                    return self._complete_debug_session(debug_session_id, result, start_time, "success")
 
                 # 其他情况回退到规则模式
             except Exception as e:
@@ -892,7 +1090,35 @@ class AIService:
         # 规则模式（后备）
         result = self._process_with_rules(message, user)
         result['topic_id'] = new_topic_id
+        return self._complete_debug_session(debug_session_id, result, start_time, "success")
+
+    def _complete_debug_session(self, session_id: str, result: dict, start_time: datetime, status: str) -> dict:
+        """完成 DebugLogger 会话并返回结果"""
+        if session_id and self.debug_logger:
+            execution_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            # 提取 actions_executed
+            actions_executed = result.get("suggested_actions", []) if result else []
+            self.debug_logger.complete_session(
+                session_id,
+                result=result,
+                status=status,
+                execution_time_ms=execution_time_ms,
+                actions_executed=actions_executed
+            )
         return result
+
+    def _extract_llm_debug_info(self) -> Optional[Dict[str, Any]]:
+        """从 LLMService 提取调试信息"""
+        try:
+            if hasattr(self.llm_service, 'last_request') and self.llm_service.last_request:
+                return {
+                    "prompt": self.llm_service.last_request.get("messages", []),
+                    "model": self.llm_service.last_request.get("model", "unknown"),
+                    "tokens_used": None,  # 需要从响应中获取
+                }
+        except Exception as e:
+            logger.debug(f"Failed to extract LLM debug info: {e}")
+        return None
 
     def _build_llm_context(self, user: Employee) -> Dict[str, Any]:
         """构建 LLM 上下文"""
@@ -1185,25 +1411,35 @@ class AIService:
 请根据查询结果，用自然语言回答用户的问题。
 要求：
 1. 直接回答问题，列出关键信息
-2. 如果是人名，只列出名字即可
-3. 保持简洁，不要啰嗦
-4. 不要添加 JSON 格式，直接用自然语言回答
+2. 必须使用上面提供的详细数据，不要说"未提供"或"无法列出"
+3. 如果是人名，只列出名字即可
+4. 保持简洁，不要啰嗦
+5. 不要添加 JSON 格式，直接用自然语言回答
 
 请直接给出回答："""
 
         try:
-            formatted_message = self.llm_service.chat(
+            llm_response = self.llm_service.chat(
                 format_prompt,
                 {"user_role": user.role.value, "user_name": user.name},
                 language='zh'
-            ).get("message", summary)
+            )
+            formatted_message = llm_response.get("message", summary)
+
+            # 检查 LLM 是否返回了有效数据（而不是占位符文本）
+            if any(phrase in formatted_message for phrase in ["未提供", "无法列出", "无法获取", "没有提供", "建议您进一步筛选"]):
+                # LLM 返回了占位符文本，使用数据摘要
+                logger.warning(f"LLM returned placeholder text, using data summary")
+                formatted_message = f"{summary}\n\n{data_summary}"
 
             # 替换 message
             query_result["message"] = formatted_message
             return query_result
 
         except Exception as e:
-            logger.warning(f"LLM formatting failed: {e}, using original result")
+            logger.warning(f"LLM formatting failed: {e}, using data summary")
+            # 失败时也使用数据摘要
+            query_result["message"] = f"{summary}\n\n{data_summary}"
             return query_result
 
     def _build_data_summary(self, rows: List[Dict], columns: List[str]) -> str:
@@ -1212,9 +1448,32 @@ class AIService:
             return "无数据"
 
         lines = []
-        for i, row in enumerate(rows[:10]):  # 最多10条
-            row_text = ", ".join([f"{col}: {row.get(col, '')}" for col in columns])
+        # 显示所有数据（不限制条数），或者至少显示前20条
+        for i, row in enumerate(rows[:20]):
+            # row 的键可能是中文（column_keys）或英文
+            # 我们需要用 row 的实际键来获取值
+            row_items = []
+            for idx, col in enumerate(columns):
+                # 尝试多种方式获取值
+                value = None
+                # 1. 直接用列名作为键
+                if col in row:
+                    value = row[col]
+                # 2. 用索引获取
+                elif len(row) > idx:
+                    value = list(row.values())[idx]
+                # 3. 使用空字符串
+                else:
+                    value = ""
+
+                if value == "" or value is None:
+                    value = "(空)"
+                row_items.append(f"{col}: {value}")
+            row_text = ", ".join(row_items)
             lines.append(f"- {row_text}")
+
+        if len(rows) > 20:
+            lines.append(f"... 还有 {len(rows) - 20} 条记录")
 
         return "\n".join(lines)
 
@@ -1769,11 +2028,18 @@ class AIService:
             # 判断是否为简单查询（可用 Service 优化）
             # 聚合查询不视为简单查询
             if query.is_simple() and not query.aggregate:
-                return self._execute_simple_query(query, user)
+                simple_result = self._execute_simple_query(query, user)
+                # 记录简单查询结果
+                logger.info(f"Simple query result: {len(simple_result.get('query_result', {}).get('rows', []))} rows")
+                return simple_result
 
             # 复杂查询使用 QueryEngine
             engine = QueryEngine(self.db, registry)
             result = engine.execute(query, user)
+
+            # 记录查询结果
+            logger.info(f"QueryEngine result: display_type={result.get('display_type')}, "
+                       f"rows={len(result.get('rows', []))}, columns={result.get('columns', [])}")
 
             # 当查询结果为空时，给出更友好的提示
             if result.get("display_type") == "table" and len(result.get("rows", [])) == 0:
@@ -1991,35 +2257,109 @@ class AIService:
                 }
 
         elif entity == "Room":
-            # 只有在没有复杂过滤条件时才使用简单查询
-            # 如果有过滤器，使用 QueryEngine 以支持所有操作符
-            if query.filters:
-                # 回退到 QueryEngine
-                from core.ontology.query_engine import QueryEngine
-                from core.ontology.registry import registry
-                engine = QueryEngine(self.db, registry)
-                result = engine.execute(query, user)
-                return {
-                    "message": result["summary"],
-                    "suggested_actions": [],
-                    "query_result": result
-                }
+            # Room 查询需要考虑过滤器
+            # 如果有 status 过滤器，应用它
+            from app.models.ontology import RoomStatus
 
-            # 无过滤条件的简单查询
+            filtered_rooms = []
+
+            # 字段映射：支持中英文字段名
+            field_mapping = {
+                "room_number": "room_number",
+                "房号": "room_number",
+                "floor": "floor",
+                "楼层": "floor",
+                "room_type": "room_type",
+                "房型": "room_type",
+                "status": "status",
+                "状态": "status",
+                "room_type_id": "room_type_id",
+                "id": "id",
+                "price": "price",
+                "价格": "price",
+                # 常见的错误字段映射
+                "name": "room_number",  # Room 的 "name" 通常指房号
+                "features": "features",  # 房间设施
+                "guest_name": None,  # Room 没有客人姓名
+                "姓名": None,
+            }
+
+            # 检查是否有状态过滤器
+            status_filter = None
+            if query.filters:
+                for f in query.filters:
+                    if f.field == "status" or f.field == "状态":
+                        status_filter = f.value
+                        break
+
+            # 获取房间
             rooms = self.room_service.get_rooms()
+
+            # 应用状态过滤
+            if status_filter:
+                if isinstance(status_filter, list):
+                    # IN 操作符
+                    for room in rooms:
+                        if room.status.value in status_filter:
+                            filtered_rooms.append(room)
+                else:
+                    # EQ 操作符
+                    target_status = status_filter if isinstance(status_filter, str) else status_filter.value if hasattr(status_filter, 'value') else str(status_filter)
+                    for room in rooms:
+                        if room.status.value == target_status:
+                            filtered_rooms.append(room)
+            else:
+                filtered_rooms = rooms
+
             rows = []
-            for room in rooms:
+            for room in filtered_rooms:
                 row = {}
+                has_valid_field = False
                 for field in fields:
-                    if field == "room_number":
-                        row["room_number"] = room.room_number
-                    elif field == "status":
-                        row["status"] = room.status.value if hasattr(room.status, 'value') else room.status
-                    elif field == "floor":
-                        row["floor"] = room.floor
-                    elif field == "room_type":
-                        row["room_type"] = room.room_type.name if room.room_type else ""
-                rows.append(row)
+                    # 使用字段映射
+                    mapped_field = field_mapping.get(field, field)
+
+                    # 如果映射为 None，表示这个字段不存在，使用空字符串
+                    if mapped_field is None and field in field_mapping:
+                        row[field] = ""
+                        continue
+
+                    # 获取字段值
+                    value = ""
+
+                    if mapped_field == "room_number" or field == "room_number" or field == "name":
+                        value = str(room.room_number)
+                        has_valid_field = True
+                    elif mapped_field == "status" or field == "status":
+                        value = room.status.value if hasattr(room.status, 'value') else str(room.status)
+                        has_valid_field = True
+                    elif mapped_field == "floor" or field == "floor":
+                        value = str(room.floor)
+                        has_valid_field = True
+                    elif mapped_field == "room_type" or field == "room_type":
+                        value = room.room_type.name if room.room_type else ""
+                        has_valid_field = True
+                    elif (mapped_field == "room_type_id" or field == "room_type_id") and room.room_type_id:
+                        value = str(room.room_type_id)
+                        has_valid_field = True
+                    elif (mapped_field == "id" or field == "id") and room.id:
+                        value = str(room.id)
+                        has_valid_field = True
+                    elif (mapped_field == "price" or field == "price") and room.room_type:
+                        value = str(room.room_type.base_price)
+                        has_valid_field = True
+                    elif mapped_field == "features" or field == "features":
+                        value = room.features if room.features else ""
+                        has_valid_field = True
+                    else:
+                        # 未知字段，使用空字符串
+                        value = ""
+
+                    row[field] = value
+
+                # 只要有一个有效字段就添加行
+                if has_valid_field or row:
+                    rows.append(row)
 
             return {
                 "message": f"共 {len(rows)} 条记录",
@@ -2048,6 +2388,7 @@ class AIService:
     def _get_display_name(self, field: str) -> str:
         """获取字段的显示名称"""
         DISPLAY_NAMES = {
+            # 英文字段名
             "name": "姓名",
             "phone": "电话",
             "room_number": "房号",
@@ -2060,6 +2401,16 @@ class AIService:
             "reservation_no": "预订号",
             "total_amount": "总金额",
             "is_settled": "已结清",
+            "price": "价格",
+            "id": "ID",
+            # 中文字段名直接返回
+            "房号": "房号",
+            "楼层": "楼层",
+            "房型": "房型",
+            "状态": "状态",
+            "姓名": "姓名",
+            "电话": "电话",
+            "价格": "价格",
         }
         return DISPLAY_NAMES.get(field, field)
 
@@ -2232,9 +2583,24 @@ class AIService:
         """
         执行动作 - OODA 循环的 Act 阶段
         所有关键操作都需要人类确认后才能执行
+
+        SPEC-08: 优先使用 ActionRegistry，未注册的动作回退到旧逻辑
         """
         action_type = action.get('action_type')
         params = action.get('params', {})
+
+        # ========== SPEC-08: 新路径 - ActionRegistry ==========
+        if self.use_action_registry():
+            try:
+                registry = self.get_action_registry()
+                if registry.get_action(action_type):
+                    logger.info(f"Executing {action_type} via ActionRegistry")
+                    return self.dispatch_via_registry(action_type, params, user)
+            except Exception as e:
+                logger.warning(f"Registry dispatch failed for {action_type}: {e}, falling back to legacy")
+                # 继续尝试旧路径
+                pass
+        # ========== SPEC-08 End ==========
 
         try:
             if action_type == 'checkout':

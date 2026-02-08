@@ -5,7 +5,7 @@ Pydantic 模式定义
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 from typing import Optional, List, Union, Any
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from app.models.ontology import (
     RoomStatus, ReservationStatus, StayRecordStatus,
     TaskType, TaskStatus, PaymentMethod, EmployeeRole, GuestTier
@@ -38,9 +38,7 @@ class RoomTypeResponse(RoomTypeBase):
     id: int
     created_at: datetime
     room_count: int = 0
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============== 房间 Schemas ==============
@@ -70,9 +68,7 @@ class RoomResponse(RoomBase):
     created_at: datetime
     room_type_name: Optional[str] = None
     current_guest: Optional[str] = None
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RoomStatusUpdate(BaseModel):
@@ -117,9 +113,7 @@ class GuestResponse(GuestBase):
     notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class GuestDetailResponse(GuestResponse):
@@ -184,9 +178,7 @@ class ReservationResponse(BaseModel):
     special_requests: Optional[str]
     estimated_arrival: Optional[str]
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============== 入住 Schemas ==============
@@ -280,9 +272,7 @@ class StayRecordResponse(BaseModel):
     bill_total: Decimal = 0
     bill_paid: Decimal = 0
     bill_balance: Decimal = 0
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============== 退房 Schemas ==============
@@ -319,9 +309,7 @@ class BillResponse(BaseModel):
     balance: Decimal
     is_settled: bool
     payments: List["PaymentResponse"] = []
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PaymentResponse(BaseModel):
@@ -331,9 +319,7 @@ class PaymentResponse(BaseModel):
     payment_time: datetime
     remark: Optional[str]
     operator_name: Optional[str]
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============== 任务 Schemas ==============
@@ -369,9 +355,7 @@ class TaskResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============== 员工 Schemas ==============
@@ -408,9 +392,7 @@ class EmployeeResponse(BaseModel):
     role: EmployeeRole
     is_active: bool
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============== 价格策略 Schemas ==============
@@ -447,9 +429,7 @@ class RatePlanResponse(BaseModel):
     is_weekend: bool
     is_active: bool
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============== 登录 Schemas ==============
@@ -558,9 +538,11 @@ class LLMSettings(BaseModel):
     enable_llm: bool = True
     system_prompt: Optional[str] = None
     has_env_key: bool = False  # 是否配置了环境变量 API Key
-
-    class Config:
-        from_attributes = True
+    # Embedding settings
+    embedding_enabled: bool = True
+    embedding_base_url: str = "http://localhost:11434/v1"
+    embedding_model: str = "nomic-embed-text"
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LLMTestRequest(BaseModel):

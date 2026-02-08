@@ -4,6 +4,7 @@
 """
 import os
 from typing import Optional
+from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
 
 
@@ -35,9 +36,20 @@ class Settings(BaseSettings):
     # LLM 功能开关
     ENABLE_LLM: bool = os.environ.get("ENABLE_LLM", "true").lower() == "true"
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    # Embedding 配置 (用于语义搜索)
+    EMBEDDING_API_KEY: Optional[str] = os.environ.get("EMBEDDING_API_KEY", "ollama")  # Ollama 不需要 API key
+    EMBEDDING_BASE_URL: str = os.environ.get(
+        "EMBEDDING_BASE_URL",
+        "http://localhost:11434/v1"  # Ollama 默认地址
+    )
+    EMBEDDING_MODEL: str = os.environ.get(
+        "EMBEDDING_MODEL",
+        "nomic-embed-text"
+    )
+    EMBEDDING_CACHE_SIZE: int = int(os.environ.get("EMBEDDING_CACHE_SIZE", "1000"))
+    EMBEDDING_ENABLED: bool = os.environ.get("EMBEDDING_ENABLED", "true").lower() == "true"
+
+    model_config = ConfigDict(env_file=".env", case_sensitive=True)
 
 
 # 全局设置实例

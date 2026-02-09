@@ -20,9 +20,11 @@ import type {
   BusinessRule,
   OntologyAction,
   OntologyInterfaceDef,
+  OntologyEvent,
   OntologyTabType,
 } from '../types'
-import { Database, RefreshCw, Box, Network, GitBranch, Shield, AlertTriangle, Package, Wrench, DollarSign, BarChart3, X, Download, Copy, Check } from 'lucide-react'
+import { Database, RefreshCw, Box, Network, GitBranch, Shield, AlertTriangle, Package, Wrench, DollarSign, BarChart3, X, Download, Copy, Check, Zap } from 'lucide-react'
+import StateMachineGraph from '../components/StateMachineGraph'
 
 // Entity color mapping
 const entityColors: Record<string, string> = {
@@ -753,7 +755,7 @@ interface DynamicTabProps {
 }
 
 const DynamicTab: React.FC<DynamicTabProps> = ({ dynamicData, loading }) => {
-  const [view, setView] = useState<'state-machines' | 'permissions' | 'rules'>('state-machines')
+  const [view, setView] = useState<'state-machines' | 'permissions' | 'rules' | 'events'>('state-machines')
   const [selectedStateMachine, setSelectedStateMachine] = useState<string | null>(null)
 
   if (loading) {
@@ -811,6 +813,17 @@ const DynamicTab: React.FC<DynamicTabProps> = ({ dynamicData, loading }) => {
             <AlertTriangle size={16} />
             Business Rules
           </button>
+          <button
+            onClick={() => setView('events')}
+            className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+              view === 'events'
+                ? 'bg-primary-500/20 text-primary-400'
+                : 'bg-dark-800 text-dark-300 hover:bg-dark-700'
+            }`}
+          >
+            <Zap size={16} />
+            Domain Events
+          </button>
         </div>
 
         {view === 'state-machines' && (
@@ -849,6 +862,7 @@ const DynamicTab: React.FC<DynamicTabProps> = ({ dynamicData, loading }) => {
         {view === 'rules' && (
           <BusinessRulesView businessRules={dynamicData.business_rules} />
         )}
+        {view === 'events' && <EventsView />}
       </div>
     </div>
   )
@@ -887,25 +901,8 @@ const StateMachineView: React.FC<StateMachineViewProps> = ({
         </div>
       </div>
 
-      {/* States */}
-      <div>
-        <h3 className="text-sm font-medium text-dark-300 mb-3">States</h3>
-        <div className="flex flex-wrap gap-2">
-          {machine.states.map(state => (
-            <div
-              key={state.value}
-              className="px-4 py-2 rounded-lg border-2"
-              style={{
-                borderColor: state.color || '#6b7280',
-                backgroundColor: `${state.color || '#6b7280'}20`,
-              }}
-            >
-              <div className="text-white font-medium">{state.label}</div>
-              <div className="text-xs text-dark-400 font-mono">{state.value}</div>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Flow Graph */}
+      <StateMachineGraph machine={machine} />
 
       {/* Transitions table */}
       <div>
@@ -1145,6 +1142,85 @@ const BusinessRulesView: React.FC<BusinessRulesViewProps> = ({ businessRules }) 
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ============== Events View ==============
+
+const EventsView: React.FC = () => {
+  const [events, setEvents] = useState<OntologyEvent[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    ontologyApi.getEvents().then(data => {
+      setEvents(data.events)
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [])
+
+  if (loading) {
+    return <div className="text-dark-400 text-center py-8">Loading events...</div>
+  }
+
+  if (events.length === 0) {
+    return <div className="text-dark-400 text-center py-8">No events registered</div>
+  }
+
+  // Group by entity
+  const byEntity: Record<string, OntologyEvent[]> = {}
+  for (const e of events) {
+    const key = e.entity || 'Other'
+    if (!byEntity[key]) byEntity[key] = []
+    byEntity[key].push(e)
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="pb-4 border-b border-dark-700">
+        <h2 className="text-xl font-semibold text-white">Domain Events</h2>
+        <p className="text-dark-400 text-sm">{events.length} events registered</p>
+      </div>
+
+      {Object.entries(byEntity).map(([entity, entityEvents]) => (
+        <div key={entity}>
+          <h3 className="text-sm font-medium text-dark-300 mb-3">{entity}</h3>
+          <div className="grid gap-3">
+            {entityEvents.map(event => (
+              <div key={event.name} className="bg-dark-800 rounded-lg p-4">
+                <div className="flex items-start justify-between mb-2">
+                  <code className="text-sm font-mono text-primary-400">{event.name}</code>
+                </div>
+                {event.description && (
+                  <p className="text-sm text-dark-300 mb-3">{event.description}</p>
+                )}
+                <div className="flex flex-wrap gap-4 text-xs">
+                  {event.triggered_by.length > 0 && (
+                    <div>
+                      <span className="text-dark-500 mr-1">Triggered by:</span>
+                      {event.triggered_by.map(t => (
+                        <span key={t} className="inline-block bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded mr-1">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {event.payload_fields.length > 0 && (
+                    <div>
+                      <span className="text-dark-500 mr-1">Payload:</span>
+                      {event.payload_fields.map(f => (
+                        <span key={f} className="inline-block bg-dark-700 text-dark-300 px-2 py-0.5 rounded mr-1 font-mono">
+                          {f}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

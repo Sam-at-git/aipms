@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from core.ai.vector_store import VectorStore
+    from core.ai.reflexion import ReflexionLoop
 
 
 # Category types for actions
@@ -46,6 +47,9 @@ class ActionDefinition:
         undoable: Whether this action can be undone
         side_effects: List of side effects this action may cause
         search_keywords: Additional keywords for semantic search
+        semantic_category: Category for domain glossary (e.g., "guest_type", "action_type")
+        category_description: Human-readable description of the semantic_category (provided by domain layer)
+        glossary_examples: Correct/incorrect extraction examples for LLM guidance (provided by domain layer)
     """
 
     # Identity
@@ -70,6 +74,11 @@ class ActionDefinition:
 
     # Search keywords (for semantic matching)
     search_keywords: List[str] = field(default_factory=list)
+
+    # Semantic category (for domain glossary)
+    semantic_category: Optional[str] = None
+    category_description: Optional[str] = None
+    glossary_examples: List[Dict[str, str]] = field(default_factory=list)
 
     def to_openai_tool(self) -> Dict[str, Any]:
         """
@@ -112,7 +121,10 @@ class ActionDefinition:
             "allowed_roles": list(self.allowed_roles),
             "undoable": self.undoable,
             "side_effects": self.side_effects,
-            "search_keywords": self.search_keywords
+            "search_keywords": self.search_keywords,
+            "semantic_category": self.semantic_category,
+            "category_description": self.category_description,
+            "glossary_examples": self.glossary_examples
         }
 
 
@@ -152,15 +164,22 @@ class ActionRegistry:
         ```
     """
 
-    def __init__(self, vector_store: Optional["VectorStore"] = None):
+    def __init__(self, vector_store: Optional["VectorStore"] = None, ontology_registry=None,
+                 state_machine_executor=None, constraint_engine=None):
         """
         Initialize the action registry.
 
         Args:
             vector_store: Optional VectorStore for semantic search.
                          If None, attempts to create one automatically (SPEC-09).
+            ontology_registry: Optional OntologyRegistry for automatic ActionMetadata sync.
+            state_machine_executor: Optional StateMachineExecutor for pre-dispatch state validation.
+            constraint_engine: Optional ConstraintEngine for pre-dispatch constraint validation.
         """
         self._actions: Dict[str, ActionDefinition] = {}
+        self._ontology_registry = ontology_registry
+        self._state_machine_executor = state_machine_executor
+        self._constraint_engine = constraint_engine
 
         # SPEC-09: Auto-create VectorStore if not provided
         if vector_store is None:
@@ -216,7 +235,10 @@ class ActionRegistry:
         allowed_roles: Optional[Set[str]] = None,
         undoable: bool = False,
         side_effects: Optional[List[str]] = None,
-        search_keywords: Optional[List[str]] = None
+        search_keywords: Optional[List[str]] = None,
+        semantic_category: Optional[str] = None,
+        category_description: Optional[str] = None,
+        glossary_examples: Optional[List[Dict[str, str]]] = None
     ) -> Callable:
         """
         Decorator for registering actions.
@@ -234,6 +256,9 @@ class ActionRegistry:
             undoable: Whether this action can be undone
             side_effects: List of side effects this action may cause
             search_keywords: Additional keywords for semantic search
+            semantic_category: Category for domain glossary (e.g., "guest_type", "action_type")
+            category_description: Human-readable description of the category (domain-provided)
+            glossary_examples: List of {"correct": ..., "incorrect": ...} dicts for LLM guidance
 
         Returns:
             Decorator function that registers the handler
@@ -263,12 +288,19 @@ class ActionRegistry:
                 allowed_roles=allowed_roles or set(),
                 undoable=undoable,
                 side_effects=side_effects or [],
-                search_keywords=search_keywords or []
+                search_keywords=search_keywords or [],
+                semantic_category=semantic_category,
+                category_description=category_description,
+                glossary_examples=glossary_examples or []
             )
 
             # Register
             self._actions[name] = definition
             logger.info(f"Registered action: {name} (entity={entity}, category={category})")
+
+            # Sync to OntologyRegistry if available
+            if self._ontology_registry is not None:
+                self._sync_to_ontology_registry(definition)
 
             # Index to vector store if available
             if self.vector_store:
@@ -306,6 +338,83 @@ class ActionRegistry:
                 return annotation
 
         return None
+
+    def _sync_to_ontology_registry(self, definition: ActionDefinition) -> None:
+        """
+        Sync an ActionDefinition to OntologyRegistry as ActionMetadata.
+
+        Eliminates the dual-registration problem by auto-creating ActionMetadata
+        from ActionDefinition when an OntologyRegistry is configured.
+        """
+        try:
+            from core.ontology.metadata import ActionMetadata, ActionParam, ParamType
+
+            # Convert Pydantic schema fields to ActionParam list
+            params = []
+            if definition.parameters_schema:
+                schema = definition.parameters_schema.model_json_schema()
+                properties = schema.get("properties", {})
+                required_fields = set(schema.get("required", []))
+
+                type_mapping = {
+                    "string": ParamType.STRING,
+                    "integer": ParamType.INTEGER,
+                    "number": ParamType.NUMBER,
+                    "boolean": ParamType.BOOLEAN,
+                    "array": ParamType.ARRAY,
+                    "object": ParamType.OBJECT,
+                }
+
+                for field_name, field_info in properties.items():
+                    field_type = field_info.get("type", "string")
+                    # Handle anyOf patterns (Optional fields)
+                    if "anyOf" in field_info:
+                        for opt in field_info["anyOf"]:
+                            if opt.get("type") != "null":
+                                field_type = opt.get("type", "string")
+                                break
+                    param = ActionParam(
+                        name=field_name,
+                        type=type_mapping.get(field_type, ParamType.STRING),
+                        required=field_name in required_fields,
+                        description=field_info.get("description", ""),
+                        enum_values=field_info.get("enum"),
+                    )
+                    params.append(param)
+
+            metadata = ActionMetadata(
+                action_type=definition.name,
+                entity=definition.entity,
+                method_name=definition.name,
+                description=definition.description,
+                params=params,
+                requires_confirmation=definition.requires_confirmation,
+                undoable=definition.undoable,
+                side_effects=definition.side_effects,
+                allowed_roles=definition.allowed_roles,
+            )
+
+            self._ontology_registry.register_action(definition.entity, metadata)
+            logger.debug(f"Synced action '{definition.name}' to OntologyRegistry")
+
+        except Exception as e:
+            logger.warning(f"Failed to sync action '{definition.name}' to OntologyRegistry: {e}")
+
+    def set_ontology_registry(self, ontology_registry) -> None:
+        """
+        Set the OntologyRegistry and sync all already-registered actions.
+
+        SPEC-R11: Enables late-binding when ActionRegistry is created before
+        OntologyRegistry is populated.
+
+        Args:
+            ontology_registry: The OntologyRegistry instance to sync actions to.
+        """
+        self._ontology_registry = ontology_registry
+        # Sync all existing actions
+        for definition in self._actions.values():
+            self._sync_to_ontology_registry(definition)
+        logger.info(f"ActionRegistry: Synced {len(self._actions)} actions to OntologyRegistry")
 
     def _index_action(self, definition: ActionDefinition) -> None:
         """
@@ -445,7 +554,12 @@ class ActionRegistry:
             logger.warning(f"Parameter validation failed for {action_name}: {e}")
             raise
 
-        # Check permissions if allowed_roles is set
+        # Guard 2: State machine validation (if executor available)
+        guard_result = self._run_guards(action_def, params, context)
+        if guard_result is not None:
+            return guard_result
+
+        # Guard 4: Check permissions if allowed_roles is set
         user = context.get("user")
         if action_def.allowed_roles and user:
             user_role = getattr(user, "role", None)
@@ -460,6 +574,87 @@ class ActionRegistry:
         result = action_def.handler(validated_params, **context)
 
         return result
+
+    def _run_guards(
+        self,
+        action_def: ActionDefinition,
+        params: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Run pre-dispatch guards (SPEC-12).
+
+        Returns None if all guards pass, or a structured error dict if a guard fails.
+        """
+        # Guard 2: State machine validation
+        if self._state_machine_executor:
+            current_state = context.get("current_state")
+            target_state = context.get("target_state")
+            if current_state and target_state:
+                user_role = None
+                user = context.get("user")
+                if user:
+                    role = getattr(user, "role", None)
+                    user_role = role.value if hasattr(role, "value") else str(role) if role else None
+                result = self._state_machine_executor.validate_transition(
+                    action_def.entity, current_state, target_state, user_role
+                )
+                if not result.allowed:
+                    return {
+                        "success": False,
+                        "error_code": "state_error",
+                        "message": result.reason,
+                        "valid_alternatives": result.valid_alternatives,
+                    }
+
+        # Guard 3: Constraint validation (only if entity_state provided)
+        if self._constraint_engine and "entity_state" in context:
+            current_state_dict = context.get("entity_state", {})
+            user_context = context.get("user_context", {})
+            constraint_result = self._constraint_engine.validate_action(
+                entity_type=action_def.entity,
+                action_type=action_def.name,
+                params=params,
+                current_state=current_state_dict,
+                user_context=user_context,
+            )
+            if not constraint_result.is_valid:
+                return {
+                    "success": False,
+                    "error_code": "constraint_violation",
+                    "message": constraint_result.to_llm_feedback() or "Constraint violation",
+                    "violated_constraints": constraint_result.violated_constraints,
+                    "suggestions": constraint_result.suggestions,
+                }
+
+        return None
+
+    def dispatch_with_reflexion(
+        self,
+        action_name: str,
+        params: Dict[str, Any],
+        context: Dict[str, Any],
+        reflexion_loop: Optional["ReflexionLoop"] = None,
+    ) -> Dict[str, Any]:
+        """
+        Dispatch with optional reflexion loop for self-healing.
+
+        When a ReflexionLoop is provided, delegates to its execute_with_reflexion
+        method which handles retry logic, auto-correction, and LLM-based reflection.
+        Without a ReflexionLoop, falls back to standard dispatch.
+
+        Args:
+            action_name: Name of the action to execute
+            params: Raw parameters dictionary
+            context: Execution context (db, user, etc.)
+            reflexion_loop: Optional ReflexionLoop for self-healing retry
+
+        Returns:
+            Result dictionary from the handler (or wrapped result from ReflexionLoop)
+        """
+        if reflexion_loop:
+            return reflexion_loop.execute_with_reflexion(action_name, params, context)
+        return self.dispatch(action_name, params, context)
 
     def get_relevant_tools(
         self,
@@ -599,6 +794,58 @@ class ActionRegistry:
             "by_entity": by_entity,
             "by_category": by_category
         }
+
+    def get_domain_glossary(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Build domain glossary from all registered actions.
+
+        Collects and categorizes search_keywords to help the LLM distinguish
+        between semantic signals (domain keywords) and parameter values.
+
+        All domain-specific knowledge (category descriptions, examples) comes
+        from action registration metadata — the framework itself is domain-agnostic.
+
+        Returns:
+            Dictionary mapping semantic categories to their definitions:
+            {
+                "checkin_type": {
+                    "keywords": ["散客", "直接入住"],
+                    "meaning": "入住方式（预订入住 vs 直接入住）",
+                    "examples": [
+                        {"correct": "...", "incorrect": "..."}
+                    ]
+                }
+            }
+        """
+        glossary: Dict[str, Dict[str, Any]] = {}
+
+        for action_def in self._actions.values():
+            if not action_def.semantic_category or not action_def.search_keywords:
+                continue
+
+            category = action_def.semantic_category
+
+            if category not in glossary:
+                glossary[category] = {
+                    "keywords": [],
+                    "meaning": action_def.category_description or category,
+                    "examples": []
+                }
+            elif action_def.category_description and glossary[category]["meaning"] == category:
+                # Upgrade from bare category name if a description is now available
+                glossary[category]["meaning"] = action_def.category_description
+
+            # Add keywords (avoid duplicates)
+            for kw in action_def.search_keywords:
+                if kw not in glossary[category]["keywords"]:
+                    glossary[category]["keywords"].append(kw)
+
+            # Add examples from registration (avoid duplicates)
+            for ex in action_def.glossary_examples:
+                if ex not in glossary[category]["examples"]:
+                    glossary[category]["examples"].append(ex)
+
+        return glossary
 
 
 __all__ = [

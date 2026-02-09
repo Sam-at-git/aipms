@@ -1,9 +1,10 @@
+import React from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, BedDouble, CalendarCheck, Users, ClipboardList,
   DollarSign, UserCog, BarChart3, LogOut, Menu, MessageSquare, Settings as SettingsIcon
 } from 'lucide-react'
-import { useAuthStore, useUIStore } from '../store'
+import { useAuthStore, useUIStore, useOntologyStore } from '../store'
 
 const navItems = [
   { path: '/', icon: LayoutDashboard, label: '工作台', roles: ['manager', 'receptionist', 'cleaner'] },
@@ -20,7 +21,11 @@ const navItems = [
 export default function Layout() {
   const { user, logout } = useAuthStore()
   const { sidebarCollapsed, toggleSidebar } = useUIStore()
+  const initialize = useOntologyStore(s => s.initialize)
   const navigate = useNavigate()
+
+  // Initialize ontology store on mount (requires auth)
+  React.useEffect(() => { initialize() }, [initialize])
 
   const handleLogout = () => {
     logout()

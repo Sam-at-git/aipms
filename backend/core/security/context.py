@@ -41,6 +41,7 @@ class SecurityContext:
     session_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     parent_context: Optional["SecurityContext"] = None
+    should_mask_pii: bool = False
 
     def is_admin(self) -> bool:
         """检查是否为管理员"""

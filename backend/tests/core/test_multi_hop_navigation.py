@@ -9,6 +9,9 @@ and correctly generate JOIN clauses for QueryEngine.
 Test Coverage:
 1. Three-hop navigation (Guest -> StayRecord -> Room -> RoomType)
 2. Four-hop navigation (Guest -> StayRecord -> Bill -> Payment)
+
+Note: Guest->StayRecord relationship is named "stays" (adapter-registered),
+      StayRecord->Bill is "bill" (one_to_one), Bill->Payment is "payments".
 3. JOIN deduplication when paths share relationships
 4. Complex queries with multiple multi-hop paths
 5. Edge cases (circular, invalid paths, max depth)
@@ -36,6 +39,16 @@ from core.ontology.query import (
 )
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _bootstrap_adapter():
+    """Ensure HotelDomainAdapter is bootstrapped for resolver tests."""
+    from core.ontology.registry import OntologyRegistry
+    from app.hotel.hotel_domain_adapter import HotelDomainAdapter
+    registry = OntologyRegistry()
+    adapter = HotelDomainAdapter()
+    adapter.register_ontology(registry)
+
+
 class TestThreeHopNavigation:
     """Test three-hop navigation (3 relationships)"""
 
@@ -44,7 +57,7 @@ class TestThreeHopNavigation:
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["stay_records.room.room_type.name"]
+            fields=["stays.room.room_type.name"]
         )
 
         structured = resolver.compile(semantic)
@@ -60,10 +73,10 @@ class TestThreeHopNavigation:
     def test_three_hop_path_resolution(self):
         """Test resolve_path with 3-hop path"""
         resolver = SemanticPathResolver()
-        resolved = resolver.resolve_path("Guest", "stay_records.room.room_type.name")
+        resolved = resolver.resolve_path("Guest", "stays.room.room_type.name")
 
         assert len(resolved.segments) == 4
-        assert resolved.segments[0].is_relationship()  # stay_records
+        assert resolved.segments[0].is_relationship()  # stays
         assert resolved.segments[1].is_relationship()  # room
         assert resolved.segments[2].is_relationship()  # room_type
         assert resolved.segments[3].is_field()  # name
@@ -72,29 +85,29 @@ class TestThreeHopNavigation:
         assert resolved.final_field == "name"
         assert resolved.final_entity == "RoomType"
 
-    def test_reservation_stay_records_room_room_type_price(self):
-        """Test Reservation -> StayRecord -> Room -> RoomType path"""
+    def test_room_stay_records_guest_name(self):
+        """Test Room -> StayRecord -> Guest path (Room uses stay_records rel name)"""
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
-            root_object="Reservation",
-            fields=["stay_records.room.room_type.base_price"]
+            root_object="Room",
+            fields=["stay_records.guest.name"]
         )
 
         structured = resolver.compile(semantic)
 
-        # Should have JOINs for StayRecord, Room, RoomType
+        # Should have JOINs for StayRecord, Guest
         join_entities = [j.entity for j in structured.joins]
         assert "StayRecord" in join_entities
-        assert "Room" in join_entities
+        assert "Guest" in join_entities
 
     def test_three_hop_with_filter(self):
         """Test 3-hop navigation with filter on intermediate entity"""
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["name", "stay_records.room.room_type.name"],
+            fields=["name", "stays.room.room_type.name"],
             filters=[
-                SemanticFilter(path="stay_records.room.status", operator="eq", value="VACANT_CLEAN")
+                SemanticFilter(path="stays.room.status", operator="eq", value="VACANT_CLEAN")
             ]
         )
 
@@ -103,17 +116,17 @@ class TestThreeHopNavigation:
         # Filter should reference the correct path
         assert len(structured.filters) == 1
         filter_field = structured.filters[0].field
-        assert "stay_records" in filter_field.lower()
+        assert "stays" in filter_field.lower()
         assert "room" in filter_field.lower()
         assert "status" in filter_field.lower()
 
     def test_three_hop_segments_correctness(self):
         """Test that all segments are correctly identified"""
         resolver = SemanticPathResolver()
-        resolved = resolver.resolve_path("Guest", "stay_records.room.room_type.name")
+        resolved = resolver.resolve_path("Guest", "stays.room.room_type.name")
 
-        # First segment: stay_records (relationship)
-        assert resolved.segments[0].name == "stay_records"
+        # First segment: stays (relationship)
+        assert resolved.segments[0].name == "stays"
         assert resolved.segments[0].segment_type == "relationship"
         assert resolved.segments[0].target_entity == "StayRecord"
 
@@ -135,12 +148,12 @@ class TestThreeHopNavigation:
 class TestFourHopNavigation:
     """Test four-hop navigation (4 relationships)"""
 
-    def test_guest_stays_bills_payments_amount(self):
+    def test_guest_stays_bill_payments_amount(self):
         """Test Guest -> StayRecord -> Bill -> Payment path (4 hops)"""
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["stay_records.bills.payments.amount"]
+            fields=["stays.bill.payments.amount"]
         )
 
         structured = resolver.compile(semantic)
@@ -153,13 +166,13 @@ class TestFourHopNavigation:
     def test_four_hop_path_resolution(self):
         """Test resolve_path with 4-hop path"""
         resolver = SemanticPathResolver()
-        resolved = resolver.resolve_path("Guest", "stay_records.bills.payments.amount")
+        resolved = resolver.resolve_path("Guest", "stays.bill.payments.amount")
 
-        # The path has 4 segments total: stay_records (rel), bills (rel), payments (rel), amount (field)
+        # The path has 4 segments total: stays (rel), bill (rel), payments (rel), amount (field)
         # That's 3 relationships + 1 field = 4 segments
         assert len(resolved.segments) == 4  # 3 relationships + 1 field
-        assert resolved.segments[0].is_relationship()  # stay_records -> StayRecord
-        assert resolved.segments[1].is_relationship()  # bills -> Bill
+        assert resolved.segments[0].is_relationship()  # stays -> StayRecord
+        assert resolved.segments[1].is_relationship()  # bill -> Bill
         assert resolved.segments[2].is_relationship()  # payments -> Payment
         assert resolved.segments[3].is_field()  # amount
 
@@ -171,10 +184,10 @@ class TestFourHopNavigation:
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["stay_records.bills.payments.amount"],
+            fields=["stays.bill.payments.amount"],
             filters=[
-                SemanticFilter(path="stay_records.status", operator="eq", value="ACTIVE"),
-                SemanticFilter(path="stay_records.bills.is_settled", operator="eq", value=False)
+                SemanticFilter(path="stays.status", operator="eq", value="ACTIVE"),
+                SemanticFilter(path="stays.bill.is_settled", operator="eq", value=False)
             ]
         )
 
@@ -185,15 +198,15 @@ class TestFourHopNavigation:
 
         # Check filter paths are correctly converted
         filter_fields = [f.field for f in structured.filters]
-        assert any("stay_records" in f and "status" in f for f in filter_fields)
-        assert any("bills" in f and "is_settled" in f for f in filter_fields)
+        assert any("stays" in f and "status" in f for f in filter_fields)
+        assert any("bill" in f and "is_settled" in f for f in filter_fields)
 
     def test_four_hop_join_ordering(self):
         """Test that JOINs are ordered by dependency (shortest first)"""
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["stay_records.bills.payments.amount"]
+            fields=["stays.bill.payments.amount"]
         )
 
         structured = resolver.compile(semantic)
@@ -206,7 +219,7 @@ class TestFourHopNavigation:
     def test_deep_navigation_segments(self):
         """Test segment generation for deep navigation"""
         resolver = SemanticPathResolver()
-        resolved = resolver.resolve_path("Guest", "stay_records.bills.payments.amount")
+        resolved = resolver.resolve_path("Guest", "stays.bill.payments.amount")
 
         # Count relationship segments
         rel_count = sum(1 for s in resolved.segments if s.is_relationship())
@@ -225,15 +238,15 @@ class TestJoinDeduplication:
         semantic = SemanticQuery(
             root_object="Guest",
             fields=[
-                "stay_records.room_number",
-                "stay_records.status",
-                "stay_records.check_in_time"
+                "stays.room_number",
+                "stays.status",
+                "stays.check_in_time"
             ]
         )
 
         structured = resolver.compile(semantic)
 
-        # All fields use stay_records, should only have one JOIN
+        # All fields use stays, should only have one JOIN
         stay_record_joins = [j for j in structured.joins if j.entity == "StayRecord"]
         assert len(stay_record_joins) == 1
 
@@ -243,14 +256,14 @@ class TestJoinDeduplication:
         semantic = SemanticQuery(
             root_object="Guest",
             fields=[
-                "stay_records.room_number",
-                "stay_records.room.status"
+                "stays.room_number",
+                "stays.room.status"
             ]
         )
 
         structured = resolver.compile(semantic)
 
-        # Both paths go through stay_records and room
+        # Both paths go through stays and room
         stay_record_joins = [j for j in structured.joins if j.entity == "StayRecord"]
         room_joins = [j for j in structured.joins if j.entity == "Room"]
 
@@ -262,15 +275,15 @@ class TestJoinDeduplication:
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["stay_records.room_number"],
+            fields=["stays.room_number"],
             filters=[
-                SemanticFilter(path="stay_records.status", operator="eq", value="ACTIVE")
+                SemanticFilter(path="stays.status", operator="eq", value="ACTIVE")
             ]
         )
 
         structured = resolver.compile(semantic)
 
-        # Field and filter both use stay_records
+        # Field and filter both use stays
         stay_record_joins = [j for j in structured.joins if j.entity == "StayRecord"]
         assert len(stay_record_joins) == 1
 
@@ -280,13 +293,13 @@ class TestJoinDeduplication:
         semantic = SemanticQuery(
             root_object="Guest",
             fields=[
-                "stay_records.room_number",
-                "stay_records.room.status",
-                "stay_records.check_in_time"
+                "stays.room_number",
+                "stays.room.status",
+                "stays.check_in_time"
             ],
             filters=[
-                SemanticFilter(path="stay_records.status", operator="eq", value="ACTIVE"),
-                SemanticFilter(path="stay_records.room.status", operator="eq", value="OCCUPIED")
+                SemanticFilter(path="stays.status", operator="eq", value="ACTIVE"),
+                SemanticFilter(path="stays.room.status", operator="eq", value="OCCUPIED")
             ]
         )
 
@@ -309,14 +322,14 @@ class TestJoinDeduplication:
         semantic = SemanticQuery(
             root_object="Guest",
             fields=[
-                "stay_records.status",  # 1 hop
-                "stay_records.room.room_type.name"  # 3 hops
+                "stays.status",  # 1 hop
+                "stays.room.room_type.name"  # 3 hops
             ]
         )
 
         structured = resolver.compile(semantic)
 
-        # stay_records should only be joined once
+        # stays should only be joined once
         stay_record_joins = [j for j in structured.joins if j.entity == "StayRecord"]
         assert len(stay_record_joins) == 1
 
@@ -326,8 +339,8 @@ class TestJoinDeduplication:
         semantic = SemanticQuery(
             root_object="Guest",
             fields=[
-                "stay_records.room.room_type.name",
-                "stay_records.status"
+                "stays.room.room_type.name",
+                "stays.status"
             ]
         )
 
@@ -350,9 +363,9 @@ class TestComplexMultiPathQueries:
         semantic = SemanticQuery(
             root_object="Guest",
             fields=[
-                "stay_records.room_number",
-                "stay_records.room.room_type.name",
-                "stay_records.bills.total_amount"
+                "stays.room_number",
+                "stays.room.room_type.name",
+                "stays.bill.total_amount"
             ]
         )
 
@@ -371,13 +384,13 @@ class TestComplexMultiPathQueries:
         semantic = SemanticQuery(
             root_object="Guest",
             fields=["name"],
-            order_by=["stay_records.room.room_type.name ASC"]
+            order_by=["stays.room.room_type.name ASC"]
         )
 
         structured = resolver.compile(semantic)
 
         # Order by should be preserved
-        assert structured.order_by == ["stay_records.room.room_type.name ASC"]
+        assert structured.order_by == ["stays.room.room_type.name ASC"]
 
         # Note: The resolver only builds JOINs for fields and filters, not for order_by
         # This is expected behavior - order_by is passed through to QueryEngine
@@ -387,11 +400,11 @@ class TestComplexMultiPathQueries:
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["name", "stay_records.room_number"],
+            fields=["name", "stays.room_number"],
             filters=[
                 SemanticFilter(path="name", operator="like", value="张"),
-                SemanticFilter(path="stay_records.status", operator="eq", value="ACTIVE"),
-                SemanticFilter(path="stay_records.room.status", operator="eq", value="OCCUPIED")
+                SemanticFilter(path="stays.status", operator="eq", value="ACTIVE"),
+                SemanticFilter(path="stays.room.status", operator="eq", value="OCCUPIED")
             ]
         )
 
@@ -403,7 +416,7 @@ class TestComplexMultiPathQueries:
         # Check filter fields
         filter_fields = [f.field for f in structured.filters]
         assert any(f == "name" for f in filter_fields)
-        assert any("stay_records" in f and "status" in f for f in filter_fields)
+        assert any("stays" in f and "status" in f for f in filter_fields)
 
     def test_mixed_depth_fields(self):
         """Test fields with varying hop depths"""
@@ -412,8 +425,8 @@ class TestComplexMultiPathQueries:
             root_object="Guest",
             fields=[
                 "name",  # 0 hops
-                "stay_records.status",  # 1 hop
-                "stay_records.room.room_type.name"  # 3 hops
+                "stays.status",  # 1 hop
+                "stays.room.room_type.name"  # 3 hops
             ]
         )
 
@@ -422,8 +435,8 @@ class TestComplexMultiPathQueries:
         # All fields should be preserved
         assert len(structured.fields) == 3
         assert "name" in structured.fields
-        assert "stay_records.status" in structured.fields
-        assert "stay_records.room.room_type.name" in structured.fields
+        assert "stays.status" in structured.fields
+        assert "stays.room.room_type.name" in structured.fields
 
     def test_multiple_filters_same_relationship(self):
         """Test multiple filters on the same relationship"""
@@ -432,14 +445,14 @@ class TestComplexMultiPathQueries:
             root_object="Guest",
             fields=["name"],
             filters=[
-                SemanticFilter(path="stay_records.status", operator="eq", value="ACTIVE"),
-                SemanticFilter(path="stay_records.check_in_time", operator="gte", value="2026-02-01")
+                SemanticFilter(path="stays.status", operator="eq", value="ACTIVE"),
+                SemanticFilter(path="stays.check_in_time", operator="gte", value="2026-02-01")
             ]
         )
 
         structured = resolver.compile(semantic)
 
-        # Should still only have one JOIN for stay_records
+        # Should still only have one JOIN for stays
         stay_record_joins = [j for j in structured.joins if j.entity == "StayRecord"]
         assert len(stay_record_joins) == 1
 
@@ -454,48 +467,40 @@ class TestEdgeCases:
         """Test that circular relationships are detected"""
         resolver = SemanticPathResolver()
 
-        # Room -> StayRecord -> Guest -> StayRecord (circular)
-        # Note: This path is not directly possible through stay_records attribute
-        # but let's test with a path that would be circular if it existed
-        # Since Guest.stay_records goes to StayRecord, testing StayRecord -> Guest -> stay_records
+        # StayRecord -> guest -> stays would circle back to StayRecord
 
         with pytest.raises(PathResolutionError) as exc:
-            # Try to navigate back to an already visited entity
-            # This would be: StayRecord -> guest -> stay_records (back to StayRecord)
-            # But the path is actually: StayRecord -> guest -> stay_records
-            resolved = resolver.resolve_path("StayRecord", "guest.stay_records.status")
-            # Force evaluation by accessing segments
+            resolved = resolver.resolve_path("StayRecord", "guest.stays.status")
             _ = resolved.segments
 
         # Should raise an error about circular reference
         error = exc.value
-        assert "stay_records" in str(error).lower() or "circular" in str(error).lower() or error.token == "stay_records"
+        assert "stays" in str(error).lower() or "circular" in str(error).lower() or error.token == "stays"
 
     def test_max_hop_depth_enforcement(self):
         """Test that MAX_HOP_DEPTH is enforced"""
         resolver = SemanticPathResolver()
 
         # Create a path with more than MAX_HOP_DEPTH hops
-        # The path is: stay_records.stay_records.stay_records... (repeated)
-        # The first hop works (Guest -> StayRecord), but subsequent hops fail
-        # because StayRecord doesn't have a "stay_records" relationship pointing to another StayRecord
-        deep_path = ".".join(["stay_records"] * (MAX_HOP_DEPTH + 1)) + ".name"
+        # The first hop works (Guest -> StayRecord via "stays"), but subsequent hops fail
+        # because StayRecord doesn't have a "stays" relationship
+        deep_path = ".".join(["stays"] * (MAX_HOP_DEPTH + 1)) + ".name"
 
         with pytest.raises(PathResolutionError) as exc:
             resolver.resolve_path("Guest", deep_path)
 
         error = exc.value
-        # The error occurs at position 1 because after the first "stay_records" hop,
-        # we're at StayRecord, which doesn't have a "stay_records" relationship
-        assert error.token == "stay_records"
-        assert error.position == 1  # Fails at the second stay_records
+        # The error occurs at position 1 because after the first "stays" hop,
+        # we're at StayRecord, which doesn't have a "stays" relationship
+        assert error.token == "stays"
+        assert error.position == 1  # Fails at the second stays
 
     def test_invalid_intermediate_entity(self):
         """Test path with invalid intermediate entity"""
         resolver = SemanticPathResolver()
 
         with pytest.raises(PathResolutionError) as exc:
-            resolver.resolve_path("Guest", "stay_records.invalid_entity.status")
+            resolver.resolve_path("Guest", "stays.invalid_entity.status")
 
         error = exc.value
         assert error.token == "invalid_entity"
@@ -518,7 +523,7 @@ class TestEdgeCases:
         resolver = SemanticPathResolver()
 
         with pytest.raises(PathResolutionError):
-            resolver.resolve_path("Guest", "stay_records..name")
+            resolver.resolve_path("Guest", "stays..name")
 
     def test_nonexistent_root_entity(self):
         """Test query with nonexistent root entity"""
@@ -537,9 +542,7 @@ class TestEdgeCases:
         """Test path with typo in relationship name"""
         resolver = SemanticPathResolver()
 
-        # "stay_record" doesn't exist, should be "stay_records"
-        # The _find_relationship method does fuzzy matching and may find "stay_records"
-        # Let's use a clearly invalid relationship name
+        # Use a clearly invalid relationship name
         with pytest.raises(PathResolutionError) as exc:
             resolver.resolve_path("Guest", "invalid_relation.status")
 
@@ -565,7 +568,7 @@ class TestEdgeCases:
         # The resolver doesn't validate field names, only relationships
         # So a path with a long field name after valid relationships will resolve
         # It's up to QueryEngine to validate the actual field
-        resolved = resolver.resolve_path("Guest", f"stay_records.{long_field}")
+        resolved = resolver.resolve_path("Guest", f"stays.{long_field}")
 
         # Should resolve to a path with the long field name
         assert resolved.final_field == long_field
@@ -577,19 +580,18 @@ class TestEdgeCases:
 
         # Should handle Unicode in values, but path components must be valid
         with pytest.raises(PathResolutionError):
-            resolver.resolve_path("Guest", "stay_records.中文.status")
+            resolver.resolve_path("Guest", "stays.中文.status")
 
     def test_case_sensitivity_in_paths(self):
         """Test case sensitivity in relationship names"""
         resolver = SemanticPathResolver()
 
-        # Should find relationship with different case
-        result = resolver._find_relationship("Guest", "stay_records")
+        # Should find relationship with correct case
+        result = resolver._find_relationship("Guest", "stays")
         assert result == "StayRecord"
 
-        # Try uppercase
-        result2 = resolver._find_relationship("Guest", "STAY_RECORDS")
-        # May or may not find depending on implementation
+        # Try uppercase - may or may not find depending on implementation
+        result2 = resolver._find_relationship("Guest", "STAYS")
 
     def test_reserved_sql_keywords_in_path(self):
         """Test paths with SQL-like keywords (should still work)"""
@@ -598,7 +600,7 @@ class TestEdgeCases:
         # These are valid relationship names, not SQL keywords in this context
         # But let's test that the resolver doesn't break
         with pytest.raises(PathResolutionError):
-            resolver.resolve_path("Guest", "stay_records.select.name")
+            resolver.resolve_path("Guest", "stays.select.name")
 
 
 class TestPathAnalysisMethods:
@@ -679,9 +681,9 @@ class TestRealWorldScenarios:
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["name", "phone", "stay_records.room_number", "stay_records.room.status"],
+            fields=["name", "phone", "stays.room_number", "stays.room.status"],
             filters=[
-                SemanticFilter(path="stay_records.status", operator="eq", value="ACTIVE")
+                SemanticFilter(path="stays.status", operator="eq", value="ACTIVE")
             ]
         )
 
@@ -696,9 +698,9 @@ class TestRealWorldScenarios:
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["name", "stay_records.bills.total_amount", "stay_records.bills.is_settled"],
+            fields=["name", "stays.bill.total_amount", "stays.bill.is_settled"],
             filters=[
-                SemanticFilter(path="stay_records.bills.is_settled", operator="eq", value=False)
+                SemanticFilter(path="stays.bill.is_settled", operator="eq", value=False)
             ]
         )
 
@@ -708,11 +710,11 @@ class TestRealWorldScenarios:
         assert len(structured.joins) >= 2  # StayRecord, Bill
 
     def test_task_assignment_query(self):
-        """Test real-world query: get task assignments"""
+        """Test real-world query: get room task information"""
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
-            root_object="Employee",
-            fields=["name", "tasks.room_number", "tasks.type", "tasks.status"],
+            root_object="Room",
+            fields=["room_number", "tasks.task_type", "tasks.status"],
             filters=[
                 SemanticFilter(path="tasks.status", operator="eq", value="PENDING")
             ]
@@ -720,8 +722,8 @@ class TestRealWorldScenarios:
 
         structured = resolver.compile(semantic)
 
-        assert len(structured.fields) == 4
-        # Note: path might be "tasks" or "task" depending on relationship
+        assert len(structured.fields) == 3
+        assert len(structured.joins) >= 1  # Task
 
     def test_room_availability_query(self):
         """Test real-world query: check room availability"""

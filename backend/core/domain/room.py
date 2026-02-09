@@ -12,7 +12,6 @@ from core.ontology.base import BaseEntity
 from core.engine.state_machine import StateMachine, StateMachineConfig, StateTransition
 from core.ontology.interface import implements
 from core.domain.interfaces import BookableResource, Maintainable
-from app.services.metadata import ontology_entity, ontology_action
 
 if TYPE_CHECKING:
     from app.models.ontology import Room, RoomType, RoomStatus
@@ -83,11 +82,6 @@ def _create_room_state_machine(initial_status: str) -> StateMachine:
 # ============== Room 领域实体 ==============
 
 @implements(BookableResource, Maintainable)
-@ontology_entity(
-    name="Room",
-    description="酒店房间本体 - 数字孪生的核心实体",
-    table_name="rooms",
-)
 class RoomEntity(BaseEntity):
     """
     Room 领域实体
@@ -98,6 +92,11 @@ class RoomEntity(BaseEntity):
         _orm_model: 内部 ORM 模型实例
         _state_machine: 状态机实例
     """
+
+    __ontology_actions__ = [
+        "check_in", "check_out", "mark_clean",
+        "mark_maintenance", "complete_maintenance",
+    ]
 
     def __init__(self, orm_model: "Room"):
         """
@@ -159,18 +158,6 @@ class RoomEntity(BaseEntity):
 
     # ============== 业务方法 ==============
 
-    @ontology_action(
-        entity="Room",
-        action_type="check_in",
-        description="办理入住",
-        params=[
-            {"name": "guest_id", "type": "integer", "required": True, "description": "客人 ID"},
-            {"name": "expected_check_out", "type": "string", "required": False, "description": "预计退房日期"},
-        ],
-        requires_confirmation=False,
-        allowed_roles=["manager", "receptionist"],
-        writeback=True,
-    )
     def check_in(self, guest_id: int, expected_check_out: Optional[str] = None) -> None:
         """
         办理入住
@@ -192,17 +179,6 @@ class RoomEntity(BaseEntity):
         self._orm_model.status = RoomStatus.OCCUPIED
         logger.info(f"Room {self.room_number} checked in by guest {guest_id}")
 
-    @ontology_action(
-        entity="Room",
-        action_type="check_out",
-        description="办理退房",
-        params=[
-            {"name": "stay_record_id", "type": "integer", "required": True, "description": "住宿记录 ID"},
-        ],
-        requires_confirmation=True,
-        allowed_roles=["manager", "receptionist"],
-        writeback=True,
-    )
     def check_out(self, stay_record_id: int) -> None:
         """
         办理退房
@@ -223,15 +199,6 @@ class RoomEntity(BaseEntity):
         self._orm_model.status = RoomStatus.VACANT_DIRTY
         logger.info(f"Room {self.room_number} checked out (stay_record: {stay_record_id})")
 
-    @ontology_action(
-        entity="Room",
-        action_type="mark_clean",
-        description="标记为已清洁",
-        params=[],
-        requires_confirmation=False,
-        allowed_roles=["manager", "cleaner"],
-        writeback=True,
-    )
     def mark_clean(self) -> None:
         """
         标记为已清洁
@@ -250,17 +217,6 @@ class RoomEntity(BaseEntity):
         self._orm_model.status = RoomStatus.VACANT_CLEAN
         logger.info(f"Room {self.room_number} marked as clean")
 
-    @ontology_action(
-        entity="Room",
-        action_type="mark_maintenance",
-        description="标记为维修中",
-        params=[
-            {"name": "reason", "type": "string", "required": False, "description": "维修原因"},
-        ],
-        requires_confirmation=True,
-        allowed_roles=["manager"],
-        writeback=True,
-    )
     def mark_maintenance(self, reason: Optional[str] = None) -> None:
         """
         标记为维修中
@@ -281,15 +237,6 @@ class RoomEntity(BaseEntity):
         self._orm_model.status = RoomStatus.OUT_OF_ORDER
         logger.info(f"Room {self.room_number} marked for maintenance: {reason}")
 
-    @ontology_action(
-        entity="Room",
-        action_type="complete_maintenance",
-        description="完成维修",
-        params=[],
-        requires_confirmation=False,
-        allowed_roles=["manager"],
-        writeback=True,
-    )
     def complete_maintenance(self) -> None:
         """
         完成维修

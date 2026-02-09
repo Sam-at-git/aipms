@@ -13,9 +13,12 @@ SPEC-13: 语义查询语法提示词 (Semantic Query Syntax)
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import date, timedelta
 from dataclasses import dataclass, field
+import logging
 
 from core.ontology.registry import registry, OntologyRegistry
 from core.ontology.metadata import EntityMetadata, ActionMetadata, PropertyMetadata, StateMachine
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -30,6 +33,7 @@ class PromptContext:
     include_state_machines: bool = True
     include_permissions: bool = False  # 默认不包含权限矩阵（除非是管理员）
     custom_variables: Dict[str, Any] = field(default_factory=dict)
+    domain_prompt: str = ""  # 领域特定提示词，由 DomainAdapter 注入
 
     def __post_init__(self):
         if self.current_date is None:
@@ -58,16 +62,17 @@ class PromptBuilder:
     SPEC-13: 语义查询语法提示词
     """
 
-    # 基础系统提示词模板
-    BASE_SYSTEM_PROMPT = """你是 AIPMS 酒店管理系统的智能助手。你的职责是将用户的自然语言输入转换为结构化的操作指令。
+    # 基础系统提示词模板（领域无关）
+    BASE_SYSTEM_PROMPT = """你是一个 Ontology 驱动的智能助手。你的职责是将用户的自然语言输入转换为结构化的操作指令。
+
+{domain_prompt}
 
 **重要约束：**
 1. 你只能返回 JSON 格式的响应
-2. 不要编造不存在的数据（如房间号、预订号）
+2. 不要编造不存在的数据
 3. 尽可能提取用户提供的所有信息，包括部分信息
 4. 当信息不足时，明确列出缺失的字段
 5. 所有需要确认的操作都要设置 requires_confirmation: true
-6. **房间相关：优先使用 room_number（字符串）而非 room_id，让后端自动转换**
 
 {role_context}
 
@@ -123,14 +128,16 @@ class PromptBuilder:
 ```
 """
 
-    def __init__(self, ontology_registry=None):
+    def __init__(self, ontology_registry=None, action_registry=None):
         """
         初始化 PromptBuilder
 
         Args:
             ontology_registry: 本体注册中心，默认使用全局单例
+            action_registry: ActionRegistry 实例（可选），用于构建领域关键词表
         """
         self.registry = ontology_registry or registry
+        self._action_registry = action_registry
 
     def build_system_prompt(
         self,
@@ -171,7 +178,10 @@ class PromptBuilder:
         # 使用模板构建
         template = base_template or self.BASE_SYSTEM_PROMPT
 
+        domain_prompt = context.domain_prompt if context.domain_prompt else ""
+
         prompt = template.format(
+            domain_prompt=domain_prompt,
             role_context=role_context,
             semantic_query_syntax=semantic_query_syntax,
             entity_descriptions=entity_descriptions,
@@ -392,6 +402,9 @@ class PromptBuilder:
         """
         from core.ontology.query_engine import RELATIONSHIP_MAP
 
+        # SPEC-R04: RELATIONSHIP_MAP is now a callable returning a dict
+        rel_map = RELATIONSHIP_MAP() if callable(RELATIONSHIP_MAP) else RELATIONSHIP_MAP
+
         lines = [
             "**Semantic Query Syntax (语义查询语法)**",
             "",
@@ -408,7 +421,7 @@ class PromptBuilder:
         ]
 
         # 动态生成实体路径说明（基于 RELATIONSHIP_MAP）
-        entity_paths = self._generate_entity_paths(RELATIONSHIP_MAP)
+        entity_paths = self._generate_entity_paths(rel_map)
 
         for entity_name, paths in entity_paths.items():
             lines.append(f"\n### {entity_name}")
@@ -909,6 +922,74 @@ class PromptBuilder:
         lines.append('  "limit": 3')
         lines.append('}')
         lines.append('```')
+
+        return "\n".join(lines)
+
+    def _build_domain_glossary(self) -> str:
+        """
+        构建领域关键词表（Domain Glossary）
+
+        从注入的 ActionRegistry 收集所有 search_keywords，按 semantic_category 分组，
+        生成 LLM 友好的提示词，明确告诉 LLM 哪些词是语义信号而非参数值。
+
+        所有领域知识（类别描述、示例）来自 action 注册时的元数据，框架本身不含领域知识。
+
+        Returns:
+            领域关键词表提示词字符串
+        """
+        if self._action_registry is None:
+            return ""
+
+        try:
+            glossary_data = self._action_registry.get_domain_glossary()
+        except Exception as e:
+            logger.debug(f"ActionRegistry.get_domain_glossary() failed: {e}")
+            return ""
+
+        if not glossary_data:
+            return ""
+
+        lines = [
+            "**领域关键词表 (Domain Glossary) - 重要: 以下是语义信号，不是参数值**",
+            "",
+            "以下关键词表示操作类型或状态，不应被提取为实体参数值:",
+            ""
+        ]
+
+        # Add each category
+        for category_name, category_info in glossary_data.items():
+            lines.append(f"### {category_info.get('meaning', category_name)}")
+
+            keywords = category_info.get("keywords", [])
+            for kw in keywords:
+                lines.append(f"- **{kw}**")
+
+            lines.append("")
+
+        # Add extraction rules
+        lines.extend([
+            "**参数提取规则:**",
+            "1. **关键字不作为参数值**: 上述关键词表示语义信号，不要将它们提取为实体参数的值",
+            "2. **正确识别操作意图**: 关键词表示要执行的操作类型，不是数据内容",
+            ""
+        ])
+
+        # Add examples (all from domain-layer registration)
+        has_examples = any(
+            category_info.get("examples")
+            for category_info in glossary_data.values()
+        )
+        if has_examples:
+            lines.append("**示例:**")
+            for category_name, category_info in glossary_data.items():
+                examples = category_info.get("examples", [])
+                if examples:
+                    lines.append(f"\n**{category_info.get('meaning', category_name)}:**")
+                    for ex in examples[:3]:
+                        if ex.get("correct"):
+                            lines.append(f"- correct: {ex['correct']}")
+                        if ex.get("incorrect"):
+                            lines.append(f"- incorrect: {ex['incorrect']}")
 
         return "\n".join(lines)
 

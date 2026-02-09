@@ -17,6 +17,8 @@ from core.ontology.metadata import (
     StateTransition,
     ConstraintMetadata,
     ConstraintSeverity,
+    RelationshipMetadata,
+    EventMetadata,
 )
 
 if TYPE_CHECKING:
@@ -55,6 +57,9 @@ class OntologyRegistry:
             cls._instance._permission_matrix: Dict[str, Set[str]] = {}
             cls._instance._interface_implementations: Dict[str, List[str]] = {}
             cls._instance._interfaces: Dict[str, Any] = {}
+            cls._instance._models: Dict[str, Any] = {}
+            cls._instance._relationships: Dict[str, List[RelationshipMetadata]] = {}
+            cls._instance._events: Dict[str, EventMetadata] = {}
         return cls._instance
 
     def register_entity(self, metadata: EntityMetadata) -> "OntologyRegistry":
@@ -172,6 +177,53 @@ class OntologyRegistry:
             self._interface_implementations[interface_name] = []
         if entity_name not in self._interface_implementations[interface_name]:
             self._interface_implementations[interface_name].append(entity_name)
+        return self
+
+    def register_model(self, entity_name: str, model_class: Any) -> "OntologyRegistry":
+        """
+        注册 ORM 模型类
+
+        Args:
+            entity_name: 实体名称
+            model_class: SQLAlchemy ORM 模型类
+
+        Returns:
+            self (for fluent API)
+        """
+        self._models[entity_name] = model_class
+        return self
+
+    def register_relationship(self, entity_name: str, rel: RelationshipMetadata) -> "OntologyRegistry":
+        """
+        注册关系元数据
+
+        Args:
+            entity_name: 源实体名称
+            rel: 关系元数据对象
+
+        Returns:
+            self (for fluent API)
+        """
+        if entity_name not in self._relationships:
+            self._relationships[entity_name] = []
+        self._relationships[entity_name].append(rel)
+        # 同步到 EntityMetadata (如果已注册)
+        entity = self._entities.get(entity_name)
+        if entity:
+            entity.add_relationship(rel)
+        return self
+
+    def register_event(self, metadata: EventMetadata) -> "OntologyRegistry":
+        """
+        注册事件元数据
+
+        Args:
+            metadata: 事件元数据对象
+
+        Returns:
+            self (for fluent API)
+        """
+        self._events[metadata.name] = metadata
         return self
 
     # Getters
@@ -353,6 +405,86 @@ class OntologyRegistry:
         """
         return dict(self._interfaces)
 
+    def get_model(self, entity_name: str) -> Optional[Any]:
+        """
+        获取 ORM 模型类
+
+        Args:
+            entity_name: 实体名称
+
+        Returns:
+            模型类，如果不存在则返回 None
+        """
+        return self._models.get(entity_name)
+
+    def get_model_map(self) -> Dict[str, Any]:
+        """
+        获取实体名到 ORM 模型类的映射
+
+        Returns:
+            {entity_name: model_class}
+        """
+        return dict(self._models)
+
+    def get_relationships(self, entity_name: str) -> List[RelationshipMetadata]:
+        """
+        获取实体的所有关系元数据
+
+        Args:
+            entity_name: 实体名称
+
+        Returns:
+            关系元数据列表
+        """
+        return list(self._relationships.get(entity_name, []))
+
+    def get_event(self, name: str) -> Optional[EventMetadata]:
+        """
+        获取事件元数据
+
+        Args:
+            name: 事件名称
+
+        Returns:
+            EventMetadata 对象，如果不存在则返回 None
+        """
+        return self._events.get(name)
+
+    def get_events(self, entity: str = None) -> List[EventMetadata]:
+        """
+        获取事件元数据
+
+        Args:
+            entity: 实体名称，如果为 None 则返回所有事件
+
+        Returns:
+            事件元数据列表
+        """
+        if entity:
+            return [
+                e for e in self._events.values()
+                if e.entity == entity
+            ]
+        return list(self._events.values())
+
+    def get_relationship_map(self) -> Dict[str, Dict[str, Dict[str, str]]]:
+        """
+        获取关系映射 - 兼容 query_engine.py 的 RELATIONSHIP_MAP 格式
+
+        Returns:
+            {source_entity: {target_entity: {"rel_attr": name, "foreign_key": fk}}}
+        """
+        result: Dict[str, Dict[str, Dict[str, str]]] = {}
+        for entity_name, rels in self._relationships.items():
+            if entity_name not in result:
+                result[entity_name] = {}
+            for rel in rels:
+                result[entity_name][rel.target_entity] = {
+                    "rel_attr": rel.name,
+                    "foreign_key": rel.foreign_key,
+                }
+        return result
+
     # Schema Export
 
     def export_schema(self) -> Dict[str, Any]:
@@ -372,6 +504,8 @@ class OntologyRegistry:
             "interfaces": {},
             "actions": {},
             "state_machines": {},
+            "relationships": {},
+            "events": {},
         }
 
         # 导出实体类型
@@ -411,6 +545,31 @@ class OntologyRegistry:
         # 导出状态机
         for entity_name, sm in self._state_machines.items():
             schema["state_machines"][entity_name] = self._export_state_machine(sm)
+
+        # 导出关系
+        for entity_name, rels in self._relationships.items():
+            schema["relationships"][entity_name] = [
+                {
+                    "name": rel.name,
+                    "target_entity": rel.target_entity,
+                    "cardinality": rel.cardinality,
+                    "foreign_key": rel.foreign_key,
+                    "foreign_key_entity": rel.foreign_key_entity,
+                    "inverse_name": rel.inverse_name,
+                }
+                for rel in rels
+            ]
+
+        # 导出事件
+        for event_name, event in self._events.items():
+            schema["events"][event_name] = {
+                "name": event.name,
+                "description": event.description,
+                "entity": event.entity,
+                "triggered_by": event.triggered_by,
+                "payload_fields": event.payload_fields,
+                "subscribers": event.subscribers,
+            }
 
         return schema
 
@@ -569,6 +728,9 @@ class OntologyRegistry:
         self._permission_matrix.clear()
         self._interface_implementations.clear()
         self._interfaces.clear()
+        self._models.clear()
+        self._relationships.clear()
+        self._events.clear()
 
     def to_llm_knowledge_base(self) -> str:
         """
@@ -737,49 +899,24 @@ class OntologyRegistry:
             "filter_operators": ["eq", "ne", "gt", "gte", "lt", "lte", "in", "like", "between"]
         }
 
-        # 从 SQLAlchemy 模型动态提取字段信息
+        # 从 registry 模型动态提取字段信息
         try:
-            from app.models.ontology import (
-                Room, Guest, Reservation, StayRecord, Bill, Task,
-                Employee, RoomType, RatePlan, Payment
-            )
+            entity_models = self._models
+            if not entity_models:
+                return schema
 
-            # 定义实体及其 ORM 类
-            entity_models = {
-                "Room": Room,
-                "Guest": Guest,
-                "Reservation": Reservation,
-                "StayRecord": StayRecord,
-                "Bill": Bill,
-                "Task": Task,
-                "Employee": Employee,
-                "RoomType": RoomType,
-                "RatePlan": RatePlan,
-                "Payment": Payment,
-            }
-
-            # 定义关系映射（手动维护关键关系）
-            relationship_map = {
-                "StayRecord": {
-                    "guest": {"entity": "Guest", "type": "many_to_one", "foreign_key": "guest_id"},
-                    "room": {"entity": "Room", "type": "many_to_one", "foreign_key": "room_id"},
-                    "bill": {"entity": "Bill", "type": "one_to_one", "foreign_key": "stay_record_id"},
-                },
-                "Reservation": {
-                    "guest": {"entity": "Guest", "type": "many_to_one", "foreign_key": "guest_id"},
-                    "room_type": {"entity": "RoomType", "type": "many_to_one", "foreign_key": "room_type_id"},
-                },
-                "Room": {
-                    "room_type": {"entity": "RoomType", "type": "many_to_one", "foreign_key": "room_type_id"},
-                },
-                "Guest": {
-                    # 反向关系通过 StayRecord
-                },
-                "Task": {
-                    "room": {"entity": "Room", "type": "many_to_one", "foreign_key": "room_id"},
-                    "assignee": {"entity": "Employee", "type": "many_to_one", "foreign_key": "assignee_id"},
-                },
-            }
+            # 从 registry 关系构建关系映射
+            relationship_map: Dict[str, Dict] = {}
+            for entity_name, rels in self._relationships.items():
+                rel_dict: Dict[str, Any] = {}
+                for rel in rels:
+                    rel_dict[rel.name] = {
+                        "entity": rel.target_entity,
+                        "type": rel.cardinality,
+                        "foreign_key": rel.foreign_key,
+                    }
+                if rel_dict:
+                    relationship_map[entity_name] = rel_dict
 
             # 为每个实体生成详细的字段信息
             for entity_name, model_class in entity_models.items():

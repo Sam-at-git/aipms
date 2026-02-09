@@ -32,6 +32,16 @@ from core.ontology.query import (
 )
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _bootstrap_adapter():
+    """Ensure HotelDomainAdapter is bootstrapped for resolver tests."""
+    from core.ontology.registry import OntologyRegistry
+    from app.hotel.hotel_domain_adapter import HotelDomainAdapter
+    registry = OntologyRegistry()
+    adapter = HotelDomainAdapter()
+    adapter.register_ontology(registry)
+
+
 class TestSemanticPathResolverBasics:
     """SemanticPathResolver 基础功能测试"""
 
@@ -73,8 +83,8 @@ class TestCompile:
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["name", "stay_records.room_number"],
-            filters=[SemanticFilter(path="stay_records.status", operator="eq", value="ACTIVE")]
+            fields=["name", "stays.room_number"],
+            filters=[SemanticFilter(path="stays.status", operator="eq", value="ACTIVE")]
         )
 
         structured = resolver.compile(semantic)
@@ -87,7 +97,7 @@ class TestCompile:
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["stay_records.room.room_type.name"]
+            fields=["stays.room.room_type.name"]
         )
 
         structured = resolver.compile(semantic)
@@ -165,7 +175,7 @@ class TestResolvePath:
     def test_resolve_single_hop_path(self):
         """测试解析单跳路径"""
         resolver = SemanticPathResolver()
-        resolved = resolver.resolve_path("Guest", "stay_records.status")
+        resolved = resolver.resolve_path("Guest", "stays.status")
 
         assert len(resolved.segments) == 2
         assert resolved.segments[0].is_relationship()
@@ -176,7 +186,7 @@ class TestResolvePath:
     def test_resolve_multi_hop_path(self):
         """测试解析多跳路径"""
         resolver = SemanticPathResolver()
-        resolved = resolver.resolve_path("Guest", "stay_records.room.status")
+        resolved = resolver.resolve_path("Guest", "stays.room.status")
 
         assert len(resolved.segments) == 3
         assert resolved.segments[0].is_relationship()
@@ -187,9 +197,9 @@ class TestResolvePath:
     def test_resolve_path_creates_correct_segments(self):
         """测试路径段创建正确"""
         resolver = SemanticPathResolver()
-        resolved = resolver.resolve_path("Guest", "stay_records.status")
+        resolved = resolver.resolve_path("Guest", "stays.status")
 
-        assert resolved.segments[0].name == "stay_records"
+        assert resolved.segments[0].name == "stays"
         assert resolved.segments[0].segment_type == "relationship"
         assert resolved.segments[1].name == "status"
         assert resolved.segments[1].segment_type == "field"
@@ -227,7 +237,7 @@ class TestResolvePath:
         resolver = SemanticPathResolver()
 
         with pytest.raises(PathResolutionError) as exc:
-            resolver.resolve_path("Guest", "stay.field")
+            resolver.resolve_path("Guest", "stayzzz.field")
 
         # 应该有建议（即使可能为空）
         error = exc.value
@@ -241,7 +251,7 @@ class TestFindRelationship:
     def test_find_existing_relationship(self):
         """测试查找存在的关系"""
         resolver = SemanticPathResolver()
-        result = resolver._find_relationship("Guest", "stay_records")
+        result = resolver._find_relationship("Guest", "stays")
         assert result == "StayRecord"
 
     def test_find_nonexistent_relationship(self):
@@ -254,8 +264,8 @@ class TestFindRelationship:
         """测试大小写不敏感的关系查找"""
         resolver = SemanticPathResolver()
         # 大小写可能不匹配，但应该能找到
-        result = resolver._find_relationship("Guest", "stay_records")
-        assert result is not None or result is not None  # 至少有一种匹配方式
+        result = resolver._find_relationship("Guest", "stays")
+        assert result is not None  # 至少有一种匹配方式
 
 
 class TestFindSimilarRelationships:
@@ -266,9 +276,9 @@ class TestFindSimilarRelationships:
         resolver = SemanticPathResolver()
         similar = resolver._find_similar_relationships("Guest", "stay")
 
-        # 应该返回一些相似的建议
+        # 应该返回一些相似的建议（"stays" is close to "stay")
         assert isinstance(similar, list)
-        # 可能为空或包含建议
+        assert len(similar) > 0  # "stays" should be suggested
 
     def test_find_similar_with_no_matches(self):
         """测试无相似关系的情况"""
@@ -291,15 +301,15 @@ class TestBuildJoins:
     def test_build_joins_single_path(self):
         """测试单路径 JOIN 构建"""
         resolver = SemanticPathResolver()
-        joins = resolver._build_joins("Guest", ["stay_records.status"])
+        joins = resolver._build_joins("Guest", ["stays.status"])
         assert len(joins) >= 1
 
     def test_build_joins_multiple_paths(self):
         """测试多路径 JOIN 构建"""
         resolver = SemanticPathResolver()
         joins = resolver._build_joins("Guest", [
-            "stay_records.status",
-            "stay_records.room_number"
+            "stays.status",
+            "stays.room_number"
         ])
         # 去重后应该只有一个 JOIN
         assert len(joins) >= 1
@@ -309,7 +319,7 @@ class TestBuildJoins:
         resolver = SemanticPathResolver()
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["stay_records.room_number", "stay_records.status"]
+            fields=["stays.room_number", "stays.status"]
         )
 
         structured = resolver.compile(semantic)
@@ -326,12 +336,12 @@ class TestDedupeAndSortJoins:
         """测试去重相同 JOIN"""
         resolver = SemanticPathResolver()
 
-        join1 = JoinClause(entity="StayRecord", on="stay_records")
-        join2 = JoinClause(entity="StayRecord", on="stay_records")
+        join1 = JoinClause(entity="StayRecord", on="stays")
+        join2 = JoinClause(entity="StayRecord", on="stays")
 
         result = resolver._dedupe_and_sort_joins([
-            (("stay_records",), join1),
-            (("stay_records",), join2)
+            (("stays",), join1),
+            (("stays",), join2)
         ])
 
         assert len(result) == 1
@@ -340,12 +350,12 @@ class TestDedupeAndSortJoins:
         """测试按深度排序 JOIN"""
         resolver = SemanticPathResolver()
 
-        join1 = JoinClause(entity="StayRecord", on="stay_records")
+        join1 = JoinClause(entity="StayRecord", on="stays")
         join2 = JoinClause(entity="Room", on="room")
 
         result = resolver._dedupe_and_sort_joins([
-            (("stay_records", "room"), join2),
-            (("stay_records",), join1)
+            (("stays", "room"), join2),
+            (("stays",), join1)
         ])
 
         # 短路径应该在前面
@@ -380,13 +390,13 @@ class TestCompileFilters:
         """测试编译关联过滤器"""
         resolver = SemanticPathResolver()
         semantic_filters = [
-            SemanticFilter(path="stay_records.status", operator="eq", value="ACTIVE")
+            SemanticFilter(path="stays.status", operator="eq", value="ACTIVE")
         ]
 
         filters = resolver._compile_filters("Guest", semantic_filters)
 
         assert len(filters) == 1
-        assert "stay_records" in filters[0].field
+        assert "stays" in filters[0].field
         assert "status" in filters[0].field
 
     def test_compile_multiple_filters(self):
@@ -394,7 +404,7 @@ class TestCompileFilters:
         resolver = SemanticPathResolver()
         semantic_filters = [
             SemanticFilter(path="name", operator="like", value="张"),
-            SemanticFilter(path="stay_records.status", operator="eq", value="ACTIVE")
+            SemanticFilter(path="stays.status", operator="eq", value="ACTIVE")
         ]
 
         filters = resolver._compile_filters("Guest", semantic_filters)
@@ -414,15 +424,15 @@ class TestConvertPathToFilterField:
     def test_convert_single_hop_path(self):
         """测试转换单跳路径"""
         resolver = SemanticPathResolver()
-        result = resolver._convert_path_to_filter_field("Guest", "stay_records.status")
-        assert "stay_records" in result
+        result = resolver._convert_path_to_filter_field("Guest", "stays.status")
+        assert "stays" in result
         assert "status" in result
 
     def test_convert_multi_hop_path(self):
         """测试转换多跳路径"""
         resolver = SemanticPathResolver()
-        result = resolver._convert_path_to_filter_field("Guest", "stay_records.room.status")
-        assert "stay_records" in result
+        result = resolver._convert_path_to_filter_field("Guest", "stays.room.status")
+        assert "stays" in result
         assert "room" in result
         assert "status" in result
 
@@ -505,9 +515,10 @@ class TestGetRelationshipAttr:
     def test_get_existing_relationship_attr(self):
         """测试获取存在的关系属性"""
         resolver = SemanticPathResolver()
-        result = resolver._get_relationship_attr("Guest", "stay_records")
+        result = resolver._get_relationship_attr("Guest", "stays")
         # 应该返回一个字符串
         assert isinstance(result, str)
+        assert result == "stays"
 
     def test_get_nonexistent_relationship_attr(self):
         """测试获取不存在的关系属性"""
@@ -556,9 +567,9 @@ class TestIntegrationScenarios:
 
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["name", "stay_records.room_number"],
+            fields=["name", "stays.room_number"],
             filters=[
-                SemanticFilter(path="stay_records.status", operator="eq", value="ACTIVE"),
+                SemanticFilter(path="stays.status", operator="eq", value="ACTIVE"),
                 SemanticFilter(path="name", operator="like", value="张")
             ],
             order_by=["name DESC"],
@@ -570,7 +581,7 @@ class TestIntegrationScenarios:
         # 验证所有部分正确编译
         assert structured.entity == "Guest"
         assert "name" in structured.fields
-        assert "stay_records.room_number" in structured.fields
+        assert "stays.room_number" in structured.fields
         assert len(structured.filters) == 2
         assert structured.order_by == ["name DESC"]
         assert structured.limit == 10
@@ -582,9 +593,9 @@ class TestIntegrationScenarios:
 
         semantic = SemanticQuery(
             root_object="Guest",
-            fields=["stay_records.room.room_type.name"],
+            fields=["stays.room.room_type.name"],
             filters=[
-                SemanticFilter(path="stay_records.room.status", operator="eq", value="VACANT_CLEAN")
+                SemanticFilter(path="stays.room.status", operator="eq", value="VACANT_CLEAN")
             ]
         )
 
@@ -600,18 +611,18 @@ class TestIntegrationScenarios:
         semantic = SemanticQuery(
             root_object="Guest",
             fields=[
-                "stay_records.room_number",
-                "stay_records.status",
-                "stay_records.check_in_time"
+                "stays.room_number",
+                "stays.status",
+                "stays.check_in_time"
             ],
             filters=[
-                SemanticFilter(path="stay_records.status", operator="eq", value="ACTIVE")
+                SemanticFilter(path="stays.status", operator="eq", value="ACTIVE")
             ]
         )
 
         structured = resolver.compile(semantic)
 
-        # 虽然多个字段和过滤器都引用 stay_records，但只有一个 JOIN
+        # 虽然多个字段和过滤器都引用 stays，但只有一个 JOIN
         stay_record_joins = [j for j in structured.joins if j.entity == "StayRecord"]
         assert len(stay_record_joins) == 1
 

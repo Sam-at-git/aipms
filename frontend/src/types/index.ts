@@ -524,6 +524,16 @@ export interface BusinessRule {
   severity: 'error' | 'warning' | 'info'
 }
 
+// ============== 领域事件类型 (Events) ==============
+export interface OntologyEvent {
+  name: string
+  description: string
+  entity: string
+  triggered_by: string[]
+  payload_fields: string[]
+  subscribers: string[]
+}
+
 // ============== 接口系统类型 (Interface System - Phase 2.5) ==============
 
 export interface OntologyInterfaceDef {

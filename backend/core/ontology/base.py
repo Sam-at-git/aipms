@@ -7,8 +7,11 @@ core/ontology/base.py
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, TYPE_CHECKING, List
 
+from core.ontology.security import SecurityLevel
+from core.ontology.metadata import PIIType
+
 if TYPE_CHECKING:
-    from core.ontology.metadata import EntityMetadata, StateMachine
+    from core.ontology.metadata import EntityMetadata, PropertyMetadata, StateMachine
     from core.security.context import SecurityContext
 
 
@@ -124,22 +127,101 @@ class ObjectProxy:
         object.__setattr__(self, "_context", context)
         object.__setattr__(self, "_metadata_cache", {})
 
-    def __getattr__(self, name: str) -> Any:
+    def _get_property_metadata(self, name: str) -> Optional["PropertyMetadata"]:
         """
-        拦截属性读取
+        获取属性的 PropertyMetadata
 
         Args:
             name: 属性名称
 
         Returns:
-            属性值
+            PropertyMetadata 对象，如果未找到则返回 None
+        """
+        cache = object.__getattribute__(self, "_metadata_cache")
+        if name in cache:
+            return cache[name]
+
+        entity = object.__getattribute__(self, "_entity")
+        entity_cls = type(entity)
+        metadata = getattr(entity_cls, "_ontology_metadata", None)
+        if metadata is None:
+            cache[name] = None
+            return None
+
+        properties = getattr(metadata, "properties", None)
+        if not properties:
+            cache[name] = None
+            return None
+
+        prop_meta = properties.get(name)
+        cache[name] = prop_meta
+        return prop_meta
+
+    @staticmethod
+    def _mask_pii(value: Any, pii_type: "PIIType") -> Any:
+        """
+        根据 PII 类型对值进行脱敏
+
+        Args:
+            value: 原始值
+            pii_type: PII 类型
+
+        Returns:
+            脱敏后的值
+        """
+        if not isinstance(value, str) or not value:
+            return value
+
+        if pii_type == PIIType.PHONE:
+            # 138****1234: keep first 3, mask middle with ****, keep last 4
+            if len(value) <= 7:
+                return "*" * len(value)
+            return value[:3] + "****" + value[-4:]
+
+        if pii_type == PIIType.ID_NUMBER:
+            # 310***1234: keep first 3, mask middle with ***, keep last 4
+            if len(value) <= 7:
+                return "*" * len(value)
+            middle_len = len(value) - 3 - 4
+            return value[:3] + "*" * middle_len + value[-4:]
+
+        if pii_type == PIIType.NAME:
+            # 张*: keep first char, replace rest with *
+            if len(value) <= 1:
+                return value
+            return value[0] + "*" * (len(value) - 1)
+
+        if pii_type == PIIType.EMAIL:
+            # a***@example.com: keep first char of local, mask rest, keep domain
+            if "@" not in value:
+                return "*" * len(value)
+            local, domain = value.split("@", 1)
+            if len(local) <= 1:
+                masked_local = local
+            else:
+                masked_local = local[0] + "***"
+            return f"{masked_local}@{domain}"
+
+        # For other PII types (ADDRESS, FINANCIAL, HEALTH), apply full masking
+        return "*" * len(value)
+
+    def __getattr__(self, name: str) -> Any:
+        """
+        拦截属性读取
+
+        实现属性级访问控制和 PII 脱敏:
+        1. 检查 PropertyMetadata.security_level，如果高于用户权限则拒绝访问
+        2. 检查 PropertyMetadata.pii_type，如果需要脱敏则自动脱敏
+
+        Args:
+            name: 属性名称
+
+        Returns:
+            属性值（可能经过脱敏处理）
 
         Raises:
             AttributeError: 属性不存在
-
-        Note:
-            当前版本直接返回属性值。
-            后续版本将实现权限检查和脱敏处理（SPEC-17, SPEC-18）。
+            PermissionError: 安全级别不足
         """
         entity = object.__getattribute__(self, "_entity")
 
@@ -151,12 +233,42 @@ class ObjectProxy:
         # 获取属性值
         value = getattr(entity, name)
 
-        # TODO: 后续实现权限检查和脱敏
-        # context = object.__getattribute__(self, "_context")
-        # if context and self._is_sensitive(name):
-        #     if not context.can_read(name):
-        #         raise PermissionError(f"Access denied to '{name}'")
-        #     return self._mask_value(value, name)
+        # 获取属性元数据
+        prop_meta = self._get_property_metadata(name)
+        if prop_meta is None:
+            return value
+
+        context = object.__getattribute__(self, "_context")
+
+        # 安全级别检查
+        prop_security_str = getattr(prop_meta, "security_level", "PUBLIC")
+        try:
+            prop_security = SecurityLevel.from_string(prop_security_str)
+        except (ValueError, AttributeError):
+            prop_security = SecurityLevel.PUBLIC
+
+        if prop_security != SecurityLevel.PUBLIC and context is not None:
+            if not context.has_clearance(prop_security):
+                raise PermissionError(
+                    f"Access denied to '{name}': requires {prop_security.name} clearance"
+                )
+
+        # PII 脱敏检查
+        pii_type = getattr(prop_meta, "pii_type", PIIType.NONE)
+        if pii_type != PIIType.NONE:
+            should_mask = False
+            if context is None:
+                # 无上下文时，脱敏所有 PII 数据
+                should_mask = True
+            elif getattr(context, "should_mask_pii", False):
+                # 上下文明确要求脱敏
+                should_mask = True
+            elif not context.has_clearance(SecurityLevel.CONFIDENTIAL):
+                # 安全级别低于 CONFIDENTIAL 时自动脱敏
+                should_mask = True
+
+            if should_mask:
+                value = self._mask_pii(value, pii_type)
 
         return value
 
@@ -164,13 +276,15 @@ class ObjectProxy:
         """
         拦截属性写入
 
+        实现属性级写入访问控制:
+        检查 PropertyMetadata.security_level，如果高于用户权限则拒绝写入
+
         Args:
             name: 属性名称
             value: 新值
 
-        Note:
-            当前版本直接写入属性值。
-            后续版本将实现权限检查、审计日志、规则触发（SPEC-17, SPEC-18）。
+        Raises:
+            PermissionError: 安全级别不足
         """
         # 内部属性（__slots__ 中定义的）直接设置
         # 使用 object.__setattr__ 避免递归
@@ -180,13 +294,23 @@ class ObjectProxy:
 
         entity = object.__getattribute__(self, "_entity")
 
-        # TODO: 后续实现权限检查、审计日志、规则触发
-        # context = object.__getattribute__(self, "_context")
-        # if context and self._is_sensitive(name):
-        #     if not context.can_write(name):
-        #         raise PermissionError(f"Write access denied to '{name}'")
+        # 安全级别检查
+        prop_meta = self._get_property_metadata(name)
+        if prop_meta is not None:
+            context = object.__getattribute__(self, "_context")
+            prop_security_str = getattr(prop_meta, "security_level", "PUBLIC")
+            try:
+                prop_security = SecurityLevel.from_string(prop_security_str)
+            except (ValueError, AttributeError):
+                prop_security = SecurityLevel.PUBLIC
 
-        # 直接设置到实体（包括以 _ 开头的属性）
+            if prop_security != SecurityLevel.PUBLIC and context is not None:
+                if not context.has_clearance(prop_security):
+                    raise PermissionError(
+                        f"Write access denied to '{name}': requires {prop_security.name} clearance"
+                    )
+
+        # 设置到实体（包括以 _ 开头的属性）
         setattr(entity, name, value)
 
     def __repr__(self) -> str:

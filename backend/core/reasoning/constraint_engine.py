@@ -20,6 +20,20 @@ from core.ontology.metadata import (
 )
 
 
+class _DotDict:
+    """允许点号访问的字典包装器，用于表达式求值"""
+    def __init__(self, d: Dict[str, Any]):
+        self._d = d or {}
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            return super().__getattribute__(name)
+        val = self._d.get(name)
+        if isinstance(val, dict):
+            return _DotDict(val)
+        return val
+
+
 @dataclass
 class ConstraintValidationResult:
     """约束验证结果"""
@@ -190,13 +204,53 @@ class ConstraintEngine:
                 result.add_violation(constraint, message or constraint.error_message or "约束验证失败")
             return
 
-        # 检查严重程度
+        # 尝试表达式求值
+        if hasattr(constraint, 'condition_code') and constraint.condition_code:
+            try:
+                is_valid = self._evaluate_expression(constraint.condition_code, context)
+                if not is_valid:
+                    if constraint.severity == ConstraintSeverity.ERROR:
+                        result.add_violation(constraint, constraint.error_message or constraint.description)
+                    else:
+                        result.add_warning(constraint, constraint.error_message or constraint.description)
+                return
+            except Exception:
+                pass  # Fall through to default behavior
+
+        # 默认行为：无法求值时作为警告
         if hasattr(constraint, 'severity') and constraint.severity == ConstraintSeverity.ERROR:
-            # TODO: 实现 expression evaluation
-            # For now, add to warnings as we can't evaluate without expression engine
             result.add_warning(constraint, constraint.description)
         elif hasattr(constraint, 'severity') and constraint.severity == ConstraintSeverity.WARNING:
             result.add_warning(constraint, constraint.description)
+
+    def _evaluate_expression(
+        self,
+        expression: str,
+        context: ConstraintEvaluationContext
+    ) -> bool:
+        """
+        求值约束表达式
+
+        支持的表达式格式:
+        - "state.field == 'value'" - 状态字段等于
+        - "state.field != 'value'" - 状态字段不等于
+        - "state.field in ['a', 'b']" - 状态字段在列表中
+        - "param.field > 0" - 参数比较
+        """
+        # 构建安全的求值命名空间
+        namespace = {
+            "state": _DotDict(context.current_state),
+            "param": _DotDict(context.parameters),
+            "user": _DotDict(context.user_context),
+            "True": True,
+            "False": False,
+            "None": None,
+        }
+
+        try:
+            return bool(eval(expression, {"__builtins__": {}}, namespace))
+        except Exception:
+            raise ValueError(f"Cannot evaluate expression: {expression}")
 
     def _check_trigger_conditions(
         self,

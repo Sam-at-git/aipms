@@ -1,7 +1,16 @@
 """
-本体元数据装饰器系统
-用于在运行时通过反射提取本体元数据（语义、动力、动态）
+本体元数据装饰器系统 (DEPRECATED)
+
+This module is deprecated. Use core.ontology.registry.OntologyRegistry instead.
+The only active components are the SQLAlchemy reflection utilities:
+- get_model_attributes() - Extract column metadata from ORM models
+- get_entity_relationships() - Extract relationship metadata from ORM models
+- AttributeMetadata - Dataclass for column metadata
+
+The MetadataRegistry, decorators (ontology_entity, ontology_action, etc.)
+are deprecated and will be removed in a future version.
 """
+import warnings
 from typing import Dict, List, Optional, Callable, Any, Set
 from functools import wraps
 from dataclasses import dataclass, field
@@ -113,7 +122,7 @@ class AttributeMetadata:
 # ============== 元数据注册表 ==============
 
 class MetadataRegistry:
-    """元数据注册表 - 单例模式"""
+    """元数据注册表 - 单例模式 (DEPRECATED: Use core.ontology.registry.OntologyRegistry)"""
     _instance = None
 
     def __new__(cls):
@@ -186,7 +195,8 @@ class MetadataRegistry:
 registry = MetadataRegistry()
 
 
-# ============== 装饰器定义 ==============
+# ============== 装饰器定义 (DEPRECATED) ==============
+# Use HotelDomainAdapter.register_ontology() instead
 
 def ontology_entity(
     name: str,

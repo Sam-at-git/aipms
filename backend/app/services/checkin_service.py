@@ -4,10 +4,12 @@
 遵循 OODA 循环：入住操作需要人类确认
 支持事件驱动：发布入住、续住、换房等领域事件
 支持操作撤销：关键操作创建快照
+SPEC-R13: State machine validation before status changes
 """
 from typing import List, Optional, Callable
 from datetime import datetime, date, timedelta
 from decimal import Decimal
+import logging
 from sqlalchemy.orm import Session
 from app.models.ontology import (
     StayRecord, StayRecordStatus, Reservation, ReservationStatus,
@@ -22,6 +24,23 @@ from app.models.events import (
     RoomStatusChangedData, BillCreatedData
 )
 from app.models.snapshots import OperationType
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_state_transition(entity_type: str, current_state: str, target_state: str) -> None:
+    """SPEC-R13: Validate state transition against registry state machine."""
+    try:
+        from core.ontology.state_machine_executor import StateMachineExecutor
+        executor = StateMachineExecutor()
+        result = executor.validate_transition(entity_type, current_state, target_state)
+        if not result.allowed:
+            logger.warning(
+                f"State transition validation: {entity_type} "
+                f"'{current_state}' → '{target_state}': {result.reason}"
+            )
+    except Exception as e:
+        logger.debug(f"State machine validation skipped: {e}")
 
 
 class CheckInService:
@@ -123,9 +142,11 @@ class CheckInService:
 
         # 更新房间状态
         old_room_status = room.status
+        _validate_state_transition("Room", old_room_status.value, RoomStatus.OCCUPIED.value)
         room.status = RoomStatus.OCCUPIED
 
         # 更新预订状态
+        _validate_state_transition("Reservation", reservation.status.value, ReservationStatus.CHECKED_IN.value)
         reservation.status = ReservationStatus.CHECKED_IN
 
         # 创建操作快照（用于撤销）
@@ -252,6 +273,7 @@ class CheckInService:
 
         # 更新房间状态
         old_room_status = room.status
+        _validate_state_transition("Room", old_room_status.value, RoomStatus.OCCUPIED.value)
         room.status = RoomStatus.OCCUPIED
 
         # 创建操作快照（用于撤销）
@@ -411,9 +433,11 @@ class CheckInService:
         old_room_id = old_room.id
 
         # 原房间变为脏房
+        _validate_state_transition("Room", old_room.status.value, RoomStatus.VACANT_DIRTY.value)
         old_room.status = RoomStatus.VACANT_DIRTY
 
         # 新房间变为入住
+        _validate_state_transition("Room", new_room.status.value, RoomStatus.OCCUPIED.value)
         new_room.status = RoomStatus.OCCUPIED
         stay_record.room_id = new_room.id
 

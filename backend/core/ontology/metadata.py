@@ -106,6 +106,27 @@ class IConstraintValidator(ABC):
 
 
 @dataclass
+class RelationshipMetadata:
+    """关系元数据 - 实体间关系的一等公民定义"""
+    name: str                    # 源实体上的属性名 (如 "stays")
+    target_entity: str           # 目标实体名 (如 "StayRecord")
+    cardinality: str             # "one_to_many" | "many_to_one" | "one_to_one"
+    foreign_key: str             # FK 列名 (如 "guest_id")
+    foreign_key_entity: str      # 拥有 FK 的实体名
+    inverse_name: Optional[str] = None  # 反向导航属性名
+    description: str = ""
+
+    def to_llm_description(self) -> str:
+        """生成 LLM 可理解的描述"""
+        parts = [f"- {self.name} → {self.target_entity} ({self.cardinality})"]
+        if self.description:
+            parts.append(f": {self.description}")
+        if self.inverse_name:
+            parts.append(f" [反向: {self.inverse_name}]")
+        return "".join(parts)
+
+
+@dataclass
 class ActionParam:
     """动作参数定义"""
     name: str
@@ -470,6 +491,17 @@ class PropertyMetadata:
 
 
 @dataclass
+class EventMetadata:
+    """领域事件元数据"""
+    name: str                          # Event name (e.g. "ROOM_STATUS_CHANGED")
+    description: str = ""              # Human-readable description
+    entity: str = ""                   # Related entity (e.g. "Room")
+    triggered_by: List[str] = field(default_factory=list)  # Actions that trigger this event
+    payload_fields: List[str] = field(default_factory=list)  # Expected payload field names
+    subscribers: List[str] = field(default_factory=list)  # Known subscriber descriptions
+
+
+@dataclass
 class EntityMetadata:
     """实体元数据"""
     name: str
@@ -492,9 +524,17 @@ class EntityMetadata:
     default_permissions: Dict[str, List[str]] = field(default_factory=dict)
     extensions: Dict[str, Any] = field(default_factory=dict)
 
+    # 关系元数据列表
+    relationships: List['RelationshipMetadata'] = field(default_factory=list)
+
     def add_property(self, prop: PropertyMetadata) -> 'EntityMetadata':
         """添加属性 (流式 API)"""
         self.properties[prop.name] = prop
+        return self
+
+    def add_relationship(self, rel: 'RelationshipMetadata') -> 'EntityMetadata':
+        """添加关系元数据 (流式 API)"""
+        self.relationships.append(rel)
         return self
 
     def get_property(self, name: str) -> Optional[PropertyMetadata]:
@@ -660,6 +700,7 @@ def ontology_property(
 # 导出
 __all__ = [
     "ParamType",
+    "RelationshipMetadata",
     "ActionParam",
     "ActionParameter",  # Alias
     "BusinessRule",
@@ -678,6 +719,7 @@ __all__ = [
     "ConstraintEvaluationContext",
     "IConstraintValidator",
     "ConstraintMetadata",
+    "EventMetadata",
     # Searchable decorators
     "ontology_entity",
     "ontology_property",

@@ -227,6 +227,11 @@ class AIService:
         # SPEC-08: ActionRegistry (lazy initialized)
         self._action_registry = None
 
+        # SPEC-19/20/21: OAG components (lazy initialized)
+        self._intent_router = None
+        self._query_compiler = None
+        self._response_generator = None
+
         # DebugLogger (调试追踪)
         self.debug_logger = DebugLogger() if DEBUG_LOGGER_AVAILABLE else None
 
@@ -287,6 +292,241 @@ class AIService:
         """
         registry = self.get_action_registry()
         return registry is not None
+
+    # ========== SPEC-19/20/21: OAG Component Accessors ==========
+
+    def _get_intent_router(self):
+        """Get IntentRouter instance (SPEC-19)"""
+        if self._intent_router is None:
+            try:
+                from core.ai.intent_router import IntentRouter
+                from core.ontology.registry import OntologyRegistry
+                registry = self.get_action_registry()
+                ontology_reg = OntologyRegistry()
+                self._intent_router = IntentRouter(
+                    action_registry=registry,
+                    ontology_registry=ontology_reg
+                )
+            except Exception as e:
+                logger.debug(f"IntentRouter not available: {e}")
+                self._intent_router = False
+        return self._intent_router if self._intent_router is not False else None
+
+    def _get_query_compiler(self):
+        """Get OntologyQueryCompiler instance (SPEC-20)"""
+        if self._query_compiler is None:
+            try:
+                from core.ai.query_compiler import OntologyQueryCompiler
+                from core.ontology.registry import OntologyRegistry
+                ontology_reg = OntologyRegistry()
+                rule_applicator = None
+                try:
+                    from core.ontology.rule_applicator import RuleApplicator
+                    rule_applicator = RuleApplicator(ontology_reg)
+                except Exception:
+                    pass
+                self._query_compiler = OntologyQueryCompiler(
+                    registry=ontology_reg,
+                    rule_applicator=rule_applicator
+                )
+            except Exception as e:
+                logger.debug(f"QueryCompiler not available: {e}")
+                self._query_compiler = False
+        return self._query_compiler if self._query_compiler is not False else None
+
+    def _get_response_generator(self):
+        """Get ResponseGenerator instance (SPEC-21)"""
+        if self._response_generator is None:
+            try:
+                from core.ai.response_generator import ResponseGenerator
+                self._response_generator = ResponseGenerator(language="zh")
+            except Exception as e:
+                logger.debug(f"ResponseGenerator not available: {e}")
+                self._response_generator = False
+        return self._response_generator if self._response_generator is not False else None
+
+    def _try_oag_path(self, message: str, user: Employee) -> dict:
+        """
+        Try the OAG (Ontology Action Graph) fast path (SPEC-19/20/21)
+
+        Steps:
+        1. extract_intent (LLM or rule-based)
+        2. IntentRouter.route() for action/query identification
+        3. If query + high confidence → QueryCompiler → execute
+        4. If mutation + high confidence → extract_params → return for confirmation
+        5. If low confidence → return None (fall through to LLM path)
+
+        Returns:
+            Response dict if OAG handled it, or None to fall through
+        """
+        router = self._get_intent_router()
+        if not router:
+            return None
+
+        # Step 1: Extract intent
+        intent_data = self.llm_service.extract_intent(message)
+
+        # Step 2: Route intent
+        try:
+            from core.ai.intent_router import ExtractedIntent
+            intent = ExtractedIntent(
+                entity_mentions=intent_data.get("entity_mentions", []),
+                action_hints=intent_data.get("action_hints", []),
+                extracted_params=intent_data.get("extracted_values", {}),
+                time_references=intent_data.get("time_references", []),
+            )
+            routing = router.route(intent, user_role=user.role if hasattr(user, 'role') else "admin")
+        except Exception as e:
+            logger.debug(f"OAG routing failed: {e}")
+            return None
+
+        # Step 3: Check confidence threshold (lowered to 0.7 to catch more cases)
+        if routing.confidence < 0.7:
+            return None  # Low confidence, fall through to LLM
+
+        # Step 4: Handle query actions via QueryCompiler (SPEC-20)
+        if routing.action and routing.action.startswith("query") or routing.action == "ontology_query":
+            return self._oag_handle_query(intent, routing, user)
+
+        # Step 5: Handle mutation actions (SPEC-19)
+        if routing.action:
+            return self._oag_handle_mutation(intent, routing, message, user)
+
+        return None
+
+    def _oag_handle_query(self, intent, routing, user) -> dict:
+        """Handle query intent via OAG path (SPEC-20)"""
+        compiler = self._get_query_compiler()
+        if not compiler:
+            return None
+
+        try:
+            from core.ai.query_compiler import ExtractedQuery
+            extracted = ExtractedQuery(
+                target_entity_hint=intent.entity_mentions[0] if intent.entity_mentions else None,
+                target_fields_hint=[],
+                conditions=[
+                    {"field": k, "operator": "eq", "value": v}
+                    for k, v in intent.extracted_params.items()
+                ],
+            )
+            compilation = compiler.compile(extracted)
+
+            if compilation.confidence < 0.7 or compilation.fallback_needed:
+                return None  # Fall through to LLM
+
+            # Execute compiled query
+            if compilation.query:
+                from core.ontology.query_engine import QueryEngine
+                engine = QueryEngine()
+                results = engine.execute(self.db, compilation.query)
+
+                # Format via ResponseGenerator (SPEC-21)
+                resp_gen = self._get_response_generator()
+                if resp_gen:
+                    from core.ai.response_generator import OntologyResult
+                    onto_result = OntologyResult(
+                        result_type="query_result",
+                        data={
+                            "results": results if isinstance(results, list) else [],
+                            "entity": compilation.query.root_object,
+                            "total": len(results) if isinstance(results, list) else 0,
+                        },
+                        entity_type=compilation.query.root_object,
+                    )
+                    formatted = resp_gen.generate(onto_result)
+                    return {
+                        "message": formatted,
+                        "suggested_actions": [],
+                        "context": {"oag_path": True, "confidence": compilation.confidence},
+                        "query_result": results if isinstance(results, list) else [],
+                    }
+        except Exception as e:
+            logger.debug(f"OAG query compilation failed: {e}")
+
+        return None
+
+    def _oag_handle_mutation(self, intent, routing, message, user) -> dict:
+        """Handle mutation intent via OAG path (SPEC-19)"""
+        registry = self.get_action_registry()
+        if not registry:
+            return None
+
+        action_def = registry.get_action(routing.action)
+        if not action_def:
+            return None
+
+        # Extract params via LLM slot-filling (SPEC-16)
+        schema = {}
+        if action_def.parameters_schema:
+            try:
+                schema = action_def.parameters_schema.model_json_schema()
+            except Exception:
+                pass
+
+        param_result = self.llm_service.extract_params(
+            message, schema, intent.extracted_params
+        )
+
+        # Format response via ResponseGenerator (SPEC-21)
+        resp_gen = self._get_response_generator()
+
+        if param_result.get("missing"):
+            # Missing fields - ask for more info
+            if resp_gen:
+                from core.ai.response_generator import OntologyResult
+                onto_result = OntologyResult(
+                    result_type="missing_fields",
+                    data={
+                        "missing": param_result["missing"],
+                        "action_name": routing.action,
+                    },
+                    action_name=routing.action,
+                )
+                formatted = resp_gen.generate(onto_result)
+            else:
+                formatted = f"执行 {routing.action} 还需要以下信息：" + ", ".join(param_result["missing"])
+
+            return {
+                "message": formatted,
+                "suggested_actions": [{
+                    "action_type": routing.action,
+                    "entity_type": action_def.entity,
+                    "description": action_def.description,
+                    "params": param_result["params"],
+                    "requires_confirmation": False,
+                    "missing_fields": param_result["missing"],
+                }],
+                "context": {"oag_path": True, "confidence": routing.confidence},
+            }
+
+        # All params collected - return for confirmation
+        if resp_gen:
+            from core.ai.response_generator import OntologyResult
+            onto_result = OntologyResult(
+                result_type="action_needs_confirm",
+                data={
+                    "action_name": routing.action,
+                    "params": param_result["params"],
+                    "description": action_def.description,
+                },
+                action_name=routing.action,
+            )
+            formatted = resp_gen.generate(onto_result)
+        else:
+            formatted = f"请确认执行：{action_def.description}"
+
+        return {
+            "message": formatted,
+            "suggested_actions": [{
+                "action_type": routing.action,
+                "entity_type": action_def.entity,
+                "description": action_def.description,
+                "params": param_result["params"],
+                "requires_confirmation": True,
+            }],
+            "context": {"oag_path": True, "confidence": routing.confidence},
+        }
 
     def dispatch_via_registry(
         self,
@@ -974,6 +1214,16 @@ class AIService:
                 # 默认携带上下文
                 include_context = bool(conversation_history)
 
+        # ========== SPEC-19: OAG Fast Path ==========
+        # Try OAG routing before LLM chat (lower latency, zero/fewer LLM calls)
+        try:
+            oag_result = self._try_oag_path(message, user)
+            if oag_result:
+                oag_result['topic_id'] = new_topic_id
+                return self._complete_debug_session(debug_session_id, oag_result, start_time, "success")
+        except Exception as e:
+            logger.debug(f"OAG fast path failed, falling through to LLM: {e}")
+
         # 尝试使用 LLM
         if self.llm_service.is_enabled():
             try:
@@ -1271,6 +1521,37 @@ class AIService:
                     action["params"] = params
                     continue
 
+            # 解析任务类型（支持中文：维修、清洁）
+            if "task_type" in params:
+                task_type_result = self.param_parser.parse_task_type(params["task_type"])
+                if task_type_result.confidence >= 0.7:
+                    params["task_type"] = task_type_result.value.value
+                else:
+                    # 返回可用任务类型列表让用户选择
+                    from app.models.ontology import TaskType
+                    action["requires_confirmation"] = True
+                    action["candidates"] = [
+                        {'value': t.value, 'label': t.value}
+                        for t in TaskType
+                    ]
+                    action["params"] = params
+                    continue
+
+            # 解析价格类型（支持中文：周末、平日）
+            if "price_type" in params:
+                price_type_input = str(params["price_type"]).lower().strip()
+                price_type_aliases = {
+                    'weekend': ['周末', '周末价', 'weekend', '周六日', '星期六日'],
+                    'standard': ['平日', '标准', 'standard', '工作日', '平时']
+                }
+                matched = None
+                for ptype, aliases in price_type_aliases.items():
+                    if price_type_input in [a.lower() for a in aliases]:
+                        matched = ptype
+                        break
+                if matched:
+                    params["price_type"] = matched
+
             # ========== 原有的增强逻辑（作为后备） ==========
 
             # 如果 LLM 返回了房间号但缺少 room_id，补充 room_id
@@ -1294,18 +1575,19 @@ class AIService:
                     params["reservation_id"] = reservation.id
                     action["entity_id"] = reservation.id
 
-            # 解析相对日期
+            # 解析相对日期（结果转为 ISO 字符串以保证 JSON 可序列化）
             for date_field in ["expected_check_out", "new_check_out_date", "check_in_date", "check_out_date"]:
                 if date_field in params:
                     # 先尝试智能参数解析
                     parse_result = self.param_parser.parse_date(params[date_field])
                     if parse_result.confidence > 0:
-                        params[date_field] = parse_result.value
+                        val = parse_result.value
+                        params[date_field] = val.isoformat() if isinstance(val, date) else str(val)
                     else:
                         # 回退到原有的相对日期解析
                         parsed_date = self._parse_relative_date(params[date_field])
                         if parsed_date:
-                            params[date_field] = parsed_date
+                            params[date_field] = parsed_date.isoformat() if isinstance(parsed_date, date) else str(parsed_date)
 
             action["params"] = params
 
@@ -1486,7 +1768,7 @@ class AIService:
         entities = self._extract_entities(message)
 
         # Decide: 根据意图生成建议动作
-        response = self._generate_response(intent, entities, user)
+        response = self._generate_response(intent, entities, user, message)
 
         return response
 
@@ -1604,7 +1886,7 @@ class AIService:
 
         return entities
 
-    def _generate_response(self, intent: str, entities: dict, user: Employee) -> dict:
+    def _generate_response(self, intent: str, entities: dict, user: Employee, original_message: str = "") -> dict:
         """生成响应和建议动作"""
 
         if intent == 'help':
@@ -1626,7 +1908,7 @@ class AIService:
             return self._query_reports_response()
 
         if intent == 'action_checkin':
-            return self._checkin_response(entities, user)
+            return self._checkin_response(entities, user, original_message)
 
         if intent == 'action_checkout':
             return self._checkout_response(entities, user)
@@ -2010,6 +2292,20 @@ class AIService:
         try:
             # 调试日志：打印 LLM 返回的查询结构
             logger.info(f"LLM returned query: {structured_query_dict}")
+
+            # 验证必需的 entity 字段
+            if "entity" not in structured_query_dict:
+                logger.warning(f"Missing 'entity' field in query: {structured_query_dict}")
+                # 尝试从上下文推断 entity
+                return {
+                    "message": "查询参数不完整：缺少实体类型。请指定要查询的实体（如：房间、客人、预订等）",
+                    "suggested_actions": [],
+                    "query_result": {
+                        "display_type": "text",
+                        "rows": [],
+                        "summary": "查询参数错误"
+                    }
+                }
 
             # 验证和纠正字段名（重要保障机制）
             corrected_query = self._validate_and_correct_fields(structured_query_dict)
@@ -2414,11 +2710,49 @@ class AIService:
         }
         return DISPLAY_NAMES.get(field, field)
 
-    def _checkin_response(self, entities: dict, user: Employee) -> dict:
+    def _checkin_response(self, entities: dict, user: Employee, original_message: str = "") -> dict:
+        """
+        Handle check-in response with walk-in keyword detection.
+
+        Args:
+            entities: Extracted entities from message
+            user: Current employee user
+            original_message: Original user message for keyword detection
+
+        Returns:
+            Response dict with message and suggested_actions
+        """
+        # Detect walk-in keywords from ActionRegistry (single source of truth)
+        walkin_keywords = []
+        ar = self.get_action_registry()
+        if ar:
+            walkin_action = ar.get_action("walkin_checkin")
+            if walkin_action:
+                walkin_keywords = walkin_action.search_keywords
+        is_walkin = any(kw in original_message for kw in walkin_keywords)
+
         # 根据实体查找目标
         if 'room_number' in entities:
             room = self.room_service.get_room_by_number(entities['room_number'])
             if room and room.status in [RoomStatus.VACANT_CLEAN, RoomStatus.VACANT_DIRTY]:
+                # If user explicitly said walk-in, skip the question and go directly to walkin_checkin
+                if is_walkin:
+                    return {
+                        'message': f"{room.room_number}号房（{room.room_type.name}）当前空闲，"
+                                   f"确认办理散客入住吗？",
+                        'suggested_actions': [
+                            {
+                                'action_type': 'walkin_checkin',
+                                'entity_type': 'room',
+                                'entity_id': room.id,
+                                'description': '散客入住',
+                                'requires_confirmation': True,
+                                'params': {'room_id': room.id}
+                            }
+                        ],
+                        'context': {'room': {'id': room.id, 'number': room.room_number}}
+                    }
+                # Otherwise ask the standard question
                 return {
                     'message': f"{room.room_number}号房（{room.room_type.name}）当前空闲，"
                                f"请问是预订入住还是散客入住？",
@@ -2639,9 +2973,11 @@ class AIService:
                     task_type=task_type_result.value if task_type_result.value else TaskType.CLEANING
                 )
                 task = self.task_service.create_task(data, user.id)
+                # 根据实际任务类型返回正确的消息
+                task_type_name = "清洁" if task.task_type == TaskType.CLEANING else "维修"
                 return {
                     'success': True,
-                    'message': f'清洁任务已创建，任务ID：{task.id}'
+                    'message': f'{task_type_name}任务已创建，任务ID：{task.id}'
                 }
 
             if action_type == 'walkin_checkin':

@@ -9,7 +9,6 @@ from decimal import Decimal
 import logging
 
 from core.ontology.base import BaseEntity
-from app.services.metadata import ontology_entity, ontology_action
 
 if TYPE_CHECKING:
     from app.models.ontology import StayRecord
@@ -22,7 +21,6 @@ class StayRecordState(str):
     CHECKED_OUT = "checked_out"
 
 
-@ontology_entity(name="StayRecord", description="住宿记录本体 - 住宿期间的聚合根", table_name="stay_records")
 class StayRecordEntity(BaseEntity):
     def __init__(self, orm_model: "StayRecord"):
         self._orm_model = orm_model
@@ -67,9 +65,6 @@ class StayRecordEntity(BaseEntity):
     def deposit_amount(self) -> Decimal:
         return self._orm_model.deposit_amount or Decimal("0")
 
-    @ontology_action(entity="StayRecord", action_type="check_out", description="办理退房", params=[
-        {"name": "check_out_time", "type": "datetime", "required": False, "description": "退房时间"},
-    ], requires_confirmation=True, allowed_roles=["manager", "receptionist"], writeback=True)
     def check_out(self, check_out_time: Optional[datetime] = None) -> None:
         from app.models.ontology import StayRecordStatus
         if self._orm_model.status == StayRecordStatus.CHECKED_OUT:
@@ -81,9 +76,6 @@ class StayRecordEntity(BaseEntity):
         self._orm_model.status = StayRecordStatus.CHECKED_OUT
         logger.info(f"StayRecord {self.id} checked out")
 
-    @ontology_action(entity="StayRecord", action_type="extend_stay", description="延长住宿", params=[
-        {"name": "new_check_out_date", "type": "date", "required": True, "description": "新的退房日期"},
-    ], requires_confirmation=True, allowed_roles=["manager", "receptionist"], writeback=True)
     def extend_stay(self, new_check_out_date: date) -> None:
         self._orm_model.expected_check_out = new_check_out_date
         logger.info(f"StayRecord {self.id} extended to {new_check_out_date}")

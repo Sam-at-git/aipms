@@ -4,7 +4,7 @@ import { roomApi } from '../services/api'
 import RoomCard, { RoomStatusSummary } from '../components/RoomCard'
 import Modal, { ModalFooter } from '../components/Modal'
 import { UndoButton } from '../components/UndoButton'
-import { useUIStore } from '../store'
+import { useUIStore, useOntologyStore } from '../store'
 import type { Room, RoomType, RoomStatus } from '../types'
 
 export default function Rooms() {
@@ -14,6 +14,7 @@ export default function Rooms() {
   const [filter, setFilter] = useState<{ floor?: number; status?: RoomStatus }>({})
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
   const { openModal, closeModal, modalData } = useUIStore()
+  const { getStatusConfig } = useOntologyStore()
 
   useEffect(() => {
     loadData()
@@ -92,10 +93,9 @@ export default function Rooms() {
             className="bg-dark-800 border border-dark-700 rounded-lg px-3 py-1.5 text-sm"
           >
             <option value="">全部状态</option>
-            <option value="vacant_clean">空闲</option>
-            <option value="occupied">入住</option>
-            <option value="vacant_dirty">待清洁</option>
-            <option value="out_of_order">维修</option>
+            {(['vacant_clean', 'occupied', 'vacant_dirty', 'out_of_order'] as const).map(s => (
+              <option key={s} value={s}>{getStatusConfig('Room', s).label}</option>
+            ))}
           </select>
           <select
             value={filter.floor || ''}
@@ -155,10 +155,7 @@ export default function Rooms() {
               <div>
                 <label className="text-sm text-dark-400">当前状态</label>
                 <p className="font-medium">
-                  {selectedRoom.status === 'vacant_clean' && '空闲'}
-                  {selectedRoom.status === 'occupied' && '入住中'}
-                  {selectedRoom.status === 'vacant_dirty' && '待清洁'}
-                  {selectedRoom.status === 'out_of_order' && '维修中'}
+                  {getStatusConfig('Room', selectedRoom.status).label}
                 </p>
               </div>
               {selectedRoom.current_guest && (

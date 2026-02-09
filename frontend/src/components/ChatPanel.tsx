@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, Check, X, Search, ChevronUp, ChevronDown, Globe } from 'lucide-react'
-import { useChatStore } from '../store'
+import { Send, Loader2, Check, X, Search, ChevronUp, Globe } from 'lucide-react'
+import { useChatStore, useOntologyStore } from '../store'
+import ActionForm from './ActionForm'
 import { aiApi, conversationApi } from '../services/api'
 import { getChatText } from '../i18n/chat'
 import type { AIAction, ChatMessage, CandidateOption, ConversationMessage, FollowUpInfo, QueryResultData } from '../types'
@@ -535,6 +536,11 @@ export default function ChatPanel() {
 
   // 构建确认消息
   const buildConfirmMessage = (_actionType: string, params: Record<string, unknown>): string => {
+    // Build display names from kinetic schema, with fallbacks
+    const schema = useOntologyStore.getState().getActionSchema(_actionType)
+    const kineticNames = schema
+      ? Object.fromEntries(schema.params.map(p => [p.name, p.description || p.name]))
+      : {}
     const fieldDisplayNames: Record<string, string> = {
       guest_name: '客人',
       guest_phone: '电话',
@@ -545,7 +551,8 @@ export default function ChatPanel() {
       expected_check_out: '预计退房',
       reservation_id: '预订号',
       stay_record_id: '住宿记录',
-      task_type: '任务类型'
+      task_type: '任务类型',
+      ...kineticNames,
     }
 
     let message = '信息已完整：\n\n'
@@ -562,6 +569,10 @@ export default function ChatPanel() {
 
   // 构建操作描述
   const buildActionDescription = (actionType: string, params: Record<string, unknown>): string => {
+    // Try kinetic schema description first
+    const schema = useOntologyStore.getState().getActionSchema(actionType)
+    if (schema?.description) return schema.description
+
     const descriptions: Record<string, string> = {
       walkin_checkin: `为 ${params.guest_name} 办理散客入住（${params.room_number}号房）`,
       create_reservation: `创建 ${params.guest_name} 的预订（${params.room_type}）`,
@@ -852,63 +863,14 @@ export default function ChatPanel() {
 
                           {/* 显示缺失字段表单 */}
                           {action.missing_fields && action.missing_fields.length > 0 && (
-                            <div className="mb-2 p-2 bg-dark-800 rounded">
-                              <div className="flex items-center justify-between mb-2">
-                                <p className="text-xs text-dark-400">请补充信息：</p>
-                                <button
-                                  onClick={() => setShowForm(!showForm)}
-                                  className="text-dark-500 hover:text-dark-300"
-                                >
-                                  {showForm ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                                </button>
-                              </div>
-                              {showForm && (
-                                <div className="space-y-2">
-                                  {action.missing_fields.map((field, fIdx) => (
-                                    <div key={fIdx}>
-                                      <label className="text-xs text-dark-400 block mb-1">
-                                        {field.display_name}
-                                        {field.required && <span className="text-red-500 ml-1">*</span>}
-                                      </label>
-                                      {field.field_type === 'select' ? (
-                                        <select
-                                          value={formValues[field.field_name] || ''}
-                                          onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
-                                          className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm focus:outline-none focus:border-primary-500"
-                                        >
-                                          <option value="">{field.placeholder || '请选择'}</option>
-                                          {field.options?.map((opt, oIdx) => (
-                                            <option key={oIdx} value={opt.value}>{opt.label}</option>
-                                          ))}
-                                        </select>
-                                      ) : field.field_type === 'date' ? (
-                                        <input
-                                          type="text"
-                                          value={formValues[field.field_name] || ''}
-                                          onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
-                                          placeholder={field.placeholder || '如：明天、2025-02-05'}
-                                          className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm focus:outline-none focus:border-primary-500"
-                                        />
-                                      ) : (
-                                        <input
-                                          type={field.field_type === 'number' ? 'number' : 'text'}
-                                          value={formValues[field.field_name] || ''}
-                                          onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
-                                          placeholder={field.placeholder}
-                                          className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm focus:outline-none focus:border-primary-500"
-                                        />
-                                      )}
-                                    </div>
-                                  ))}
-                                  <button
-                                    onClick={handleFormSubmit}
-                                    className="w-full mt-2 px-3 py-1 bg-primary-600 hover:bg-primary-700 rounded text-xs"
-                                  >
-                                    提交
-                                  </button>
-                                </div>
-                              )}
-                            </div>
+                            <ActionForm
+                              action={action}
+                              formValues={formValues}
+                              showForm={showForm}
+                              onToggleForm={() => setShowForm(!showForm)}
+                              onChange={setFormValues}
+                              onSubmit={handleFormSubmit}
+                            />
                           )}
 
                           {/* 显示候选项 */}

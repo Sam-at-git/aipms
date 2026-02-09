@@ -83,18 +83,30 @@ def _extract_from_code_block(text: str) -> Optional[Dict]:
 
 
 def _extract_braces_content(text: str) -> Optional[Dict]:
-    """从文本中提取第一个完整的 JSON 对象"""
-    # 找到第一个 { 和最后一个 }
+    """从文本中提取第一个完整的 JSON 对象（跳过字符串内的花括号）"""
     start = text.find('{')
     if start == -1:
         return None
 
-    # 使用栈匹配花括号
+    # 使用栈匹配花括号，跳过引号内的内容
     stack = []
     end = -1
+    in_string = False
+    escape_next = False
 
     for i in range(start, len(text)):
         char = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if char == '\\' and in_string:
+            escape_next = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
         if char == '{':
             stack.append(char)
         elif char == '}':
@@ -125,6 +137,14 @@ def _try_parse_with_cleaning(text: str) -> Optional[Dict]:
 
     # 修复未转义的换行符
     text = _fix_escaped_newlines(text)
+
+    # 替换非标准 JSON 值（NaN, Infinity, -Infinity -> null）
+    text = re.sub(r'\bNaN\b', 'null', text)
+    text = re.sub(r'\bInfinity\b', 'null', text)
+    text = re.sub(r'-Infinity\b', 'null', text)
+
+    # 移除控制字符（保留 \n \r \t）
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
 
     # 尝试解析
     return _try_parse_json(text)
@@ -556,10 +576,11 @@ create_task: room_number, task_type
         else:
             self.client = None
 
-        # Phase 2.5: 初始化 PromptBuilder 用于本体感知
+        # Phase 2.5: 初始化 PromptBuilder 用于本体感知（注入 ActionRegistry）
         try:
             from core.ai.prompt_builder import PromptBuilder
-            self._prompt_builder = PromptBuilder()
+            from app.services.actions import get_action_registry
+            self._prompt_builder = PromptBuilder(action_registry=get_action_registry())
         except ImportError:
             self._prompt_builder = None
 
@@ -617,20 +638,49 @@ create_task: room_number, task_type
     def build_system_prompt_with_schema(
         self,
         language: Optional[str] = None,
-        include_schema: bool = False
+        include_schema: bool = False,
+        include_actions: bool = True,
+        include_glossary: bool = True
     ) -> str:
         """
         构建包含 Schema 的系统提示词
 
+        动态从 ActionRegistry 注入所有注册的操作元数据，
+        确保 LLM 具有完整的操作知识库（包括 walkin_checkin）。
+
         Args:
             language: 语言 ("zh"/"en")
             include_schema: 是否包含查询 Schema
+            include_actions: 是否包含操作描述（默认 True）
+            include_glossary: 是否包含领域关键词表（默认 True）
 
         Returns:
             完整的系统提示词
         """
         # 基础提示词
         system_prompt = self.SYSTEM_PROMPT
+
+        # 动态注入操作描述从 PromptBuilder (OAG 机制)
+        if include_actions and self._prompt_builder:
+            try:
+                action_descriptions = self._prompt_builder._build_action_descriptions()
+                if action_descriptions:
+                    system_prompt += f"\n\n{action_descriptions}"
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Failed to inject action descriptions: {e}")
+
+        # 注入领域关键词表（Domain Glossary）- 关键: 告诉LLM哪些词是语义信号
+        if include_glossary and self._prompt_builder:
+            try:
+                domain_glossary = self._prompt_builder._build_domain_glossary()
+                if domain_glossary:
+                    system_prompt += f"\n\n{domain_glossary}"
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Failed to inject domain glossary: {e}")
 
         # 语言提示
         if language:
@@ -642,18 +692,16 @@ create_task: room_number, task_type
             system_prompt += f"\n\n{self.get_query_schema()}"
 
         # 注入业务规则（从 core/ontology 读取）
-            try:
-                from core.ontology.business_rules import get_business_rules
-                rules_registry = get_business_rules()
-                business_rules_prompt = rules_registry.export_for_llm()
-                if business_rules_prompt:
-                    system_prompt += f"\n\n**业务规则:**\n{business_rules_prompt}"
-            except ImportError:
-                pass  # 业务规则模块不可用，继续
+        try:
+            from core.ontology.business_rules import get_business_rules
+            rules_registry = get_business_rules()
+            business_rules_prompt = rules_registry.export_for_llm()
+            if business_rules_prompt:
+                system_prompt += f"\n\n**业务规则:**\n{business_rules_prompt}"
+        except ImportError:
+            pass  # 业务规则模块不可用，继续
 
         return system_prompt
-        if self._prompt_builder:
-            self._prompt_builder.invalidate_cache()
 
     def is_enabled(self) -> bool:
         """检查 LLM 是否可用"""
@@ -681,14 +729,16 @@ create_task: room_number, task_type
         # 构建上下文信息
         context_info = self._build_context_info(context)
 
-        # 语言检测与提示
+        # 语言检测
         lang = language or detect_language(message)
-        lang_hint = LANGUAGE_PROMPTS.get(lang, LANGUAGE_PROMPTS["zh"])
-        system_prompt = self.SYSTEM_PROMPT + f"\n\n{lang_hint}"
 
-        # 注入查询 Schema（如果 context 中有 include_query_schema）
-        if context and context.get('include_query_schema'):
-            system_prompt += f"\n\n{self.get_query_schema()}"
+        # 使用 build_system_prompt_with_schema 动态注入操作描述（OAG 机制）
+        include_schema = context and context.get('include_query_schema', False)
+        system_prompt = self.build_system_prompt_with_schema(
+            language=lang,
+            include_schema=include_schema,
+            include_actions=True  # 动态注入所有注册的操作
+        )
 
         # 显式注入当前日期
         today = date.today()

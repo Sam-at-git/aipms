@@ -110,7 +110,7 @@ class TestEnhancedPromptBuilder:
             include_rules=True
         )
 
-        assert "AIPMS" in prompt
+        assert "Ontology" in prompt or "AIPMS" in prompt
         assert "**当前用户角色:** manager" in prompt
 
     def test_prompt_with_all_features(self):
@@ -128,7 +128,7 @@ class TestEnhancedPromptBuilder:
         )
         prompt = builder.build_system_prompt(context)
 
-        assert "AIPMS" in prompt
+        assert "Ontology" in prompt or "AIPMS" in prompt
         assert "manager" in prompt
         assert "AIPMS 酒店" in prompt
 

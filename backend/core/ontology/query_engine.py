@@ -25,112 +25,112 @@ from core.ontology.registry import OntologyRegistry
 logger = logging.getLogger(__name__)
 
 
-# ORM 模型映射
-MODEL_MAP = {
-    "Room": None,  # 延迟导入
-    "Guest": None,
-    "Reservation": None,
-    "StayRecord": None,
-    "Bill": None,
-    "Task": None,
-    "Employee": None,
-    "RoomType": None,
-    "RatePlan": None,
-    "Payment": None,
-}
+# 动态映射 - 从 OntologyRegistry 获取（SPEC-13）
+# 保留 _FALLBACK_MODEL_MAP 用于向后兼容（Registry 未注册时的延迟导入）
+_FALLBACK_MODEL_MAP: Dict[str, Optional[Type]] = {}
 
-# 实体关系映射（用于自动推导 JOIN 条件）
-RELATIONSHIP_MAP = {
-    "Guest": {
-        "StayRecord": ("stay_records", "guest_id"),
-        "Reservation": ("reservations", "guest_id"),
-    },
-    "Room": {
-        "StayRecord": ("stay_records", "room_id"),
-        "Task": ("tasks", "room_id"),
-        "RoomType": ("room_type", "room_type_id"),
-    },
-    "StayRecord": {
-        "Guest": ("guest", "guest_id"),
-        "Room": ("room", "room_id"),
-        "Reservation": ("reservation", "reservation_id"),
-        "Bill": ("bills", "stay_record_id"),
-    },
-    "Reservation": {
-        "Guest": ("guest", "guest_id"),
-        "RoomType": ("room_type", "room_type_id"),
-        "StayRecord": ("stay_records", "reservation_id"),
-    },
-    "Bill": {
-        "StayRecord": ("stay_record", "stay_record_id"),
-        "Payment": ("payments", "bill_id"),
-    },
-    "Task": {
-        "Room": ("room", "room_id"),
-        "Employee": ("assignee", "assignee_id"),
-    },
-    "Employee": {
-        "Task": ("tasks", "assignee_id"),
-    },
-    "RoomType": {
-        "Room": ("rooms", "id"),
-        "RatePlan": ("rate_plans", "room_type_id"),
-    },
-}
+# SPEC-R04: Relationship map removed - now fully registry-driven
 
-# 字段显示名映射
-DISPLAY_NAMES = {
-    "name": "姓名",
-    "phone": "电话",
-    "room_number": "房号",
-    "room_type": "房型",
-    "status": "状态",
-    "floor": "楼层",
-    "check_in_date": "入住日期",
-    "check_out_date": "退房日期",
-    "task_type": "任务类型",
-    "reservation_no": "预订号",
-    "total_amount": "总金额",
-    "is_settled": "已结清",
-}
+
+def _get_registry() -> OntologyRegistry:
+    """获取 OntologyRegistry 单例"""
+    return OntologyRegistry()
 
 
 def get_model_class(entity_name: str) -> Type:
-    """获取 ORM 模型类（延迟导入避免循环依赖）"""
-    if MODEL_MAP[entity_name] is None:
-        if entity_name == "Room":
-            from app.models.ontology import Room
-            MODEL_MAP["Room"] = Room
-        elif entity_name == "Guest":
-            from app.models.ontology import Guest
-            MODEL_MAP["Guest"] = Guest
-        elif entity_name == "Reservation":
-            from app.models.ontology import Reservation
-            MODEL_MAP["Reservation"] = Reservation
-        elif entity_name == "StayRecord":
-            from app.models.ontology import StayRecord
-            MODEL_MAP["StayRecord"] = StayRecord
-        elif entity_name == "Bill":
-            from app.models.ontology import Bill
-            MODEL_MAP["Bill"] = Bill
-        elif entity_name == "Task":
-            from app.models.ontology import Task
-            MODEL_MAP["Task"] = Task
-        elif entity_name == "Employee":
-            from app.models.ontology import Employee
-            MODEL_MAP["Employee"] = Employee
-        elif entity_name == "RoomType":
-            from app.models.ontology import RoomType
-            MODEL_MAP["RoomType"] = RoomType
-        elif entity_name == "RatePlan":
-            from app.models.ontology import RatePlan
-            MODEL_MAP["RatePlan"] = RatePlan
-        elif entity_name == "Payment":
-            from app.models.ontology import Payment
-            MODEL_MAP["Payment"] = Payment
-        else:
+    """
+    获取 ORM 模型类 - 优先从 OntologyRegistry 获取（SPEC-13）
+
+    查找顺序：
+    1. OntologyRegistry.get_model()
+    2. 延迟导入 fallback
+    """
+    # 1. Try registry first
+    registry = _get_registry()
+    model = registry.get_model(entity_name)
+    if model is not None:
+        return model
+
+    # 2. Fallback to lazy import
+    if entity_name not in _FALLBACK_MODEL_MAP or _FALLBACK_MODEL_MAP[entity_name] is None:
+        try:
+            from app.models import ontology as ontology_models
+            model_cls = getattr(ontology_models, entity_name, None)
+            if model_cls is not None:
+                _FALLBACK_MODEL_MAP[entity_name] = model_cls
+            else:
+                raise ValueError(f"Unknown entity: {entity_name}")
+        except ImportError:
             raise ValueError(f"Unknown entity: {entity_name}")
-    return MODEL_MAP[entity_name]
+
+    return _FALLBACK_MODEL_MAP[entity_name]
+
+
+def get_relationship_info(source_entity: str, target_entity: str) -> Optional[tuple]:
+    """
+    获取关系信息 - 优先从 OntologyRegistry 获取（SPEC-13）
+
+    Returns:
+        (rel_attr, foreign_key) tuple or None
+    """
+    # SPEC-R04: Registry-only lookup (fallback map removed)
+    registry = _get_registry()
+    rmap = registry.get_relationship_map()
+    if source_entity in rmap and target_entity in rmap[source_entity]:
+        info = rmap[source_entity][target_entity]
+        return (info["rel_attr"], info["foreign_key"])
+    logger.debug("Relationship not found: %s -> %s", source_entity, target_entity)
+    return None
+
+
+# SPEC-R05: Display names removed - now fully registry-driven
+
+
+def get_display_name(field_name: str, default: Optional[str] = None) -> str:
+    """
+    获取字段显示名 - 从 OntologyRegistry PropertyMetadata 获取
+
+    Fallback chain: Registry → default → field_name
+    """
+    registry = _get_registry()
+    for entity in registry.get_entities():
+        prop = entity.properties.get(field_name)
+        if prop and prop.display_name:
+            return prop.display_name
+    return default if default is not None else field_name
+
+
+def _get_display_names_from_registry() -> Dict[str, str]:
+    """SPEC-R05: Build DISPLAY_NAMES from registry for backward compat."""
+    registry = _get_registry()
+    result: Dict[str, str] = {}
+    for entity in registry.get_entities():
+        for name, prop in entity.properties.items():
+            if prop.display_name and name not in result:
+                result[name] = prop.display_name
+    return result
+
+
+DISPLAY_NAMES = _get_display_names_from_registry
+
+
+# Backward compatibility aliases
+MODEL_MAP = _FALLBACK_MODEL_MAP
+
+
+def _get_relationship_map_from_registry() -> Dict[str, Dict[str, tuple]]:
+    """SPEC-R04: Build RELATIONSHIP_MAP from registry for backward compat."""
+    registry = _get_registry()
+    rmap = registry.get_relationship_map()
+    result: Dict[str, Dict[str, tuple]] = {}
+    for src, targets in rmap.items():
+        result[src] = {}
+        for tgt, info in targets.items():
+            result[src][tgt] = (info["rel_attr"], info["foreign_key"])
+    return result
+
+
+RELATIONSHIP_MAP = _get_relationship_map_from_registry
 
 
 class QueryEngine:
@@ -234,13 +234,13 @@ class QueryEngine:
         try:
             related_model = get_model_class(join_clause.entity)
 
-            # 获取关系属性名
-            rel_info = RELATIONSHIP_MAP.get(base_model.__name__, {}).get(join_clause.entity)
+            # 获取关系属性名 - 优先从 Registry 动态获取（SPEC-13）
+            rel_info = get_relationship_info(base_model.__name__, join_clause.entity)
             if rel_info:
                 rel_attr, _ = rel_info
             else:
                 # 尝试反向查找
-                rel_info = RELATIONSHIP_MAP.get(join_clause.entity, {}).get(base_model.__name__)
+                rel_info = get_relationship_info(join_clause.entity, base_model.__name__)
                 if rel_info:
                     rel_attr = rel_info[0] + "s"  # 反向关系通常是复数
                 else:
@@ -503,11 +503,11 @@ class QueryEngine:
         columns = []
         for field in query.fields:
             # 使用预定义的显示名
-            display_name = DISPLAY_NAMES.get(field, field)
+            display_name = get_display_name(field, field)
             # 如果是嵌套字段，只显示最后一部分的显示名
             if "." in field:
                 last_part = field.split(".")[-1]
-                display_name = DISPLAY_NAMES.get(last_part, last_part)
+                display_name = get_display_name(last_part, last_part)
             columns.append(display_name)
         return columns
 
@@ -673,7 +673,7 @@ class QueryEngine:
             # 构建列名
             columns = []
             for _, original_field in column_labels:
-                display_name = DISPLAY_NAMES.get(original_field, original_field)
+                display_name = get_display_name(original_field, original_field)
                 columns.append(display_name)
 
             return {

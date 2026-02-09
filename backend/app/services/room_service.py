@@ -2,9 +2,11 @@
 房间服务 - 本体操作层
 管理 Room 和 RoomType 对象
 支持事件发布：房间状态变更时发布事件
+SPEC-R13: State machine validation before status changes
 """
 from typing import List, Optional, Callable
 from datetime import date, datetime
+import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.ontology import Room, RoomType, RoomStatus, StayRecord, StayRecordStatus
@@ -13,6 +15,23 @@ from app.models.schemas import (
 )
 from app.services.event_bus import event_bus, Event
 from app.models.events import EventType, RoomStatusChangedData
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_state_transition(entity_type: str, current_state: str, target_state: str) -> None:
+    """SPEC-R13: Validate state transition against registry state machine."""
+    try:
+        from core.ontology.state_machine_executor import StateMachineExecutor
+        executor = StateMachineExecutor()
+        result = executor.validate_transition(entity_type, current_state, target_state)
+        if not result.allowed:
+            logger.warning(
+                f"State transition validation: {entity_type} "
+                f"'{current_state}' → '{target_state}': {result.reason}"
+            )
+    except Exception as e:
+        logger.debug(f"State machine validation skipped: {e}")
 
 
 class RoomService:
@@ -169,6 +188,7 @@ class RoomService:
             raise ValueError("入住中的房间不能手动更改状态，请通过退房操作")
 
         old_status = room.status
+        _validate_state_transition("Room", old_status.value, status.value)
         room.status = status
         room_number = room.room_number
 

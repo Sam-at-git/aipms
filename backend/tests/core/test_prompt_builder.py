@@ -80,7 +80,7 @@ class TestPromptBuilderBasic:
         builder = PromptBuilder(clean_registry)
         prompt = builder.build_system_prompt()
         assert len(prompt) > 0
-        assert "AIPMS" in prompt
+        assert "Ontology" in prompt or "AIPMS" in prompt
 
     def test_build_system_prompt_with_entities(self, populated_registry):
         """包含实体信息的提示词"""

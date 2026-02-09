@@ -2,10 +2,12 @@
 退房服务 - 本体操作层
 遵循事件驱动架构：退房发布事件，由事件处理器自动创建清洁任务
 支持操作撤销：关键操作创建快照
+SPEC-R13: State machine validation before status changes
 """
 from typing import Optional, Callable
 from datetime import datetime
 from decimal import Decimal
+import logging
 from sqlalchemy.orm import Session
 from app.models.ontology import (
     StayRecord, StayRecordStatus, Room, RoomStatus,
@@ -15,6 +17,23 @@ from app.models.schemas import CheckOutRequest
 from app.services.event_bus import event_bus, Event
 from app.models.events import EventType, GuestCheckedOutData, RoomStatusChangedData
 from app.models.snapshots import OperationType
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_state_transition(entity_type: str, current_state: str, target_state: str) -> None:
+    """SPEC-R13: Validate state transition against registry state machine."""
+    try:
+        from core.ontology.state_machine_executor import StateMachineExecutor
+        executor = StateMachineExecutor()
+        result = executor.validate_transition(entity_type, current_state, target_state)
+        if not result.allowed:
+            logger.warning(
+                f"State transition validation: {entity_type} "
+                f"'{current_state}' → '{target_state}': {result.reason}"
+            )
+    except Exception as e:
+        logger.debug(f"State machine validation skipped: {e}")
 
 
 class CheckOutService:
@@ -58,16 +77,19 @@ class CheckOutService:
             bill.is_settled = (balance <= 0)
 
         # 更新住宿记录
+        _validate_state_transition("StayRecord", stay_record.status.value, StayRecordStatus.CHECKED_OUT.value)
         stay_record.status = StayRecordStatus.CHECKED_OUT
         stay_record.check_out_time = datetime.now()
 
         # 更新房间状态为脏房
         room = stay_record.room
         old_room_status = room.status
+        _validate_state_transition("Room", old_room_status.value, RoomStatus.VACANT_DIRTY.value)
         room.status = RoomStatus.VACANT_DIRTY
 
         # 更新预订状态
         if stay_record.reservation:
+            _validate_state_transition("Reservation", stay_record.reservation.status.value, ReservationStatus.COMPLETED.value)
             stay_record.reservation.status = ReservationStatus.COMPLETED
 
         # 处理押金退还

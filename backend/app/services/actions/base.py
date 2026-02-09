@@ -311,6 +311,74 @@ class ActionResult(BaseModel):
     error: Optional[str] = None
 
 
+# ============== Price Action Parameters ==============
+
+class UpdatePriceParams(BaseModel):
+    """
+    更新价格参数
+
+    用于 update_price 动作，更新房型基础价格或创建价格策略。
+    """
+    room_type: Union[int, str] = Field(..., description="房型 ID 或名称")
+    price: Decimal = Field(..., description="新价格", ge=0)
+    update_type: str = Field(
+        default="base_price",
+        description="更新类型: base_price(基础价格) 或 rate_plan(价格策略)"
+    )
+    price_type: str = Field(
+        default="standard",
+        description="价格类型: standard(标准/平日), weekend(周末)"
+    )
+    start_date: Optional[date] = Field(default=None, description="策略开始日期")
+    end_date: Optional[date] = Field(default=None, description="策略结束日期")
+
+    @field_validator('update_type')
+    @classmethod
+    def validate_update_type(cls, v: str) -> str:
+        """验证更新类型"""
+        valid_types = {'base_price', 'rate_plan'}
+        v_lower = v.lower().strip()
+        if v_lower not in valid_types:
+            raise ValueError(f"无效的更新类型: {v}. 支持: base_price, rate_plan")
+        return v_lower
+
+    @field_validator('price_type')
+    @classmethod
+    def validate_price_type(cls, v: str) -> str:
+        """验证价格类型"""
+        valid_types = {'standard', 'weekend'}
+        v_lower = v.lower().strip()
+
+        # 支持中文别名
+        price_type_aliases = {
+            'weekend': ['周末', '周末价', 'weekend', '周六日', '星期六日'],
+            'standard': ['平日', '标准', 'standard', '工作日', '平时']
+        }
+
+        for ptype, aliases in price_type_aliases.items():
+            if v_lower in [a.lower() for a in aliases]:
+                return ptype
+
+        if v_lower not in valid_types:
+            raise ValueError(f"无效的价格类型: {v}. 支持: standard, weekend")
+        return v_lower
+
+
+class CreateRatePlanParams(BaseModel):
+    """
+    创建价格策略参数
+
+    用于 create_rate_plan 动作，创建新的价格策略。
+    """
+    room_type: Union[int, str] = Field(..., description="房型 ID 或名称")
+    name: Optional[str] = Field(default=None, description="策略名称")
+    price: Decimal = Field(..., description="策略价格", ge=0)
+    start_date: date = Field(..., description="开始日期")
+    end_date: date = Field(..., description="结束日期")
+    priority: int = Field(default=2, description="优先级", ge=1, le=10)
+    is_weekend: bool = Field(default=False, description="是否仅周末有效")
+
+
 __all__ = [
     "WalkInCheckInParams",
     "CheckoutParams",
@@ -322,4 +390,6 @@ __all__ = [
     "SemanticFilterParams",
     "SemanticQueryParams",
     "ActionResult",
+    "UpdatePriceParams",
+    "CreateRatePlanParams",
 ]

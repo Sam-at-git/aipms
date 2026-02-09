@@ -9,7 +9,6 @@ import logging
 
 from core.ontology.base import BaseEntity
 from core.engine.state_machine import StateMachine, StateMachineConfig, StateTransition
-from app.services.metadata import ontology_entity, ontology_action
 
 if TYPE_CHECKING:
     from app.models.ontology import Task
@@ -44,7 +43,6 @@ def _create_task_state_machine(initial_status: str) -> StateMachine:
     )
 
 
-@ontology_entity(name="Task", description="任务本体 - 清洁、维修等任务", table_name="tasks")
 class TaskEntity(BaseEntity):
     def __init__(self, orm_model: "Task"):
         self._orm_model = orm_model
@@ -79,9 +77,6 @@ class TaskEntity(BaseEntity):
     def created_at(self) -> datetime:
         return self._orm_model.created_at
 
-    @ontology_action(entity="Task", action_type="assign", description="分配任务", params=[
-        {"name": "assignee_id", "type": "integer", "required": True, "description": "员工 ID"},
-    ], requires_confirmation=False, allowed_roles=["manager", "receptionist"], writeback=True)
     def assign(self, assignee_id: int) -> None:
         from app.models.ontology import TaskStatus
         if not self._state_machine.can_transition_to(TaskState.ASSIGNED, "assign"):
@@ -90,8 +85,6 @@ class TaskEntity(BaseEntity):
         self._orm_model.status = TaskStatus.ASSIGNED
         self._orm_model.assignee_id = assignee_id
 
-    @ontology_action(entity="Task", action_type="start", description="开始任务", params=[],
-        requires_confirmation=False, allowed_roles=["manager", "cleaner"], writeback=True)
     def start(self) -> None:
         from app.models.ontology import TaskStatus
         if not self._state_machine.can_transition_to(TaskState.IN_PROGRESS, "start"):
@@ -99,8 +92,6 @@ class TaskEntity(BaseEntity):
         self._state_machine.transition_to(TaskState.IN_PROGRESS, "start")
         self._orm_model.status = TaskStatus.IN_PROGRESS
 
-    @ontology_action(entity="Task", action_type="complete", description="完成任务", params=[],
-        requires_confirmation=False, allowed_roles=["manager", "cleaner"], writeback=True)
     def complete(self) -> None:
         from app.models.ontology import TaskStatus
         if not self._state_machine.can_transition_to(TaskState.COMPLETED, "complete"):

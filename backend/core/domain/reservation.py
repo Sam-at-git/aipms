@@ -11,7 +11,6 @@ import logging
 
 from core.ontology.base import BaseEntity
 from core.engine.state_machine import StateMachine, StateMachineConfig, StateTransition
-from app.services.metadata import ontology_entity, ontology_action
 
 if TYPE_CHECKING:
     from app.models.ontology import Reservation
@@ -73,11 +72,6 @@ def _create_reservation_state_machine(initial_status: str) -> StateMachine:
 
 # ============== Reservation 领域实体 ==============
 
-@ontology_entity(
-    name="Reservation",
-    description="预订本体 - 预订阶段的聚合根",
-    table_name="reservations",
-)
 class ReservationEntity(BaseEntity):
     """
     Reservation 领域实体
@@ -189,18 +183,6 @@ class ReservationEntity(BaseEntity):
 
     # ============== 业务方法 ==============
 
-    @ontology_action(
-        entity="Reservation",
-        action_type="check_in",
-        description="预订入住（创建住宿记录）",
-        params=[
-            {"name": "room_id", "type": "integer", "required": True, "description": "房间 ID"},
-            {"name": "actual_guest_count", "type": "integer", "required": False, "description": "实际入住人数"},
-        ],
-        requires_confirmation=False,
-        allowed_roles=["manager", "receptionist"],
-        writeback=True,
-    )
     def check_in(self, room_id: int, actual_guest_count: Optional[int] = None) -> None:
         """
         预订入住（转换为住宿记录）
@@ -221,17 +203,6 @@ class ReservationEntity(BaseEntity):
         self._orm_model.status = ReservationStatus.CHECKED_IN
         logger.info(f"Reservation {self.reservation_no} checked in to room {room_id}")
 
-    @ontology_action(
-        entity="Reservation",
-        action_type="cancel",
-        description="取消预订",
-        params=[
-            {"name": "reason", "type": "string", "required": True, "description": "取消原因"},
-        ],
-        requires_confirmation=True,
-        allowed_roles=["manager", "receptionist"],
-        writeback=True,
-    )
     def cancel(self, reason: str) -> None:
         """
         取消预订
@@ -252,15 +223,6 @@ class ReservationEntity(BaseEntity):
         self._orm_model.cancel_reason = reason
         logger.info(f"Reservation {self.reservation_no} cancelled: {reason}")
 
-    @ontology_action(
-        entity="Reservation",
-        action_type="mark_no_show",
-        description="标记为未到店",
-        params=[],
-        requires_confirmation=True,
-        allowed_roles=["manager", "receptionist"],
-        writeback=True,
-    )
     def mark_no_show(self) -> None:
         """
         标记为未到店
@@ -277,17 +239,6 @@ class ReservationEntity(BaseEntity):
         self._orm_model.status = ReservationStatus.NO_SHOW
         logger.info(f"Reservation {self.reservation_no} marked as no-show")
 
-    @ontology_action(
-        entity="Reservation",
-        action_type="update_amount",
-        description="更新预订金额",
-        params=[
-            {"name": "amount", "type": "number", "required": True, "description": "预订金额"},
-        ],
-        requires_confirmation=False,
-        allowed_roles=["manager", "receptionist"],
-        writeback=True,
-    )
     def update_amount(self, amount: float) -> None:
         """
         更新预订金额

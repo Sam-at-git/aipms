@@ -4,6 +4,7 @@ import {
   TrendingUp, ArrowUpRight, ArrowDownRight, Clock
 } from 'lucide-react'
 import { reportApi, reservationApi, checkoutApi } from '../services/api'
+import { useOntologyStore } from '../store'
 import type { DashboardStats, Reservation, StayRecord } from '../types'
 
 export default function Dashboard() {
@@ -75,35 +76,7 @@ export default function Dashboard() {
       </div>
 
       {/* 房态概览 */}
-      <div className="bg-dark-900 rounded-xl p-6">
-        <h2 className="text-lg font-medium mb-4">房态概览</h2>
-        <div className="grid grid-cols-4 gap-4">
-          <RoomStatusCard
-            label="空闲可住"
-            value={stats?.vacant_clean || 0}
-            total={stats?.total_rooms || 0}
-            color="emerald"
-          />
-          <RoomStatusCard
-            label="已入住"
-            value={stats?.occupied || 0}
-            total={stats?.total_rooms || 0}
-            color="red"
-          />
-          <RoomStatusCard
-            label="待清洁"
-            value={stats?.vacant_dirty || 0}
-            total={stats?.total_rooms || 0}
-            color="yellow"
-          />
-          <RoomStatusCard
-            label="维修中"
-            value={stats?.out_of_order || 0}
-            total={stats?.total_rooms || 0}
-            color="gray"
-          />
-        </div>
-      </div>
+      <RoomStatusOverview stats={stats} />
 
       {/* 今日预抵和预离 */}
       <div className="grid grid-cols-2 gap-6">
@@ -201,32 +174,40 @@ function StatCard({ title, value, icon: Icon, color, trend }: {
   )
 }
 
-// 房态状态卡片
-function RoomStatusCard({ label, value, total, color }: {
-  label: string
-  value: number
-  total: number
-  color: 'emerald' | 'red' | 'yellow' | 'gray'
-}) {
-  const percentage = total > 0 ? (value / total) * 100 : 0
-  const colorClasses = {
-    emerald: 'bg-emerald-500',
-    red: 'bg-red-500',
-    yellow: 'bg-yellow-500',
-    gray: 'bg-gray-500'
-  }
+// 房态概览 (registry-driven)
+function RoomStatusOverview({ stats }: { stats: DashboardStats | null }) {
+  const { getStatusConfig } = useOntologyStore()
+  const keys: { key: keyof DashboardStats; status: string }[] = [
+    { key: 'vacant_clean', status: 'vacant_clean' },
+    { key: 'occupied', status: 'occupied' },
+    { key: 'vacant_dirty', status: 'vacant_dirty' },
+    { key: 'out_of_order', status: 'out_of_order' },
+  ]
+  const total = stats?.total_rooms || 0
 
   return (
-    <div className="bg-dark-800 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm text-dark-400">{label}</span>
-        <span className="text-lg font-bold">{value}</span>
-      </div>
-      <div className="h-2 bg-dark-700 rounded-full overflow-hidden">
-        <div
-          className={`h-full ${colorClasses[color]} transition-all duration-300`}
-          style={{ width: `${percentage}%` }}
-        />
+    <div className="bg-dark-900 rounded-xl p-6">
+      <h2 className="text-lg font-medium mb-4">房态概览</h2>
+      <div className="grid grid-cols-4 gap-4">
+        {keys.map(({ key, status }) => {
+          const sc = getStatusConfig('Room', status)
+          const value = (stats?.[key] as number) || 0
+          const percentage = total > 0 ? (value / total) * 100 : 0
+          return (
+            <div key={status} className="bg-dark-800 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm text-dark-400">{sc.label}</span>
+                <span className="text-lg font-bold">{value}</span>
+              </div>
+              <div className="h-2 bg-dark-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full ${sc.dotColor} transition-all duration-300`}
+                  style={{ width: `${percentage}%` }}
+                />
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

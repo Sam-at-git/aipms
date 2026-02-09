@@ -3,16 +3,8 @@ import { Plus, Search, Calendar, Phone, User, RefreshCw } from 'lucide-react'
 import { reservationApi, roomApi, priceApi } from '../services/api'
 import Modal, { ModalFooter } from '../components/Modal'
 import { UndoButton } from '../components/UndoButton'
-import { useUIStore } from '../store'
+import { useUIStore, useOntologyStore } from '../store'
 import type { Reservation, RoomType } from '../types'
-
-const statusLabels: Record<string, { label: string; class: string }> = {
-  confirmed: { label: '已确认', class: 'bg-primary-500/20 text-primary-400' },
-  checked_in: { label: '已入住', class: 'bg-emerald-500/20 text-emerald-400' },
-  completed: { label: '已完成', class: 'bg-gray-500/20 text-gray-400' },
-  cancelled: { label: '已取消', class: 'bg-red-500/20 text-red-400' },
-  no_show: { label: '未到', class: 'bg-yellow-500/20 text-yellow-400' }
-}
 
 export default function Reservations() {
   const [reservations, setReservations] = useState<Reservation[]>([])
@@ -20,6 +12,7 @@ export default function Reservations() {
   const [loading, setLoading] = useState(true)
   const [searchKeyword, setSearchKeyword] = useState('')
   const { openModal, closeModal } = useUIStore()
+  const { getStatusConfig } = useOntologyStore()
 
   // 新建预订表单
   const [form, setForm] = useState({
@@ -203,8 +196,8 @@ export default function Reservations() {
                   <td className="px-4 py-3">{r.check_out_date}</td>
                   <td className="px-4 py-3">¥{r.total_amount}</td>
                   <td className="px-4 py-3">
-                    <span className={`px-2 py-1 rounded text-xs ${statusLabels[r.status]?.class}`}>
-                      {statusLabels[r.status]?.label}
+                    <span className={`px-2 py-1 rounded text-xs ${getStatusConfig('Reservation', r.status).class}`}>
+                      {getStatusConfig('Reservation', r.status).label}
                     </span>
                   </td>
                   <td className="px-4 py-3">

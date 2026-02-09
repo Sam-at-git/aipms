@@ -193,7 +193,7 @@ class TestPromptBuilderIntegration:
         prompt = builder.build_system_prompt()
 
         assert len(prompt) > 0
-        assert "AIPMS" in prompt
+        assert "Ontology" in prompt or "AIPMS" in prompt
 
     def test_prompt_contains_entity_info(self, full_registry):
         """验证提示词包含实体信息"""

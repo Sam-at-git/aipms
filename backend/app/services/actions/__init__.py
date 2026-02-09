@@ -47,7 +47,8 @@ def _create_action_registry() -> ActionRegistry:
         stay_actions,
         task_actions,
         reservation_actions,
-        query_actions
+        query_actions,
+        price_actions
     )
 
     guest_actions.register_guest_actions(registry)
@@ -55,6 +56,7 @@ def _create_action_registry() -> ActionRegistry:
     task_actions.register_task_actions(registry)
     reservation_actions.register_reservation_actions(registry)
     query_actions.register_query_actions(registry)
+    price_actions.register_price_actions(registry)
 
     logger.info(f"ActionRegistry initialized with {len(registry.list_actions())} actions")
 

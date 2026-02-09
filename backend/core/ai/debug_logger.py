@@ -17,11 +17,28 @@ import logging
 import sqlite3
 import uuid
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+
+class SafeJSONEncoder(json.JSONEncoder):
+    """JSON encoder that handles date, datetime, Decimal and other common non-serializable types."""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, date):
+            return obj.isoformat()
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, set):
+            return list(obj)
+        if isinstance(obj, bytes):
+            return obj.decode("utf-8", errors="replace")
+        return super().default(obj)
 
 
 # ==================== Data Models ====================
@@ -240,6 +257,13 @@ class DebugLogger:
     # Default database path
     DEFAULT_DB_PATH = "data/debug_logs.db"
 
+    @staticmethod
+    def _safe_json(obj) -> Optional[str]:
+        """JSON-serialize with SafeJSONEncoder; returns None for None input."""
+        if obj is None:
+            return None
+        return json.dumps(obj, cls=SafeJSONEncoder, ensure_ascii=False)
+
     # Session cleanup days
     DEFAULT_RETENTION_DAYS = 30
 
@@ -416,8 +440,8 @@ class DebugLogger:
                 SET retrieved_schema = ?, retrieved_tools = ?
                 WHERE id = ?
             """, (
-                json.dumps(retrieved_schema) if retrieved_schema is not None else None,
-                json.dumps(retrieved_tools) if retrieved_tools is not None else None,
+                self._safe_json(retrieved_schema),
+                self._safe_json(retrieved_tools),
                 session_id
             ))
             conn.commit()
@@ -491,11 +515,11 @@ class DebugLogger:
                     actions_executed = ?, errors = ?
                 WHERE id = ?
             """, (
-                json.dumps(result) if result is not None else None,
+                self._safe_json(result),
                 status,
                 execution_time_ms,
-                json.dumps(actions_executed) if actions_executed is not None else None,
-                json.dumps(errors) if errors is not None else None,
+                self._safe_json(actions_executed),
+                self._safe_json(errors),
                 session_id
             ))
             conn.commit()
@@ -554,10 +578,10 @@ class DebugLogger:
                 session_id,
                 attempt_number,
                 action_name,
-                json.dumps(params),
+                self._safe_json(params),
                 success,
-                json.dumps(error) if error else None,
-                json.dumps(result) if result else None,
+                self._safe_json(error),
+                self._safe_json(result),
                 timestamp.isoformat()
             ))
             conn.commit()

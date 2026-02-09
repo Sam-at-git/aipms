@@ -15,6 +15,7 @@ The ReflexionLoop enables automatic recovery from execution errors by:
 """
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
@@ -288,6 +289,17 @@ class ReflexionLoop:
         self.action_registry = action_registry
         self.rule_engine = rule_engine
         self.max_retries = max_retries
+        self._attempt_records: List[AttemptRecord] = []
+
+    def get_attempt_history(self) -> List[Dict[str, Any]]:
+        """
+        Return all attempt records from the most recent execution.
+
+        Returns:
+            List of attempt record dictionaries with attempt_number, params,
+            success, error, and result fields.
+        """
+        return [r.to_dict() for r in self._attempt_records]
 
     def execute_with_reflexion(
         self,
@@ -326,6 +338,7 @@ class ReflexionLoop:
         current_params = params.copy()
         error_history: List[ExecutionError] = []
         attempt_records: List[AttemptRecord] = []
+        self._attempt_records = attempt_records
         reflexion_used = False
 
         for attempt in range(self.max_retries + 1):
@@ -383,6 +396,27 @@ class ReflexionLoop:
                 if not self._should_attempt_reflexion(exec_error):
                     logger.info(f"ReflexionLoop: Error type '{exec_error.error_type}' not reflectable, stopping")
                     break
+
+                # Try auto-correction first (cheaper than LLM)
+                auto_corrected = self._auto_correct_params(
+                    action_name, current_params, exec_error
+                )
+                if auto_corrected is not None:
+                    current_params = auto_corrected
+                    logger.info("ReflexionLoop: Auto-corrected params, retrying")
+                    reflexion_used = True
+                    continue
+
+                # For state errors, try querying current state
+                if exec_error.error_type == ErrorType.STATE_ERROR:
+                    state_correction = self._handle_state_error(
+                        action_name, current_params, exec_error, context
+                    )
+                    if state_correction is not None:
+                        current_params = state_correction
+                        logger.info("ReflexionLoop: State error handled, retrying with corrected params")
+                        reflexion_used = True
+                        continue
 
                 # Check if LLM is available
                 if not self.llm_client or not self.llm_client.is_enabled():
@@ -630,6 +664,208 @@ class ReflexionLoop:
         lines.append("```")
 
         return "\n".join(lines)
+
+    def _auto_correct_params(
+        self,
+        action_name: str,
+        params: Dict[str, Any],
+        error: ExecutionError
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Attempt rule-based (non-LLM) parameter correction.
+
+        Tries cheap, deterministic corrections before resorting to LLM reflection:
+        - Date format: "2026-2-8" -> "2026-02-08"
+        - Enum normalization: "active" -> "ACTIVE", "vacant clean" -> "vacant_clean"
+        - Number string conversion: "301" -> 301 for integer fields
+
+        Args:
+            action_name: Name of the action
+            params: Current parameters
+            error: The execution error
+
+        Returns:
+            Corrected parameters dict if corrections were made, None otherwise
+        """
+        action_def = self.action_registry.get_action(action_name)
+        if action_def is None:
+            return None
+
+        schema = action_def.parameters_schema.model_json_schema()
+        properties = schema.get("properties", {})
+        defs = schema.get("$defs", {})
+        corrected = params.copy()
+        any_corrected = False
+
+        for field_name, field_info in properties.items():
+            if field_name not in corrected:
+                continue
+
+            value = corrected[field_name]
+            field_type = field_info.get("type", "string")
+
+            # Resolve $ref to get the actual field definition
+            resolved_info = field_info
+            if "$ref" in field_info:
+                ref_path = field_info["$ref"]  # e.g., "#/$defs/RoomStatus"
+                ref_name = ref_path.rsplit("/", 1)[-1]
+                if ref_name in defs:
+                    resolved_info = defs[ref_name]
+                    field_type = resolved_info.get("type", field_type)
+
+            # Handle allOf with $ref (Pydantic sometimes uses allOf for required refs)
+            if "allOf" in field_info:
+                for item in field_info["allOf"]:
+                    if "$ref" in item:
+                        ref_path = item["$ref"]
+                        ref_name = ref_path.rsplit("/", 1)[-1]
+                        if ref_name in defs:
+                            resolved_info = defs[ref_name]
+                            field_type = resolved_info.get("type", field_type)
+                            break
+
+            # Handle anyOf patterns (Optional fields)
+            if "anyOf" in field_info:
+                for opt in field_info["anyOf"]:
+                    if opt.get("type") == "null":
+                        continue
+                    if "$ref" in opt:
+                        ref_path = opt["$ref"]
+                        ref_name = ref_path.rsplit("/", 1)[-1]
+                        if ref_name in defs:
+                            resolved_info = defs[ref_name]
+                            field_type = resolved_info.get("type", field_type)
+                    else:
+                        field_type = opt.get("type", "string")
+                    break
+
+            # Date format correction: "2026-2-8" -> "2026-02-08"
+            if isinstance(value, str) and (
+                "date" in field_name.lower()
+                or resolved_info.get("format") == "date"
+                or field_info.get("format") == "date"
+            ):
+                date_match = re.match(r'^(\d{4})-(\d{1,2})-(\d{1,2})$', value)
+                if date_match:
+                    year, month, day = date_match.groups()
+                    normalized = f"{year}-{int(month):02d}-{int(day):02d}"
+                    if normalized != value:
+                        corrected[field_name] = normalized
+                        any_corrected = True
+                        logger.info(
+                            f"ReflexionLoop: Auto-corrected date '{value}' -> '{normalized}' "
+                            f"for field '{field_name}'"
+                        )
+
+            # Enum value normalization (check resolved_info for $ref'd enums)
+            enum_values = resolved_info.get("enum") or field_info.get("enum")
+            if enum_values and isinstance(value, str):
+                # Try exact match first (already correct)
+                if value not in enum_values:
+                    # Try case-insensitive match
+                    matched = None
+                    for ev in enum_values:
+                        if isinstance(ev, str) and ev.lower() == value.lower():
+                            matched = ev
+                            break
+                    # Try underscore/space normalization
+                    if matched is None:
+                        normalized_value = value.replace(" ", "_")
+                        for ev in enum_values:
+                            if isinstance(ev, str) and ev.lower() == normalized_value.lower():
+                                matched = ev
+                                break
+                    if matched is not None:
+                        corrected[field_name] = matched
+                        any_corrected = True
+                        logger.info(
+                            f"ReflexionLoop: Auto-corrected enum '{value}' -> '{matched}' "
+                            f"for field '{field_name}'"
+                        )
+
+            # Number string conversion: "301" -> 301 for integer fields
+            if field_type == "integer" and isinstance(value, str):
+                try:
+                    corrected[field_name] = int(value)
+                    any_corrected = True
+                    logger.info(
+                        f"ReflexionLoop: Auto-corrected number string '{value}' -> {int(value)} "
+                        f"for field '{field_name}'"
+                    )
+                except (ValueError, TypeError):
+                    pass
+
+            # Number string to float conversion
+            if field_type == "number" and isinstance(value, str):
+                try:
+                    corrected[field_name] = float(value)
+                    any_corrected = True
+                    logger.info(
+                        f"ReflexionLoop: Auto-corrected number string '{value}' -> {float(value)} "
+                        f"for field '{field_name}'"
+                    )
+                except (ValueError, TypeError):
+                    pass
+
+        return corrected if any_corrected else None
+
+    def _handle_state_error(
+        self,
+        action_name: str,
+        params: Dict[str, Any],
+        error: ExecutionError,
+        context: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Handle state errors by querying entity current state via registry.
+
+        For state errors, queries the action definition to understand valid
+        state transitions and suggests corrections.
+
+        Args:
+            action_name: Name of the action
+            params: Current parameters
+            error: The state error
+            context: Execution context
+
+        Returns:
+            Corrected parameters if state-based correction is possible, None otherwise
+        """
+        action_def = self.action_registry.get_action(action_name)
+        if action_def is None:
+            return None
+
+        # Extract state information from error message
+        error_msg = error.message.lower()
+
+        # Look for valid state alternatives in error context or suggestions
+        valid_alternatives = error.context.get("valid_alternatives", [])
+        if not valid_alternatives and error.suggestions:
+            # Try to extract state hints from suggestions
+            for suggestion in error.suggestions:
+                if "valid" in suggestion.lower() or "transition" in suggestion.lower():
+                    valid_alternatives.append(suggestion)
+
+        # If we have the entity's current state info in the error context,
+        # include it for the caller / next retry
+        corrected = params.copy()
+        current_state = error.context.get("current_state")
+
+        if current_state:
+            corrected["_entity_current_state"] = current_state
+            logger.info(
+                f"ReflexionLoop: State error - entity current state is '{current_state}'"
+            )
+            return corrected
+
+        if valid_alternatives:
+            corrected["_valid_state_alternatives"] = valid_alternatives
+            logger.info(
+                f"ReflexionLoop: State error - valid alternatives: {valid_alternatives}"
+            )
+            return corrected
+
+        return None
 
     def _try_fallback(
         self,

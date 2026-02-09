@@ -510,7 +510,36 @@ class AIAction(BaseModel):
     params: dict = {}
     description: str
     requires_confirmation: bool = True
-    missing_fields: Optional[List[MissingField]] = None  # 缺失字段（用于追问模式）
+    missing_fields: Optional[List[Union[MissingField, str, dict]]] = None  # 缺失字段（用于追问模式）- 支持多种格式以兼容LLM输出
+
+    @field_validator('missing_fields', mode='before')
+    @classmethod
+    def normalize_missing_fields(cls, v):
+        """标准化missing_fields为MissingField对象列表"""
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            return None
+
+        normalized = []
+        for item in v:
+            if isinstance(item, MissingField):
+                normalized.append(item)
+            elif isinstance(item, str):
+                # 字符串转换为简单的MissingField
+                normalized.append(MissingField(
+                    field_name=item,
+                    display_name=item,
+                    field_type='text',
+                    required=True
+                ))
+            elif isinstance(item, dict):
+                # 字典转换为MissingField
+                normalized.append(MissingField(**item))
+            else:
+                # 跳过无法识别的格式
+                pass
+        return normalized if normalized else None
 
 
 class AIResponse(BaseModel):

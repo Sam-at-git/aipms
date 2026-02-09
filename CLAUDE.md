@@ -14,10 +14,11 @@ uv run python init_data.py                 # Initialize database
 uv run uvicorn app.main:app --reload --port 8020  # Start server
 
 # Testing
-uv run pytest                              # All tests
+uv run pytest                              # All tests (95% coverage required)
 uv run pytest tests/api/ -v                # API tests only
 uv run pytest tests/core/ -v               # Core framework tests
-uv run pytest tests/services/actions/ -v    # Action handlers tests
+uv run pytest tests/services/actions/ -v   # Action handler tests
+uv run pytest tests/integration/ -v        # Integration tests
 uv run pytest -k "test_name"               # Single test by name
 ```
 
@@ -41,168 +42,139 @@ npm run build                              # Production build
 
 ---
 
-## Semantique AI Architecture (New)
+## Two-Layer Architecture
 
-This system has evolved into a **semantic operating system** inspired by Palantir Foundry and AIP Logic, with four-layer architecture:
+The system is split into a **domain-agnostic ontology runtime** (`core/`) and a **hotel business domain** (`app/`). This separation enables the core framework to be reused for any business domain by swapping the domain adapter.
 
-### Layer 1: Vector Semantic Search (`core/ai/vector_store.py`, `schema_retriever.py`)
-- **VectorStore**: Pure-Python cosine similarity search (no external extension)
-- **SchemaRetriever**: Retrieves relevant schema items by semantic similarity
-- **EmbeddingService**: OpenAI-compatible embedding generation with caching
-- Supports Top-K retrieval for entities, properties, and actions
+### Layer 1: `core/` — Ontology Runtime Framework (domain-agnostic)
 
-### Layer 2: Action Registry (`core/ai/actions.py`, `app/services/actions/`)
-- **ActionRegistry**: Declarative action registration replacing monolithic if/else chains
-- **ActionDefinition**: Complete metadata (name, entity, description, parameters_schema, handler)
-- Actions organized by domain: `guest_actions.py`, `stay_actions.py`, `task_actions.py`, `reservation_actions.py`, `query_actions.py`
-- All actions use Pydantic models for validation (`app/services/actions/base.py`)
-- Handler signature: `handler(params: BaseModel, db: Session, user: Employee, param_parser: ParamParserService) -> Dict`
+The framework provides reusable abstractions. No hotel-specific logic belongs here.
 
-### Layer 3: Semantic Path Compiler (`core/ontology/semantic_path_resolver.py`)
-- **SemanticPathResolver**: Compiles LLM-friendly dot-notation paths into SQL JOINs
-- Input: `SemanticQuery(root_object="Guest", fields=["stays.room.room_number"])`
-- Output: `StructuredQuery` with auto-generated JoinClause list
-- Error messages include "Did you mean?" suggestions for typos
-- Uses SQLAlchemy Inspection API for automatic relationship discovery
+- **`core/ontology/`** — Entity abstractions and metadata
+  - `base.py`: `BaseEntity`, `ObjectProxy` (attribute-level interception for security/audit)
+  - `metadata.py`: Three-dimensional metadata types — `EntityMetadata`, `PropertyMetadata`, `ActionMetadata`, `StateMachine`, `BusinessRule`, `ConstraintMetadata`, `RelationshipMetadata`, `EventMetadata`
+  - `registry.py`: `OntologyRegistry` singleton — central store for all metadata (entities, actions, state machines, rules, permissions, relationships)
+  - `domain_adapter.py`: `IDomainAdapter` abstract interface — each business domain implements this to register its ontology
+  - `query.py` / `query_engine.py`: `StructuredQuery` → SQLAlchemy query builder with dynamic filters, joins, sorting
+  - `semantic_query.py` / `semantic_path_resolver.py`: `SemanticQuery` (LLM-friendly dot-notation like `stays.room.room_number`) → compiled to `StructuredQuery` with auto-discovered JOINs
+  - `business_rules.py`: `BusinessRuleRegistry` for declarative rule definitions
+  - `rule_applicator.py`: Apply constraints to query results
+  - `state_machine_executor.py`: Execute validated state transitions
 
-### Layer 4: Reflexion Loop (`core/ai/reflexion.py`)
-- **ReflexionLoop**: Self-healing execution with LLM-based error analysis
-- Max retries: 2, then falls back to rule-based engine
-- Error types: validation_error, not_found, permission_denied, value_error, state_error
+- **`core/ai/`** — AI pipeline abstractions
+  - `actions.py`: `ActionRegistry` + `ActionDefinition` — declarative action registration replacing if/else chains
+  - `prompt_builder.py`: `PromptBuilder` dynamically injects ontology metadata (entities, actions, state machines, rules, permissions, date context) into LLM prompts
+  - `reflexion.py`: `ReflexionLoop` — self-healing execution with LLM error analysis (max 2 retries, then fallback)
+  - `llm_client.py`: `OpenAICompatibleClient` — supports OpenAI, DeepSeek, Azure, Ollama
+  - `vector_store.py` / `schema_retriever.py` / `embedding.py`: Pure-Python cosine similarity semantic search for schema retrieval
+  - `hitl.py`: Human-in-the-loop confirmation strategies (by-risk, by-policy, by-threshold, composite)
+  - `intent_router.py`: Intent classification (query, mutation, system, tool)
+  - `query_compiler.py`: LLM output → `SemanticQuery` compilation
+  - `response_generator.py`: Query results → natural language
+  - `debug_logger.py` / `replay.py`: Execution tracing, replay, A/B testing
 
-### Key Design Patterns
-- **Two-tier query**: LLM outputs `SemanticQuery` → Resolver compiles to `StructuredQuery` → QueryEngine executes SQL
-- **Handler functions are NOT directly exported** - access via `ActionRegistry.dispatch(action_name, params, context)`
-- **Date context injection**: LLM receives current_date, tomorrow, day-after for relative date parsing
+- **`core/ooda/`** — OODA loop phases
+  - `observe.py` → `orient.py` → `decide.py` → `act.py`, orchestrated by `loop.py`
+  - `intent.py`: `IntentRecognitionService` with pluggable strategies
+
+- **`core/engine/`** — Infrastructure
+  - `event_bus.py`: Domain event pub/sub
+  - `rule_engine.py`: Business rule evaluation
+  - `state_machine.py`: State machine definitions
+  - `audit.py`: Audit logging
+  - `snapshot.py`: Operation undo snapshots
+
+- **`core/security/`** — Security framework
+  - `context.py`: User security context with role/permissions
+  - `attribute_acl.py`: Attribute-level access control
+  - `masking.py`: PII data masking
+  - `checker.py`: Permission checking
+
+- **`core/reasoning/`** — Constraint reasoning
+  - `constraint_engine.py`: Business rule constraint validation
+  - `planner.py`: Query planning
+  - `relationship_graph.py`: Entity relationship graph
+
+### Layer 2: `app/` — Hotel Business Domain
+
+All hotel-specific logic lives here.
+
+- **`app/hotel/`** — Domain adapter (bridge between core and app)
+  - `hotel_domain_adapter.py`: `HotelDomainAdapter(IDomainAdapter)` — registers all hotel entities, relationships, state machines, actions, constraints, events into `OntologyRegistry`
+  - `business_rules.py`: Hotel-specific rules (auto-task on checkout, pricing, guest tiers)
+
+- **`app/models/`** — SQLAlchemy ORM + Pydantic schemas
+  - `ontology.py`: Domain objects — `Room`, `Guest`, `Reservation`, `StayRecord`, `Bill`, `Task`, `Employee`, `RoomType`, `RatePlan`, `Payment`
+  - `schemas.py`: Pydantic I/O models for API validation
+  - `events.py`: Domain event definitions
+  - `snapshots.py`: `OperationSnapshot` for undo (24-hour expiry)
+
+- **`app/services/`** — Business logic
+  - `actions/`: AI-executable action handlers organized by domain (`guest_actions.py`, `stay_actions.py`, `task_actions.py`, `reservation_actions.py`, `query_actions.py`)
+  - `actions/base.py`: Pydantic parameter models for all actions
+  - `ai_service.py`: OODA loop controller — LLM-first with rule-based fallback
+  - `llm_service.py`: LLM integration with date context injection
+  - Domain services: `room_service.py`, `guest_service.py`, `reservation_service.py`, `checkin_service.py`, `checkout_service.py`, `task_service.py`, `billing_service.py`
+  - `event_bus.py` + `event_handlers.py`: In-memory pub/sub (checkout → cleaning task, task completion → room status)
+  - `undo_service.py`: Operation undo with snapshots
+
+- **`app/routers/`** — FastAPI endpoints (all require JWT)
+- **`app/security/auth.py`** — JWT + role-based access
 
 ---
 
-## Ralph Loop 重构模式 (Active Refactoring)
+## Key Design Patterns
 
-本项目正在进行 **Ralph Loop** 模式架构重构，将系统重构为 **本体运行时框架 (core)** + **酒店业务本体 (domain)** 两层架构。
-
-### 核心文件
-- `docs/ralphloop/RALPH_LOOP_EXPERIENCE.md` - 双阶段分离模式和经验总结
-- `docs/ralphloop/progress.txt` - 进度日志、坑点记录和迭代历史
-- `docs/ontology-architecture-guide.md` - 完整的本体架构设计文档
-
-### 行为约束
-
-**🚨 挣扎信号 (STRUGGLE_SIGNAL)** - 必须立即停止并发出 `[STRUGGLE_SIGNAL]`：
-- 在修复同一个 Bug 上失败了 2 次
-- 开始"猜测" API 用法
-- 连续 3 次尝试无法通过测试
-
-**🛡️ 消除警觉性税** - 方案可行但有风险时，明确说明风险
-
-### 工作流程
-
-**Architect Phase**: 读取 progress.txt → 确认 SPEC → 探索代码 → 输出设计 → `<ARCHITECT_COMPLETE>`
-
-**Editor Phase**: 读取设计文档 → 运行测试基准 → 精确修改 → 验证测试 → 更新 progress.txt → `<EDITOR_COMPLETE>` 或 `[STRUGGLE_SIGNAL]`
-
-### 禁止事项
-- ❌ 跳过测试验证
-- ❌ 修改测试文件来让测试通过（除非任务明确要求）
-- ❌ 一次性修改超过 3 个文件
-- ❌ 重写整个文件（必须使用 SEARCH/REPLACE 块）
-
----
-
-## Architecture
-
-### Backend Structure
+### Two-Tier Query Pipeline
 ```
-backend/
-├── app/                          # Hotel business domain
-│   ├── models/
-│   │   ├── ontology.py           # Domain objects (Room, Guest, Reservation, StayRecord, Bill, Task, Employee)
-│   │   ├── schemas.py            # Pydantic models for API I/O
-│   │   ├── events.py             # Domain event definitions
-│   │   └── snapshots.py          # OperationSnapshot for undo
-│   ├── services/
-│   │   ├── actions/              # NEW: Action handlers (guest, stay, task, reservation, query)
-│   │   │   ├── base.py           # Pydantic parameter models
-│   │   │   ├── __init__.py       # get_action_registry()
-│   │   ├── ai_service.py         # OODA loop: LLM优先，规则兜底
-│   │   ├── llm_service.py        # LLM integration
-│   │   ├── event_bus.py          # Pub/sub event bus
-│   │   └── ...                   # Other domain services
-│   ├── routers/                  # FastAPI endpoints
-│   ├── security/auth.py          # JWT + role-based access
-│   └── main.py                   # App initialization
-│
-├── core/                         # Ontology runtime framework (domain-agnostic)
-│   ├── ai/                       # NEW: AI core abstractions
-│   │   ├── actions.py            # ActionRegistry, ActionDefinition
-│   │   ├── vector_store.py       # VectorStore for semantic search
-│   │   ├── schema_retriever.py   # SchemaRetriever for dynamic context
-│   │   ├── embedding.py          # EmbeddingService
-│   │   ├── reflexion.py          # ReflexionLoop for self-healing
-│   │   ├── debug_logger.py       # DebugLogger with replay support
-│   │   ├── hitl.py               # Human-in-the-loop strategies
-│   │   └── prompt_builder.py     # Prompt construction
-│   ├── ontology/                 # Entity abstractions
-│   │   ├── base.py               # BaseEntity, ObjectProxy
-│   │   ├── metadata.py           # EntityMetadata, ActionMetadata
-│   │   ├── registry.py           # OntologyRegistry singleton
-│   │   ├── query.py              # StructuredQuery, FilterClause, JoinClause
-│   │   ├── query_engine.py       # QueryEngine for dynamic SQLAlchemy
-│   │   ├── semantic_query.py     # NEW: SemanticQuery, SemanticFilter
-│   │   └── semantic_path_resolver.py  # NEW: Path compiler (dot-notation → JOINs)
-│   └── reasoning/                # NEW: Constraint and relationship reasoning
-│       ├── planner.py            # Query planning
-│       ├── constraint_engine.py  # Business rule validation
-│       └── relationship_graph.py # Entity relationship graph
-│
-├── tests/
-│   ├── api/                      # API integration tests (1000+ tests)
-│   ├── core/                     # Core framework tests (600+ tests)
-│   ├── services/actions/         # NEW: Action handler tests (190+ tests)
-│   └── integration/             # End-to-end tests
-│
-└── aipms.db                      # SQLite database
+LLM output → SemanticQuery (dot-notation paths)
+           → SemanticPathResolver compiles to StructuredQuery (SQL-ready)
+           → QueryEngine executes via SQLAlchemy
 ```
 
-### Three-Dimensional Metadata System
+### Domain Adapter Registration
+```python
+class HotelDomainAdapter(IDomainAdapter):
+    def register_ontology(self, registry: OntologyRegistry):
+        registry.register_entity(EntityMetadata(...))
+        registry.register_relationship("Room", RelationshipMetadata(...))
+        registry.register_state_machine("Room", StateMachine(...))
+```
+
+### Action Dispatch
+Handler functions are NOT directly exported — access via `ActionRegistry.dispatch(action_name, params, context)`. All handlers use Pydantic models for parameter validation.
+
+Handler signature: `handler(params: BaseModel, db: Session, user: Employee, **context) -> Dict`
+
+### Three-Dimensional Metadata
 - **Semantic**: Entity attributes, types, constraints, relationships (via SQLAlchemy reflection)
 - **Kinetic**: Executable operations/actions grouped by entity
 - **Dynamic**: State machines, permission matrix, business rules
 
-### Key Patterns
-
-**Service Layer**: Each service class wraps a domain object family. Services handle validation, state transitions with side effects, and related object updates.
-
-**OODA Loop (AI Service)**: `ai_service.process_message()` implements:
+### OODA Loop (`ai_service.process_message()`)
 1. Observe: Capture natural language input
 2. Orient: Identify intent + extract entities
 3. Decide: Generate suggested actions with `requires_confirmation` flag
 4. Act: Execute confirmed actions via domain services
 
-**Event-Driven Architecture**: In-memory pub/sub with domain events (`GUEST_CHECKED_OUT`, `TASK_COMPLETED`) that trigger side effects.
-
-**Operation Undo**: `OperationSnapshot` stores before/after state with 24-hour expiry. Supported: check_in, check_out, extend_stay, change_room, complete_task, add_payment.
-
 ---
 
 ## Query Action Handling (Critical)
 
-**Bug Alert**: `ontology_query` and `query_smart` must be recognized as query actions to bypass parameter enhancement.
+`ontology_query` and `query_smart` must be recognized as query actions to bypass parameter enhancement.
 
-In `app/services/ai_service.py`, query actions are identified by:
+In `app/services/ai_service.py`:
 ```python
 is_query_action = (
     action_type.startswith("query_") or
     action_type == "view" or
-    action_type in ["ontology_query", "query_smart"]  # IMPORTANT
+    action_type in ["ontology_query", "query_smart"]
 )
 ```
 
 ---
 
-## Adding New Features
-
-### Adding a New Action Handler
+## Adding a New Action Handler
 
 1. Create parameter model in `app/services/actions/base.py`:
 ```python
@@ -222,7 +194,6 @@ def register_my_actions(registry: ActionRegistry):
         undoable=True
     )
     def handle_my_action(params: MyActionParams, db: Session, user: Employee, **context) -> Dict:
-        # Implementation
         return {"success": True, "message": "..."}
 ```
 
@@ -232,48 +203,55 @@ from app.services.actions import my_actions
 my_actions.register_my_actions(registry)
 ```
 
-### Testing Actions
+---
 
-```bash
-uv run pytest tests/services/actions/test_base.py -v     # Parameter models
-uv run pytest tests/services/actions/test_my_actions.py -v  # Handler tests
-```
+## Testing
+
+### Configuration (`pyproject.toml`)
+- Coverage minimum: 95% (`--cov-fail-under=95`)
+- Coverage scope: `--cov=app` (only measures `app/` code)
+- Markers: `slow`, `integration`
+- asyncio_mode: auto
+
+### Key Fixtures (`tests/conftest.py`)
+- `db_engine` / `db_session`: In-memory SQLite per test function
+- `client`: FastAPI `TestClient` with DB override
+- `manager_token` / `receptionist_token` / `cleaner_token` / `sysadmin_token`: Pre-created users with JWT tokens
+- `clean_registry`: Resets `OntologyRegistry` singleton between tests (required when testing registry operations)
+
+### Important Constraints
+- Event handlers (pub/sub) don't fire in test environment
+- `OntologyRegistry` is a singleton — tests that modify it must use the `clean_registry` fixture to avoid cross-test pollution
 
 ---
 
 ## API Organization
 
 All endpoints require JWT authentication. Key groups:
-- `/auth/*` - Login, current user, password change
-- `/rooms/*` - Room types, rooms, status updates, availability
-- `/reservations/*` - CRUD, search, today's arrivals/departures
-- `/checkin/*`, `/checkout/*` - Check-in/out operations
-- `/tasks/*` - Task CRUD and workflow
-- `/ai/*` - Chat with context, execute confirmed actions
-- `/ontology/*` - Schema, stats, semantic/kinetic/dynamic metadata
-- `/security/*` - Security events and alerts
-- `/undo/*` - Operation undo
+- `/auth/*` — Login, current user, password change
+- `/rooms/*` — Room types, rooms, status updates, availability
+- `/reservations/*` — CRUD, search, today's arrivals/departures
+- `/checkin/*`, `/checkout/*` — Check-in/out operations
+- `/tasks/*` — Task CRUD and workflow
+- `/ai/*` — Chat with context, execute confirmed actions
+- `/ontology/*` — Schema, stats, semantic/kinetic/dynamic metadata
+- `/security/*` — Security events and alerts
+- `/undo/*` — Operation undo
 
 ---
 
 ## AI Action Types
 
-**Query:**
-- `ontology_query` - Dynamic field-level query (entity, fields, filters, joins)
-- `semantic_query` - Semantic path-based query (dot-notation paths)
+**Query:** `ontology_query` (dynamic field-level), `semantic_query` (dot-notation paths)
 
-**Mutation:**
-- `walkin_checkin`, `checkin`, `checkout`, `extend_stay`, `change_room`
-- `create_reservation`, `cancel_reservation`
-- `create_task`, `assign_task`, `start_task`, `complete_task`
-- `add_payment`, `adjust_bill`
+**Mutation:** `walkin_checkin`, `checkin`, `checkout`, `extend_stay`, `change_room`, `create_reservation`, `cancel_reservation`, `create_task`, `assign_task`, `start_task`, `complete_task`, `add_payment`, `adjust_bill`
 
 ---
 
 ## LLM Integration
 
 - OpenAI-compatible API (DeepSeek, OpenAI, Azure, Ollama)
-- Date context injection for relative date parsing ("明天" → ISO date)
+- Date context injection: LLM receives `current_date`, `tomorrow`, `day_after` for relative date parsing ("明天" → ISO date)
 - Robust JSON extraction with fallback parsing
 - Topic relevance detection for context management
 
@@ -281,32 +259,32 @@ All endpoints require JWT authentication. Key groups:
 
 ## UI Conventions
 
-- Dark theme: bg-dark-950, borders dark-800, accent primary-400
+- Dark theme: `bg-dark-950`, borders `dark-800`, accent `primary-400`
 - Room status colors: green (vacant_clean), red (occupied), yellow (vacant_dirty), gray (out_of_order)
 - Modals via `useUIStore.openModal(name, data)`
 - Icons from `lucide-react`
+- State management: Zustand
 
 ---
 
 ## Development Notes
 
-- Backend: `uv` package manager (Python 3.12+)
-- Frontend: npm with Vite
-- Database: SQLite at `backend/aipms.db`
+- Backend: `uv` package manager, Python 3.10+ (3.12+ recommended)
+- Frontend: npm with Vite, React 18 + TypeScript
+- Database: SQLite at `backend/pms.db`
 - Type validation: Pydantic v2
-- State management: Zustand
+- ORM: SQLAlchemy 2.0+
 
 ---
 
-## Test Statistics
+## Ralph Loop / Sam Loop Refactoring Process
 
-- **Total tests**: 1200+
-- **API tests**: `tests/api/` (1070+)
-- **Core framework tests**: `tests/core/` (600+)
-- **Action handler tests**: `tests/services/actions/` (190+)
-- **Integration tests**: `tests/integration/`
+This project uses structured AI-assisted development loops with Architect→Editor phases. Key references:
+- `docs/ralphloop/RALPH_LOOP_EXPERIENCE.md` — Methodology and lessons learned
+- `docs/ontology-architecture-guide.md` — Ontology architecture design doc
 
-**Test Patterns:**
-- Use `db_session` fixture for database operations
-- Event handlers don't work in test environment
-- OntologyRegistry is a singleton - use `clean_registry` fixture
+### Behavioral Constraints
+- **STRUGGLE_SIGNAL**: Stop immediately if same bug fails 2x, guessing APIs, or 3 consecutive test failures
+- Never modify test files to make tests pass (unless the task explicitly requires it)
+- Never skip test verification
+- Prefer minimal, precise edits over rewriting entire files

@@ -3,15 +3,8 @@ import { Plus, RefreshCw, Play, CheckCircle, User } from 'lucide-react'
 import { taskApi, roomApi } from '../services/api'
 import Modal, { ModalFooter } from '../components/Modal'
 import { UndoButton } from '../components/UndoButton'
-import { useUIStore, useAuthStore } from '../store'
+import { useUIStore, useAuthStore, useOntologyStore } from '../store'
 import type { Task, Room } from '../types'
-
-const statusLabels: Record<string, { label: string; class: string }> = {
-  pending: { label: '待分配', class: 'bg-gray-500/20 text-gray-400' },
-  assigned: { label: '待执行', class: 'bg-yellow-500/20 text-yellow-400' },
-  in_progress: { label: '进行中', class: 'bg-blue-500/20 text-blue-400' },
-  completed: { label: '已完成', class: 'bg-emerald-500/20 text-emerald-400' }
-}
 
 const typeLabels: Record<string, string> = {
   cleaning: '清洁',
@@ -26,6 +19,7 @@ export default function Tasks() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<string>('')
   const { openModal, closeModal } = useUIStore()
+  const { getStatusConfig } = useOntologyStore()
 
   // 新建任务表单
   const [taskForm, setTaskForm] = useState({
@@ -158,7 +152,7 @@ export default function Tasks() {
                   : 'bg-dark-800 text-dark-400 hover:bg-dark-700'
               }`}
             >
-              {status === '' ? '全部' : statusLabels[status]?.label}
+              {status === '' ? '全部' : getStatusConfig('Task', status).label}
             </button>
           ))}
         </div>
@@ -181,8 +175,8 @@ export default function Tasks() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <span className={`px-2 py-0.5 rounded text-xs ${statusLabels[task.status]?.class}`}>
-                        {statusLabels[task.status]?.label}
+                      <span className={`px-2 py-0.5 rounded text-xs ${getStatusConfig('Task', task.status).class}`}>
+                        {getStatusConfig('Task', task.status).label}
                       </span>
                       <span className="text-sm text-dark-400">{typeLabels[task.task_type]}</span>
                       <span className="text-xs text-dark-500">优先级 {task.priority}</span>

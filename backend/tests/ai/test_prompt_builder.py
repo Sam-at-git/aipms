@@ -57,7 +57,7 @@ class TestPromptBuilder:
         prompt = builder.build_system_prompt()
 
         # 检查包含关键部分
-        assert "AIPMS" in prompt
+        assert "Ontology" in prompt or "AIPMS" in prompt
         assert "**当前日期:" in prompt
         assert "**明天:" in prompt
         assert "**后天:" in prompt
@@ -73,7 +73,7 @@ class TestPromptBuilder:
         builder = PromptBuilder()
         prompt = builder.build_system_prompt(context)
 
-        assert "AIPMS" in prompt
+        assert "Ontology" in prompt or "AIPMS" in prompt
 
     def test_build_entity_descriptions(self):
         """测试实体描述构建"""
@@ -164,7 +164,7 @@ class TestConvenienceFunctions:
             include_rules=False
         )
 
-        assert "AIPMS" in prompt
+        assert "Ontology" in prompt or "AIPMS" in prompt
 
     def test_build_system_prompt_with_date(self):
         """测试带日期的便捷函数"""

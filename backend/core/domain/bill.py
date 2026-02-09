@@ -9,7 +9,6 @@ from decimal import Decimal
 import logging
 
 from core.ontology.base import BaseEntity
-from app.services.metadata import ontology_entity, ontology_action
 
 if TYPE_CHECKING:
     from app.models.ontology import Bill
@@ -17,7 +16,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@ontology_entity(name="Bill", description="账单本体 - 账务管理", table_name="bills")
 class BillEntity(BaseEntity):
     def __init__(self, orm_model: "Bill"):
         self._orm_model = orm_model
@@ -58,20 +56,12 @@ class BillEntity(BaseEntity):
     def outstanding_balance(self) -> Decimal:
         return self.total_amount + self.adjustment_amount - self.paid_amount
 
-    @ontology_action(entity="Bill", action_type="add_payment", description="添加付款", params=[
-        {"name": "amount", "type": "number", "required": True, "description": "支付金额"},
-        {"name": "method", "type": "enum", "enum_values": ["cash", "card"], "required": True, "description": "支付方式"},
-    ], requires_confirmation=False, allowed_roles=["manager", "receptionist"], writeback=True)
     def add_payment(self, amount: float, method: str) -> None:
         self._orm_model.paid_amount = (self._orm_model.paid_amount or Decimal("0")) + Decimal(str(amount))
         if self.outstanding_balance <= 0:
             self._orm_model.is_settled = True
         logger.info(f"Bill {self.id} payment added: {amount}, method={method}")
 
-    @ontology_action(entity="Bill", action_type="apply_discount", description="应用折扣", params=[
-        {"name": "discount_amount", "type": "number", "required": True, "description": "折扣金额"},
-        {"name": "reason", "type": "string", "required": True, "description": "折扣原因"},
-    ], requires_confirmation=True, allowed_roles=["manager"], writeback=True)
     def apply_discount(self, discount_amount: float, reason: str) -> None:
         self._orm_model.adjustment_amount = (self._orm_model.adjustment_amount or Decimal("0")) - Decimal(str(discount_amount))
         self._orm_model.adjustment_reason = reason

@@ -22,16 +22,17 @@ from app.models.schemas import (
     PaymentCreate, BillAdjustment
 )
 from app.services.metadata import (
-    registry, get_model_attributes, get_entity_relationships,
+    get_model_attributes, get_entity_relationships,
     AttributeMetadata, ActionMetadata, StateTransition, BusinessRule
 )
+from core.ontology.registry import OntologyRegistry
 
 
 class OntologyMetadataService:
     """本体元数据服务 - 提取语义、动力、动态三个维度的元数据"""
 
-    # 模型映射
-    MODELS = {
+    # Fallback model mapping (used when registry is not yet populated)
+    _FALLBACK_MODELS = {
         "RoomType": RoomType,
         "Room": Room,
         "Guest": Guest,
@@ -44,8 +45,8 @@ class OntologyMetadataService:
         "Payment": Payment,
     }
 
-    # 实体描述
-    ENTITY_DESCRIPTIONS = {
+    # Fallback descriptions (used when registry is not yet populated)
+    _FALLBACK_DESCRIPTIONS = {
         "RoomType": "房型 - 定义房间类型和基础价格",
         "Room": "房间 - 酒店物理房间，数字孪生核心实体",
         "Guest": "客人 - 客户信息管理",
@@ -58,11 +59,11 @@ class OntologyMetadataService:
         "Payment": "支付记录 - 账单支付记录",
     }
 
-    # 聚合根定义
-    AGGREGATE_ROOTS = {"Reservation", "StayRecord"}
+    # Fallback aggregate roots
+    _FALLBACK_AGGREGATE_ROOTS = {"Reservation", "StayRecord"}
 
-    # 实体关系
-    ENTITY_RELATIONSHIPS = {
+    # Fallback relationships
+    _FALLBACK_RELATIONSHIPS = {
         "RoomType": ["Room", "RatePlan"],
         "Room": ["RoomType", "StayRecord", "Task"],
         "Guest": ["Reservation", "StayRecord"],
@@ -74,6 +75,57 @@ class OntologyMetadataService:
         "RatePlan": ["RoomType"],
         "Payment": ["Bill"],
     }
+
+    @property
+    def MODELS(self):
+        """Get models from OntologyRegistry, falling back to hardcoded."""
+        registry = OntologyRegistry()
+        model_map = registry.get_model_map()
+        if model_map:
+            return model_map
+        return self._FALLBACK_MODELS
+
+    @property
+    def ENTITY_DESCRIPTIONS(self):
+        """Get entity descriptions from OntologyRegistry, falling back to hardcoded."""
+        registry = OntologyRegistry()
+        descriptions = {}
+        for entity in registry.get_entities():
+            descriptions[entity.name] = entity.description
+        if descriptions:
+            # Merge with fallbacks for entities not in registry
+            merged = dict(self._FALLBACK_DESCRIPTIONS)
+            merged.update(descriptions)
+            return merged
+        return self._FALLBACK_DESCRIPTIONS
+
+    @property
+    def AGGREGATE_ROOTS(self):
+        """Get aggregate roots from OntologyRegistry, falling back to hardcoded."""
+        registry = OntologyRegistry()
+        roots = set()
+        for entity in registry.get_entities():
+            if entity.is_aggregate_root:
+                roots.add(entity.name)
+        if roots:
+            return roots
+        return self._FALLBACK_AGGREGATE_ROOTS
+
+    @property
+    def ENTITY_RELATIONSHIPS(self):
+        """Get entity relationships from OntologyRegistry, falling back to hardcoded."""
+        registry = OntologyRegistry()
+        result = {}
+        entities = registry.get_entities()
+        if entities:
+            for entity in entities:
+                rels = registry.get_relationships(entity.name)
+                result[entity.name] = list({r.target_entity for r in rels})
+            # Merge with fallbacks for entities not in registry
+            merged = dict(self._FALLBACK_RELATIONSHIPS)
+            merged.update(result)
+            return merged
+        return self._FALLBACK_RELATIONSHIPS
 
     def __init__(self, db: Session = None):
         self.db = db
@@ -124,13 +176,22 @@ class OntologyMetadataService:
         """获取增强的属性元数据"""
         attributes = get_model_attributes(model_class)
 
-        # 添加额外的语义信息
-        attr_descriptions = self._get_attribute_descriptions(entity_name)
-
-        for attr in attributes:
-            if attr.name in attr_descriptions:
-                attr.description = attr_descriptions[attr.name].get("description", attr.description)
-                attr.security_level = attr_descriptions[attr.name].get("security_level", "INTERNAL")
+        # Try registry properties first
+        onto_registry = OntologyRegistry()
+        entity_meta = onto_registry.get_entity(entity_name)
+        if entity_meta and entity_meta.properties:
+            for attr in attributes:
+                prop = entity_meta.properties.get(attr.name)
+                if prop:
+                    attr.description = prop.description or attr.description
+                    attr.security_level = prop.security_level or "INTERNAL"
+        else:
+            # Fallback to hardcoded descriptions
+            attr_descriptions = self._get_attribute_descriptions(entity_name)
+            for attr in attributes:
+                if attr.name in attr_descriptions:
+                    attr.description = attr_descriptions[attr.name].get("description", attr.description)
+                    attr.security_level = attr_descriptions[attr.name].get("security_level", "INTERNAL")
 
         return attributes
 
@@ -243,8 +304,16 @@ class OntologyMetadataService:
 
         relationships = []
 
-        # 关系描述
-        relationship_labels = {
+        # Try registry relationships for labels
+        onto_registry = OntologyRegistry()
+        registry_rels = onto_registry.get_relationships(entity_name)
+        registry_labels = {}
+        for r in registry_rels:
+            if r.description:
+                registry_labels[r.target_entity] = r.description
+
+        # Fallback labels
+        _fallback_labels = {
             "RoomType": {
                 "Room": "包含多个房间",
                 "RatePlan": "关联价格策略",
@@ -289,10 +358,11 @@ class OntologyMetadataService:
         }
 
         base_relationships = get_entity_relationships(model_class)
-        entity_rels = relationship_labels.get(entity_name, {})
+        fallback_rels = _fallback_labels.get(entity_name, {})
 
         for rel in base_relationships:
-            rel["label"] = entity_rels.get(rel["target"], rel["name"])
+            # Registry labels take priority, then fallback
+            rel["label"] = registry_labels.get(rel["target"], fallback_rels.get(rel["target"], rel["name"]))
             relationships.append(rel)
 
         return relationships
@@ -324,8 +394,9 @@ class OntologyMetadataService:
                 ]
             }
         """
-        # 从注册表获取已注册的动作
-        registered_actions = registry.get_actions()
+        # 从 OntologyRegistry 获取已注册的动作
+        onto_registry = OntologyRegistry()
+        registered_actions = onto_registry.get_actions()
 
         # 预定义动作（当注册表为空时使用）
         predefined_actions = self._get_predefined_actions()
@@ -882,9 +953,10 @@ class OntologyMetadataService:
             },
         ]
 
-        # 合并注册表中的状态机
+        # 合并 OntologyRegistry 中的状态机
+        onto_registry = OntologyRegistry()
         for entity_name in ["Room", "Reservation", "StayRecord", "Task"]:
-            registered_sm = registry.get_state_machine(entity_name)
+            registered_sm = onto_registry.get_state_machine(entity_name)
             if registered_sm:
                 # 如果有注册的状态机，替换预定义的
                 for i, sm in enumerate(state_machines):
@@ -896,23 +968,71 @@ class OntologyMetadataService:
 
         return state_machines
 
+    # State presentation mapping: value → {label, color}
+    STATE_PRESENTATION = {
+        # Room states
+        "vacant_clean": {"label": "空闲已清洁", "color": "green"},
+        "occupied": {"label": "入住中", "color": "red"},
+        "vacant_dirty": {"label": "空闲待清洁", "color": "yellow"},
+        "out_of_order": {"label": "维修中", "color": "gray"},
+        # Reservation states
+        "confirmed": {"label": "已确认", "color": "blue"},
+        "checked_in": {"label": "已入住", "color": "green"},
+        "completed": {"label": "已完成", "color": "gray"},
+        "cancelled": {"label": "已取消", "color": "red"},
+        "no_show": {"label": "未到店", "color": "orange"},
+        # StayRecord states
+        "active": {"label": "在住", "color": "green"},
+        "checked_out": {"label": "已退房", "color": "gray"},
+        # Task states
+        "pending": {"label": "待分配", "color": "gray"},
+        "assigned": {"label": "已分配", "color": "blue"},
+        "in_progress": {"label": "进行中", "color": "yellow"},
+        # "completed" already defined above
+    }
+
+    # Trigger action display names
+    TRIGGER_ACTIONS = {
+        "check_in": "入住",
+        "check_out": "退房",
+        "task_complete": "清洁任务完成",
+        "mark_out_of_order": "标记维修",
+        "mark_available": "标记可用",
+        "cancel": "取消预订",
+        "mark_no_show": "标记未到店",
+        "assign": "分配任务",
+        "start": "开始任务",
+        "complete": "完成任务",
+    }
+
     def _serialize_state_machine(self, sm) -> Dict:
-        """序列化状态机"""
+        """序列化状态机，输出 {value, label, color} 格式的 states"""
+        states = []
+        for s in sm.states:
+            pres = self.STATE_PRESENTATION.get(s, {})
+            states.append({
+                "value": s,
+                "label": pres.get("label", s),
+                "color": pres.get("color", "gray"),
+            })
+
+        transitions = []
+        for t in sm.transitions:
+            transitions.append({
+                "from": t.from_state,
+                "to": t.to_state,
+                "trigger": t.trigger,
+                "trigger_action": self.TRIGGER_ACTIONS.get(t.trigger, t.trigger),
+                "condition": t.condition,
+                "side_effects": t.side_effects,
+            })
+
         return {
             "entity": sm.entity,
             "description": f"{sm.entity}状态机",
-            "states": sm.states,
+            "states": states,
             "initial_state": sm.initial_state,
-            "transitions": [
-                {
-                    "from": t.from_state,
-                    "to": t.to_state,
-                    "trigger": t.trigger,
-                    "condition": t.condition,
-                    "side_effects": t.side_effects,
-                }
-                for t in sm.transitions
-            ],
+            "transitions": transitions,
         }
 
     def _get_permission_matrix(self) -> Dict:
@@ -930,8 +1050,9 @@ class OntologyMetadataService:
         """
         roles = ["manager", "receptionist", "cleaner"]
 
-        # 从注册表获取权限
-        registered_permissions = registry.get_permissions()
+        # 从 OntologyRegistry 获取权限
+        onto_registry = OntologyRegistry()
+        registered_permissions = onto_registry.get_permissions()
 
         # 预定义权限
         action_permissions = [
@@ -1088,9 +1209,10 @@ class OntologyMetadataService:
             },
         ]
 
-        # 合并注册表中的业务规则
+        # 合并 OntologyRegistry 中的业务规则
+        onto_registry = OntologyRegistry()
         for entity_name in ["Room", "Guest", "Bill", "Task", "StayRecord"]:
-            registered_rules = registry.get_business_rules(entity_name)
+            registered_rules = onto_registry.get_business_rules(entity_name)
             for rule in registered_rules:
                 business_rules.append({
                     "rule_id": rule.rule_id,
@@ -1103,3 +1225,19 @@ class OntologyMetadataService:
                 })
 
         return business_rules
+
+    def get_events(self) -> List[Dict]:
+        """获取所有已注册的领域事件"""
+        onto_registry = OntologyRegistry()
+        events = onto_registry.get_events()
+        return [
+            {
+                "name": e.name,
+                "description": e.description,
+                "entity": e.entity,
+                "triggered_by": e.triggered_by,
+                "payload_fields": e.payload_fields,
+                "subscribers": e.subscribers,
+            }
+            for e in events
+        ]

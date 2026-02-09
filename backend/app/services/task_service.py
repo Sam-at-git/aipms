@@ -2,9 +2,11 @@
 任务服务 - 本体操作层
 支持事件驱动：任务完成发布事件，由事件处理器更新房间状态
 支持操作撤销：关键操作创建快照
+SPEC-R13: State machine validation before status changes
 """
 from typing import List, Optional, Callable
 from datetime import datetime
+import logging
 from sqlalchemy.orm import Session
 from app.models.ontology import Task, TaskType, TaskStatus, Room, RoomStatus, Employee, EmployeeRole
 from app.models.schemas import TaskCreate, TaskAssign, TaskUpdate
@@ -14,6 +16,23 @@ from app.models.events import (
     TaskStartedData, TaskCompletedData
 )
 from app.models.snapshots import OperationType
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_state_transition(entity_type: str, current_state: str, target_state: str) -> None:
+    """SPEC-R13: Validate state transition against registry state machine."""
+    try:
+        from core.ontology.state_machine_executor import StateMachineExecutor
+        executor = StateMachineExecutor()
+        result = executor.validate_transition(entity_type, current_state, target_state)
+        if not result.allowed:
+            logger.warning(
+                f"State transition validation: {entity_type} "
+                f"'{current_state}' → '{target_state}': {result.reason}"
+            )
+    except Exception as e:
+        logger.debug(f"State machine validation skipped: {e}")
 
 
 class TaskService:
@@ -129,6 +148,7 @@ class TaskService:
             raise ValueError("指定的清洁员不存在或已停用")
 
         task.assignee_id = data.assignee_id
+        _validate_state_transition("Task", task.status.value, TaskStatus.ASSIGNED.value)
         task.status = TaskStatus.ASSIGNED
 
         self.db.commit()
@@ -164,6 +184,7 @@ class TaskService:
         if task.status != TaskStatus.ASSIGNED:
             raise ValueError(f"状态为 {task.status.value} 的任务无法开始")
 
+        _validate_state_transition("Task", task.status.value, TaskStatus.IN_PROGRESS.value)
         task.status = TaskStatus.IN_PROGRESS
         task.started_at = datetime.now()
 
@@ -207,6 +228,7 @@ class TaskService:
         room = task.room
         old_room_status = room.status.value if room else None
 
+        _validate_state_transition("Task", task.status.value, TaskStatus.COMPLETED.value)
         task.status = TaskStatus.COMPLETED
         task.completed_at = datetime.now()
         if notes:

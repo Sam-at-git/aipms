@@ -8,7 +8,6 @@ from datetime import datetime
 import logging
 
 from core.ontology.base import BaseEntity
-from app.services.metadata import ontology_entity, ontology_action
 
 if TYPE_CHECKING:
     from app.models.ontology import Employee
@@ -22,7 +21,6 @@ class EmployeeRole(str):
     CLEANER = "cleaner"
 
 
-@ontology_entity(name="Employee", description="员工本体 - 酒店员工管理", table_name="employees")
 class EmployeeEntity(BaseEntity):
     def __init__(self, orm_model: "Employee"):
         self._orm_model = orm_model
@@ -55,20 +53,13 @@ class EmployeeEntity(BaseEntity):
     def created_at(self) -> datetime:
         return self._orm_model.created_at
 
-    @ontology_action(entity="Employee", action_type="update_role", description="更新角色", params=[
-        {"name": "role", "type": "enum", "enum_values": ["manager", "receptionist", "cleaner"], "required": True},
-    ], requires_confirmation=True, allowed_roles=["manager"], writeback=True)
     def update_role(self, role: str) -> None:
         from app.models.ontology import EmployeeRole as ORMRole
         self._orm_model.role = ORMRole(role)
 
-    @ontology_action(entity="Employee", action_type="deactivate", description="停用账号", params=[],
-        requires_confirmation=True, allowed_roles=["manager"], writeback=True)
     def deactivate(self) -> None:
         self._orm_model.is_active = False
 
-    @ontology_action(entity="Employee", action_type="activate", description="启用账号", params=[],
-        requires_confirmation=False, allowed_roles=["manager"], writeback=True)
     def activate(self) -> None:
         self._orm_model.is_active = True
 

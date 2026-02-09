@@ -36,7 +36,13 @@ def register_guest_actions(
         allowed_roles={"receptionist", "manager"},
         undoable=True,
         side_effects=["creates_guest", "creates_stay_record", "creates_bill", "updates_room_status"],
-        search_keywords=["散客", "直接入住", "无预订", "临时入住", "walk-in"]
+        search_keywords=["散客", "直接入住", "无预订", "临时入住", "walk-in"],
+        semantic_category="checkin_type",
+        category_description="入住方式（预订入住 vs 直接入住）",
+        glossary_examples=[
+            {"correct": '"散客入住，王六儿..." → guest_name="王六儿"（散客是入住方式，不是客人姓名）',
+             "incorrect": '"散客入住，王六儿..." → guest_name="散客"（错误地将入住方式当作参数值）'},
+        ]
     )
     def handle_walkin_checkin(
         params: WalkInCheckInParams,

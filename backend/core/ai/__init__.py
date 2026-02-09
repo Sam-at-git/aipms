@@ -35,6 +35,11 @@ from core.ai.replay import (
     AttemptDiff,
     PerformanceDiff,
 )
+from core.ai.response_generator import (
+    OntologyResult,
+    ResponseGenerator,
+    VALID_RESULT_TYPES,
+)
 
 # Global singleton instance (lazy initialized)
 _embedding_service: Optional[EmbeddingService] = None
@@ -155,4 +160,7 @@ __all__ = [
     "SessionDiff",
     "AttemptDiff",
     "PerformanceDiff",
+    "OntologyResult",
+    "ResponseGenerator",
+    "VALID_RESULT_TYPES",
 ]

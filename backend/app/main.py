@@ -52,6 +52,21 @@ async def lifespan(app: FastAPI):
 
         print("本体注册中心初始化完成")
 
+        # ========== SPEC-R01: Bootstrap HotelDomainAdapter ==========
+        from core.ontology.registry import OntologyRegistry
+        from app.hotel.hotel_domain_adapter import HotelDomainAdapter
+
+        ont_registry = OntologyRegistry()
+        adapter = HotelDomainAdapter()
+        adapter.register_ontology(ont_registry)
+        print(f"✓ 酒店领域本体已注册 ({len(ont_registry.get_entities())} entities)")
+
+        # ========== SPEC-R11: Sync ActionRegistry to OntologyRegistry ==========
+        from app.services.actions import get_action_registry
+        action_registry = get_action_registry()
+        action_registry.set_ontology_registry(ont_registry)
+        print(f"✓ ActionRegistry 已同步到 OntologyRegistry ({len(action_registry.list_actions())} actions)")
+
     except Exception as e:
         print(f"本体注册中心初始化警告: {e}")
 

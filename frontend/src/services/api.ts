@@ -726,6 +726,14 @@ export const ontologyApi = {
     return res.data
   },
 
+  // ============== 领域事件 (Events) ==============
+  getEvents: async (): Promise<{
+    events: import('../types').OntologyEvent[]
+  }> => {
+    const res = await api.get('/ontology/dynamic/events')
+    return res.data
+  },
+
   // ============== 接口系统 (Phase 2.5) ==============
   getInterfaces: async (): Promise<Record<string, import('../types').OntologyInterfaceDef>> => {
     const res = await api.get('/ontology/interfaces')

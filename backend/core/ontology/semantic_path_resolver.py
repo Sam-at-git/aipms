@@ -43,7 +43,8 @@ from core.ontology.query import (
     FilterOperator,
     JoinType,
 )
-from core.ontology.query_engine import MODEL_MAP, RELATIONSHIP_MAP
+from core.ontology.query_engine import get_model_class, get_relationship_info
+from core.ontology.registry import OntologyRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -118,9 +119,41 @@ class SemanticPathResolver:
         Args:
             registry: OntologyRegistry 实例（可选，用于动态关系发现）
         """
-        self.registry = registry
-        self.relationship_map = RELATIONSHIP_MAP
-        self.model_map = MODEL_MAP
+        self.registry = registry or OntologyRegistry()
+
+    @property
+    def relationship_map(self):
+        """Dynamic relationship map from OntologyRegistry (SPEC-14)"""
+        rmap = self.registry.get_relationship_map()
+        # Convert to legacy tuple format: {source: {target: (rel_attr, foreign_key)}}
+        result = {}
+        for source, targets in rmap.items():
+            result[source] = {}
+            for target, info in targets.items():
+                result[source][target] = (info["rel_attr"], info["foreign_key"])
+        # SPEC-R04: No fallback - registry is the single source of truth
+        if not result:
+            logger.warning("Relationship map is empty - ensure HotelDomainAdapter is bootstrapped")
+        return result
+
+    @property
+    def model_map(self):
+        """Dynamic model map from OntologyRegistry (SPEC-14)"""
+        mmap = self.registry.get_model_map()
+        # Fallback: try lazy import for known entities
+        if not mmap:
+            known_entities = [
+                "Room", "Guest", "Reservation", "StayRecord",
+                "Bill", "Task", "Employee", "RoomType", "RatePlan", "Payment"
+            ]
+            for name in known_entities:
+                try:
+                    model = get_model_class(name)
+                    if model is not None:
+                        mmap[name] = model
+                except (ValueError, ImportError):
+                    pass
+        return mmap
 
     def compile(self, semantic_query: SemanticQuery) -> StructuredQuery:
         """

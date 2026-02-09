@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Employee, ChatMessage, DashboardStats, Room, StayRecord, Task, ConversationMessage } from '../types'
+export { useOntologyStore } from './ontologyStore'
 
 // 认证状态
 interface AuthState {

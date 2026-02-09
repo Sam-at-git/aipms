@@ -10,7 +10,6 @@ from decimal import Decimal
 import logging
 
 from core.ontology.base import BaseEntity
-from app.services.metadata import ontology_entity, ontology_action
 
 if TYPE_CHECKING:
     from app.models.ontology import Guest
@@ -30,11 +29,6 @@ class GuestTier(str):
 
 # ============== Guest 领域实体 ==============
 
-@ontology_entity(
-    name="Guest",
-    description="客人本体 - 酒店客户信息管理",
-    table_name="guests",
-)
 class GuestEntity(BaseEntity):
     """
     Guest 领域实体
@@ -133,17 +127,6 @@ class GuestEntity(BaseEntity):
 
     # ============== 业务方法 ==============
 
-    @ontology_action(
-        entity="Guest",
-        action_type="update_tier",
-        description="更新客户等级",
-        params=[
-            {"name": "tier", "type": "enum", "enum_values": ["normal", "silver", "gold", "platinum"], "required": True, "description": "客户等级"},
-        ],
-        requires_confirmation=False,
-        allowed_roles=["manager"],
-        writeback=True,
-    )
     def update_tier(self, tier: str) -> None:
         """
         更新客户等级
@@ -154,17 +137,6 @@ class GuestEntity(BaseEntity):
         self._orm_model.tier = tier
         logger.info(f"Guest {self.id} tier updated to {tier}")
 
-    @ontology_action(
-        entity="Guest",
-        action_type="add_to_blacklist",
-        description="添加到黑名单",
-        params=[
-            {"name": "reason", "type": "string", "required": True, "description": "黑名单原因"},
-        ],
-        requires_confirmation=True,
-        allowed_roles=["manager"],
-        writeback=True,
-    )
     def add_to_blacklist(self, reason: str) -> None:
         """
         添加到黑名单
@@ -176,32 +148,12 @@ class GuestEntity(BaseEntity):
         self._orm_model.blacklist_reason = reason
         logger.info(f"Guest {self.id} added to blacklist: {reason}")
 
-    @ontology_action(
-        entity="Guest",
-        action_type="remove_from_blacklist",
-        description="从黑名单移除",
-        params=[],
-        requires_confirmation=True,
-        allowed_roles=["manager"],
-        writeback=True,
-    )
     def remove_from_blacklist(self) -> None:
         """从黑名单移除"""
         self._orm_model.is_blacklisted = False
         self._orm_model.blacklist_reason = None
         logger.info(f"Guest {self.id} removed from blacklist")
 
-    @ontology_action(
-        entity="Guest",
-        action_type="update_preferences",
-        description="更新客户偏好",
-        params=[
-            {"name": "preferences", "type": "object", "required": True, "description": "偏好设置 (JSON)"},
-        ],
-        requires_confirmation=False,
-        allowed_roles=["manager", "receptionist"],
-        writeback=True,
-    )
     def update_preferences(self, preferences: str) -> None:
         """
         更新客户偏好
@@ -212,30 +164,10 @@ class GuestEntity(BaseEntity):
         self._orm_model.preferences = preferences
         logger.info(f"Guest {self.id} preferences updated")
 
-    @ontology_action(
-        entity="Guest",
-        action_type="increment_stays",
-        description="增加入住次数",
-        params=[],
-        requires_confirmation=False,
-        allowed_roles=[],  # 内部调用
-        writeback=True,
-    )
     def increment_stays(self) -> None:
         """增加入住次数（内部方法）"""
         self._orm_model.total_stays = (self._orm_model.total_stays or 0) + 1
 
-    @ontology_action(
-        entity="Guest",
-        action_type="add_amount",
-        description="增加累计消费",
-        params=[
-            {"name": "amount", "type": "number", "required": True, "description": "消费金额"},
-        ],
-        requires_confirmation=False,
-        allowed_roles=[],  # 内部调用
-        writeback=True,
-    )
     def add_amount(self, amount: float) -> None:
         """
         增加累计消费（内部方法）

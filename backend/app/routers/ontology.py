@@ -13,6 +13,7 @@ from app.models.ontology import (
 )
 from app.security.auth import get_current_user, require_manager
 from app.services.ontology_metadata_service import OntologyMetadataService
+from core.ontology.registry import OntologyRegistry
 
 router = APIRouter(prefix="/ontology", tags=["本体视图"])
 
@@ -22,105 +23,45 @@ async def get_ontology_schema(
     current_user: Employee = Depends(require_manager)
 ):
     """获取本体结构定义"""
-    return {
-        "entities": [
-            {
-                "name": "RoomType",
-                "description": "房间类型",
-                "attributes": [
-                    {"name": "id", "type": "integer", "primary": True},
-                    {"name": "name", "type": "string"},
-                    {"name": "base_price", "type": "decimal"},
-                    {"name": "max_occupancy", "type": "integer"}
-                ]
-            },
-            {
-                "name": "Room",
-                "description": "房间",
-                "attributes": [
-                    {"name": "id", "type": "integer", "primary": True},
-                    {"name": "room_number", "type": "string"},
-                    {"name": "floor", "type": "integer"},
-                    {"name": "status", "type": "enum", "values": ["vacant_clean", "occupied", "vacant_dirty", "out_of_order"]}
-                ]
-            },
-            {
-                "name": "Guest",
-                "description": "客人",
-                "attributes": [
-                    {"name": "id", "type": "integer", "primary": True},
-                    {"name": "name", "type": "string"},
-                    {"name": "phone", "type": "string"},
-                    {"name": "id_type", "type": "string"},
-                    {"name": "id_number", "type": "string"},
-                    {"name": "tier", "type": "enum", "values": ["normal", "silver", "gold", "platinum"]}
-                ]
-            },
-            {
-                "name": "Reservation",
-                "description": "预订",
-                "attributes": [
-                    {"name": "id", "type": "integer", "primary": True},
-                    {"name": "status", "type": "enum", "values": ["confirmed", "checked_in", "completed", "cancelled", "no_show"]},
-                    {"name": "check_in_date", "type": "date"},
-                    {"name": "check_out_date", "type": "date"},
-                    {"name": "total_amount", "type": "decimal"}
-                ]
-            },
-            {
-                "name": "StayRecord",
-                "description": "住宿记录",
-                "attributes": [
-                    {"name": "id", "type": "integer", "primary": True},
-                    {"name": "status", "type": "enum", "values": ["active", "checked_out"]},
-                    {"name": "check_in_time", "type": "datetime"},
-                    {"name": "expected_check_out", "type": "datetime"},
-                    {"name": "check_out_time", "type": "datetime"}
-                ]
-            },
-            {
-                "name": "Bill",
-                "description": "账单",
-                "attributes": [
-                    {"name": "id", "type": "integer", "primary": True},
-                    {"name": "total_amount", "type": "decimal"},
-                    {"name": "paid_amount", "type": "decimal"},
-                    {"name": "is_settled", "type": "boolean"}
-                ]
-            },
-            {
-                "name": "Task",
-                "description": "任务",
-                "attributes": [
-                    {"name": "id", "type": "integer", "primary": True},
-                    {"name": "task_type", "type": "enum", "values": ["cleaning", "maintenance"]},
-                    {"name": "status", "type": "enum", "values": ["pending", "assigned", "in_progress", "completed"]},
-                    {"name": "priority", "type": "integer"}
-                ]
-            },
-            {
-                "name": "Employee",
-                "description": "员工",
-                "attributes": [
-                    {"name": "id", "type": "integer", "primary": True},
-                    {"name": "name", "type": "string"},
-                    {"name": "username", "type": "string"},
-                    {"name": "role", "type": "enum", "values": ["manager", "receptionist", "cleaner"]}
-                ]
-            }
-        ],
-        "relationships": [
-            {"from": "Room", "to": "RoomType", "type": "belongs_to", "label": "属于"},
-            {"from": "Reservation", "to": "Guest", "type": "belongs_to", "label": "预订人"},
-            {"from": "Reservation", "to": "RoomType", "type": "belongs_to", "label": "房型"},
-            {"from": "StayRecord", "to": "Guest", "type": "belongs_to", "label": "入住人"},
-            {"from": "StayRecord", "to": "Room", "type": "belongs_to", "label": "入住房间"},
-            {"from": "StayRecord", "to": "Reservation", "type": "belongs_to", "label": "来源预订"},
-            {"from": "Bill", "to": "StayRecord", "type": "belongs_to", "label": "住宿账单"},
-            {"from": "Task", "to": "Room", "type": "belongs_to", "label": "目标房间"},
-            {"from": "Task", "to": "Employee", "type": "belongs_to", "label": "执行人"}
-        ]
-    }
+    onto_registry = OntologyRegistry()
+    entities = onto_registry.get_entities()
+
+    if not entities:
+        # Fallback if registry not populated
+        return {"entities": [], "relationships": []}
+
+    # Build entities list from registry
+    entity_list = []
+    for entity in entities:
+        attrs = []
+        for prop_name, prop in entity.properties.items():
+            attr = {"name": prop_name, "type": prop.type}
+            if prop.is_primary_key:
+                attr["primary"] = True
+            if prop.enum_values:
+                attr["type"] = "enum"
+                attr["values"] = prop.enum_values
+            attrs.append(attr)
+        entity_list.append({
+            "name": entity.name,
+            "description": entity.description,
+            "attributes": attrs,
+        })
+
+    # Build relationships from registry
+    rel_list = []
+    for entity in entities:
+        rels = onto_registry.get_relationships(entity.name)
+        for rel in rels:
+            if rel.cardinality in ("many_to_one", "one_to_one"):
+                rel_list.append({
+                    "from": entity.name,
+                    "to": rel.target_entity,
+                    "type": "belongs_to",
+                    "label": rel.description or rel.name,
+                })
+
+    return {"entities": entity_list, "relationships": rel_list}
 
 
 @router.get("/statistics")
@@ -129,66 +70,49 @@ async def get_ontology_statistics(
     current_user: Employee = Depends(require_manager)
 ):
     """获取各实体的统计数据"""
-    return {
-        "entities": {
-            "RoomType": {
-                "total": db.query(RoomType).count()
-            },
-            "Room": {
-                "total": db.query(Room).count(),
-                "by_status": {
-                    "vacant_clean": db.query(Room).filter(Room.status == RoomStatus.VACANT_CLEAN).count(),
-                    "occupied": db.query(Room).filter(Room.status == RoomStatus.OCCUPIED).count(),
-                    "vacant_dirty": db.query(Room).filter(Room.status == RoomStatus.VACANT_DIRTY).count(),
-                    "out_of_order": db.query(Room).filter(Room.status == RoomStatus.OUT_OF_ORDER).count()
-                }
-            },
-            "Guest": {
-                "total": db.query(Guest).count(),
-                "by_tier": {
-                    "normal": db.query(Guest).filter(Guest.tier == "normal").count(),
-                    "silver": db.query(Guest).filter(Guest.tier == "silver").count(),
-                    "gold": db.query(Guest).filter(Guest.tier == "gold").count(),
-                    "platinum": db.query(Guest).filter(Guest.tier == "platinum").count()
-                }
-            },
-            "Reservation": {
-                "total": db.query(Reservation).count(),
-                "by_status": {
-                    "confirmed": db.query(Reservation).filter(Reservation.status == ReservationStatus.CONFIRMED).count(),
-                    "checked_in": db.query(Reservation).filter(Reservation.status == ReservationStatus.CHECKED_IN).count(),
-                    "completed": db.query(Reservation).filter(Reservation.status == ReservationStatus.COMPLETED).count(),
-                    "cancelled": db.query(Reservation).filter(Reservation.status == ReservationStatus.CANCELLED).count()
-                }
-            },
-            "StayRecord": {
-                "total": db.query(StayRecord).count(),
-                "active": db.query(StayRecord).filter(StayRecord.status == StayRecordStatus.ACTIVE).count()
-            },
-            "Bill": {
-                "total": db.query(Bill).count(),
-                "settled": db.query(Bill).filter(Bill.is_settled == True).count(),
-                "unsettled": db.query(Bill).filter(Bill.is_settled == False).count()
-            },
-            "Task": {
-                "total": db.query(Task).count(),
-                "by_status": {
-                    "pending": db.query(Task).filter(Task.status == TaskStatus.PENDING).count(),
-                    "assigned": db.query(Task).filter(Task.status == TaskStatus.ASSIGNED).count(),
-                    "in_progress": db.query(Task).filter(Task.status == TaskStatus.IN_PROGRESS).count(),
-                    "completed": db.query(Task).filter(Task.status == TaskStatus.COMPLETED).count()
-                }
-            },
-            "Employee": {
-                "total": db.query(Employee).count(),
-                "by_role": {
-                    "manager": db.query(Employee).filter(Employee.role == EmployeeRole.MANAGER).count(),
-                    "receptionist": db.query(Employee).filter(Employee.role == EmployeeRole.RECEPTIONIST).count(),
-                    "cleaner": db.query(Employee).filter(Employee.role == EmployeeRole.CLEANER).count()
-                }
-            }
+    onto_registry = OntologyRegistry()
+    result = {}
+
+    # Generic total counts from registry model map
+    model_map = onto_registry.get_model_map()
+    for entity_name, model_cls in model_map.items():
+        result[entity_name] = {"total": db.query(model_cls).count()}
+
+    # Entity-specific breakdowns (presentation layer knowledge)
+    if "Room" in result:
+        result["Room"]["by_status"] = {
+            s.value: db.query(Room).filter(Room.status == s).count()
+            for s in RoomStatus
         }
-    }
+    if "Guest" in result:
+        result["Guest"]["by_tier"] = {
+            t.value: db.query(Guest).filter(Guest.tier == t.value).count()
+            for t in GuestTier
+        }
+    if "Reservation" in result:
+        result["Reservation"]["by_status"] = {
+            s.value: db.query(Reservation).filter(Reservation.status == s).count()
+            for s in ReservationStatus
+        }
+    if "StayRecord" in result:
+        result["StayRecord"]["active"] = db.query(StayRecord).filter(
+            StayRecord.status == StayRecordStatus.ACTIVE
+        ).count()
+    if "Bill" in result:
+        result["Bill"]["settled"] = db.query(Bill).filter(Bill.is_settled == True).count()
+        result["Bill"]["unsettled"] = db.query(Bill).filter(Bill.is_settled == False).count()
+    if "Task" in result:
+        result["Task"]["by_status"] = {
+            s.value: db.query(Task).filter(Task.status == s).count()
+            for s in TaskStatus
+        }
+    if "Employee" in result:
+        result["Employee"]["by_role"] = {
+            r.value: db.query(Employee).filter(Employee.role == r).count()
+            for r in EmployeeRole
+        }
+
+    return {"entities": result}
 
 
 @router.get("/instance-graph")
@@ -385,6 +309,10 @@ async def get_instance_graph(
                     })
     else:
         # 返回系统概览图（各实体类型作为节点）
+        onto_registry = OntologyRegistry()
+        model_map = onto_registry.get_model_map()
+
+        # Default positions for known entities (presentation concern)
         entity_positions = {
             "RoomType": (200, 100),
             "Room": (400, 100),
@@ -393,64 +321,40 @@ async def get_instance_graph(
             "StayRecord": (500, 300),
             "Bill": (700, 300),
             "Task": (600, 100),
-            "Employee": (800, 100)
+            "Employee": (800, 100),
+            "RatePlan": (200, 200),
+            "Payment": (700, 200),
         }
 
-        # 获取统计数据
-        stats = {
-            "RoomType": db.query(RoomType).count(),
-            "Room": db.query(Room).count(),
-            "Guest": db.query(Guest).count(),
-            "Reservation": db.query(Reservation).count(),
-            "StayRecord": db.query(StayRecord).count(),
-            "Bill": db.query(Bill).count(),
-            "Task": db.query(Task).count(),
-            "Employee": db.query(Employee).count()
-        }
-
-        entity_labels = {
-            "RoomType": "房间类型",
-            "Room": "房间",
-            "Guest": "客人",
-            "Reservation": "预订",
-            "StayRecord": "住宿记录",
-            "Bill": "账单",
-            "Task": "任务",
-            "Employee": "员工"
-        }
-
-        for entity_name, pos in entity_positions.items():
+        # Build nodes from registry entities
+        for entity in onto_registry.get_entities():
+            name = entity.name
+            model_cls = model_map.get(name)
+            total = db.query(model_cls).count() if model_cls else 0
+            pos = entity_positions.get(name, (500, 200))
             nodes.append({
-                "id": entity_name,
+                "id": name,
                 "type": "entity",
-                "label": entity_labels[entity_name],
+                "label": entity.description.split(" - ")[0] if " - " in entity.description else entity.description,
                 "data": {
-                    "name": entity_name,
-                    "total": stats.get(entity_name, 0)
+                    "name": name,
+                    "total": total,
                 },
-                "position": {"x": pos[0], "y": pos[1]}
+                "position": {"x": pos[0], "y": pos[1]},
             })
 
-        # 关系边
-        relationships = [
-            ("Room", "RoomType", "属于"),
-            ("Reservation", "Guest", "预订人"),
-            ("Reservation", "RoomType", "房型"),
-            ("StayRecord", "Guest", "入住人"),
-            ("StayRecord", "Room", "入住房间"),
-            ("StayRecord", "Reservation", "来源预订"),
-            ("Bill", "StayRecord", "住宿账单"),
-            ("Task", "Room", "目标房间"),
-            ("Task", "Employee", "执行人")
-        ]
-
-        for i, (source, target, label) in enumerate(relationships):
-            edges.append({
-                "id": f"edge-{i}",
-                "source": source,
-                "target": target,
-                "label": label
-            })
+        # Build edges from registry relationships (belongs_to only)
+        edge_i = 0
+        for entity in onto_registry.get_entities():
+            for rel in onto_registry.get_relationships(entity.name):
+                if rel.cardinality in ("many_to_one", "one_to_one"):
+                    edges.append({
+                        "id": f"edge-{edge_i}",
+                        "source": entity.name,
+                        "target": rel.target_entity,
+                        "label": rel.description or rel.name,
+                    })
+                    edge_i += 1
 
     return {"nodes": nodes, "edges": edges}
 
@@ -563,6 +467,15 @@ async def get_permission_matrix(
     service = OntologyMetadataService()
     dynamic = service.get_dynamic_metadata()
     return dynamic["permission_matrix"]
+
+
+@router.get("/dynamic/events")
+async def get_events(
+    current_user: Employee = Depends(require_manager)
+):
+    """获取所有已注册的领域事件"""
+    service = OntologyMetadataService()
+    return {"events": service.get_events()}
 
 
 @router.get("/dynamic/business-rules")

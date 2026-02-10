@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 from pydantic import ValidationError
 
 from core.ai.actions import ActionRegistry
-from app.models.ontology import Employee
+from app.models.ontology import Employee, Guest
 from app.services.param_parser_service import ParamParserService, ParseResult
-from app.services.actions.base import WalkInCheckInParams
+from app.services.actions.base import WalkInCheckInParams, UpdateGuestParams
 
 import logging
 
@@ -131,6 +131,129 @@ def register_guest_actions(
             return {
                 "success": False,
                 "message": f"入住失败: {str(e)}",
+                "error": "execution_error"
+            }
+
+
+    @registry.register(
+        name="update_guest",
+        entity="Guest",
+        description="更新客人信息，包括联系方式（手机号、邮箱）、姓名、证件信息、客户等级、黑名单状态等。",
+        category="mutation",
+        requires_confirmation=True,
+        allowed_roles={"receptionist", "manager"},
+        undoable=False,
+        side_effects=["updates_guest"],
+    )
+    def handle_update_guest(
+        params: UpdateGuestParams,
+        db: Session,
+        user: Employee,
+        **context
+    ) -> Dict[str, Any]:
+        """
+        Execute guest information update.
+
+        Supports locating guest by guest_id or guest_name.
+        Updates only the fields that are provided (non-None).
+        """
+        from app.models.schemas import GuestUpdate
+        from app.services.guest_service import GuestService
+        from sqlalchemy import func
+
+        guest_service = GuestService(db)
+
+        # Resolve guest: by ID or by name
+        guest = None
+        if params.guest_id:
+            guest = guest_service.get_guest(params.guest_id)
+            if not guest:
+                return {
+                    "success": False,
+                    "message": f"未找到ID为 {params.guest_id} 的客人",
+                    "error": "not_found"
+                }
+        elif params.guest_name:
+            # Search by exact name first, then fuzzy
+            candidates = db.query(Guest).filter(
+                Guest.name == params.guest_name
+            ).all()
+
+            if not candidates:
+                candidates = db.query(Guest).filter(
+                    Guest.name.like(f"%{params.guest_name}%")
+                ).all()
+
+            if len(candidates) == 0:
+                return {
+                    "success": False,
+                    "message": f"未找到名为「{params.guest_name}」的客人",
+                    "error": "not_found"
+                }
+            elif len(candidates) > 1:
+                candidate_list = [
+                    {"id": g.id, "name": g.name, "phone": g.phone or ""}
+                    for g in candidates
+                ]
+                return {
+                    "success": False,
+                    "requires_confirmation": True,
+                    "action": "select_guest",
+                    "message": f"找到多个名为「{params.guest_name}」的客人，请确认：",
+                    "candidates": candidate_list
+                }
+            else:
+                guest = candidates[0]
+        else:
+            return {
+                "success": False,
+                "message": "请提供客人ID或客人姓名",
+                "error": "missing_identifier"
+            }
+
+        # Build update data (only non-None fields)
+        update_fields = {}
+        for field_name in ["name", "phone", "email", "id_type", "id_number",
+                           "tier", "is_blacklisted", "blacklist_reason", "notes"]:
+            value = getattr(params, field_name, None)
+            if value is not None:
+                update_fields[field_name] = value
+
+        if not update_fields:
+            return {
+                "success": False,
+                "message": "没有需要更新的字段",
+                "error": "no_updates"
+            }
+
+        # Execute update
+        try:
+            update_data = GuestUpdate(**update_fields)
+            updated_guest = guest_service.update_guest(guest.id, update_data)
+
+            # Build response with changed fields
+            changes = []
+            for k, v in update_fields.items():
+                field_labels = {
+                    "name": "姓名", "phone": "手机号", "email": "邮箱",
+                    "id_type": "证件类型", "id_number": "证件号码",
+                    "tier": "客户等级", "is_blacklisted": "黑名单",
+                    "blacklist_reason": "黑名单原因", "notes": "备注"
+                }
+                changes.append(f"{field_labels.get(k, k)}: {v}")
+
+            return {
+                "success": True,
+                "message": f"已更新客人「{updated_guest.name}」的信息：{'、'.join(changes)}",
+                "guest_id": updated_guest.id,
+                "guest_name": updated_guest.name,
+                "updated_fields": update_fields
+            }
+        except Exception as e:
+            logger.error(f"Error in update_guest: {e}")
+            return {
+                "success": False,
+                "message": f"更新失败: {str(e)}",
                 "error": "execution_error"
             }
 

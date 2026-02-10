@@ -502,6 +502,77 @@ class EventMetadata:
 
 
 @dataclass
+class TimeoutRule:
+    """超时规则 - 状态超时自动转换"""
+    duration: int                        # 超时时长
+    unit: str = "hours"                  # 时间单位: minutes, hours, days
+    action_on_timeout: str = ""          # 超时后执行的动作
+    target_state: str = ""               # 超时后转入的状态
+    notification_before: int = 0         # 提前通知时间（同单位）
+    notification_channel: str = ""       # 通知渠道
+
+    def to_llm_description(self) -> str:
+        """生成 LLM 可理解的描述"""
+        parts = [f"超时: {self.duration}{self.unit}"]
+        if self.target_state:
+            parts.append(f" → {self.target_state}")
+        if self.action_on_timeout:
+            parts.append(f" (执行: {self.action_on_timeout})")
+        if self.notification_before:
+            parts.append(f" [提前{self.notification_before}{self.unit}通知]")
+        return "".join(parts)
+
+
+@dataclass
+class StateDefinition:
+    """状态定义 - 丰富的状态描述"""
+    name: str                            # 状态标识符
+    display_name: str = ""               # 显示名称
+    description: str = ""                # 状态描述
+    is_initial: bool = False             # 是否初始状态
+    is_final: bool = False               # 是否终态
+    timeout_rules: List[TimeoutRule] = field(default_factory=list)
+    allowed_actions: List[str] = field(default_factory=list)  # 该状态下允许的操作
+    color: str = ""                      # UI 显示颜色
+    icon: str = ""                       # UI 显示图标
+
+    def to_llm_description(self) -> str:
+        """生成 LLM 可理解的描述"""
+        parts = [f"**{self.display_name or self.name}**"]
+        if self.description:
+            parts.append(f": {self.description}")
+        if self.is_initial:
+            parts.append(" [初始状态]")
+        if self.is_final:
+            parts.append(" [终态]")
+        if self.allowed_actions:
+            parts.append(f"\n  允许操作: {', '.join(self.allowed_actions)}")
+        for rule in self.timeout_rules:
+            parts.append(f"\n  {rule.to_llm_description()}")
+        return "".join(parts)
+
+
+@dataclass
+class ConfirmationTemplate:
+    """确认对话框模板 - 操作确认的UI模板"""
+    title: str = ""                      # 确认对话框标题
+    message: str = ""                    # 确认消息模板（支持占位符）
+    confirm_button: str = "确认"          # 确认按钮文本
+    cancel_button: str = "取消"           # 取消按钮文本
+    fields_to_show: List[str] = field(default_factory=list)  # 展示给用户确认的字段
+    warning_level: str = "normal"         # normal, caution, danger
+
+    def to_llm_description(self) -> str:
+        """生成 LLM 可理解的描述"""
+        parts = [f"确认: {self.title or self.message}"]
+        if self.fields_to_show:
+            parts.append(f" (展示: {', '.join(self.fields_to_show)})")
+        if self.warning_level != "normal":
+            parts.append(f" [{self.warning_level}]")
+        return "".join(parts)
+
+
+@dataclass
 class EntityMetadata:
     """实体元数据"""
     name: str
@@ -720,6 +791,9 @@ __all__ = [
     "IConstraintValidator",
     "ConstraintMetadata",
     "EventMetadata",
+    "TimeoutRule",
+    "StateDefinition",
+    "ConfirmationTemplate",
     # Searchable decorators
     "ontology_entity",
     "ontology_property",

@@ -332,15 +332,32 @@ LANGUAGE_PROMPTS = {
 class LLMService:
     """LLM 服务"""
 
-    # 支持的操作类型
-    ACTION_TYPES = [
-        "ontology_query",  # NL2OntologyQuery - 动态查询
-        "checkout", "create_task", "walkin_checkin", "checkin",
+    # 支持的操作类型 - 动态从 ActionRegistry 获取
+    _FALLBACK_ACTION_TYPES = [
+        "ontology_query", "checkout", "create_task", "walkin_checkin", "checkin",
         "create_reservation", "extend_stay", "change_room",
         "cancel_reservation", "assign_task", "start_task",
         "complete_task", "add_payment", "adjust_bill",
-        "update_room_status", "view"
+        "update_room_status", "update_guest", "view"
     ]
+
+    @classmethod
+    def get_action_types(cls) -> list:
+        """从 ActionRegistry 动态获取支持的操作类型，合并已知的内置类型"""
+        try:
+            from app.services.actions import get_action_registry
+            registry = get_action_registry()
+            action_names = set(a.name for a in registry.list_actions())
+            # 合并 fallback 中的旧操作类型（尚未迁移到 ActionRegistry 的）
+            action_names.update(cls._FALLBACK_ACTION_TYPES)
+            return list(action_names)
+        except Exception:
+            return cls._FALLBACK_ACTION_TYPES
+
+    @property
+    def ACTION_TYPES(self):
+        """动态属性，兼容旧代码中通过实例访问 ACTION_TYPES"""
+        return self.get_action_types()
 
     # 任务状态
     TASK_STATUS = ["pending", "assigned", "in_progress", "completed"]
@@ -401,6 +418,7 @@ class LLMService:
 - add_payment: 收款（需要 bill_id, amount, method: cash/card）
 - adjust_bill: 账单调整（需要 bill_id, adjustment_amount, reason）
 - update_room_status: 修改房态（需要 room_number, status: vacant_clean/occupied/vacant_dirty/out_of_order）
+- update_guest: 更新客人信息（需要 guest_name 或 guest_id，以及要更新的字段如 phone, email, tier, is_blacklisted 等）
 
 **各操作必需参数:**
 walkin_checkin: room_number, guest_name, guest_phone, expected_check_out

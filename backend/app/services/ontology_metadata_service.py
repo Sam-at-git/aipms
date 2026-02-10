@@ -159,6 +159,10 @@ class OntologyMetadataService:
             # 获取关系
             relationships = self._get_enriched_relationships(entity_name)
 
+            # Get enriched metadata from registry
+            onto_registry = OntologyRegistry()
+            entity_meta = onto_registry.get_entity(entity_name)
+
             entity_info = {
                 "name": entity_name,
                 "description": self.ENTITY_DESCRIPTIONS.get(entity_name, ""),
@@ -166,8 +170,19 @@ class OntologyMetadataService:
                 "is_aggregate_root": entity_name in self.AGGREGATE_ROOTS,
                 "attributes": [self._serialize_attribute(attr) for attr in attributes],
                 "relationships": relationships,
-                "related_entities": self.ENTITY_RELATIONSHIPS.get(entity_name, [])
+                "related_entities": self.ENTITY_RELATIONSHIPS.get(entity_name, []),
             }
+
+            # Add enriched fields from registry
+            if entity_meta:
+                entity_info["category"] = getattr(entity_meta, "category", "")
+                entity_info["implements"] = getattr(entity_meta, "implements", [])
+                entity_info["lifecycle_states"] = getattr(entity_meta, "lifecycle_states", None)
+                extensions = getattr(entity_meta, "extensions", {})
+                if extensions:
+                    entity_info["business_purpose"] = extensions.get("business_purpose", "")
+                    entity_info["key_attributes"] = extensions.get("key_attributes", [])
+                    entity_info["invariants"] = extensions.get("invariants", [])
             entities.append(entity_info)
 
         return {"entities": entities}
@@ -522,14 +537,20 @@ class OntologyMetadataService:
                 },
                 {
                     "action_type": "update_guest",
-                    "description": "更新客人信息",
+                    "description": "更新客人信息，包括联系方式、姓名、证件信息、客户等级、黑名单状态等",
                     "params": [
-                        {"name": "guest_id", "type": "integer", "required": True, "description": "客人ID"},
+                        {"name": "guest_id", "type": "integer", "required": False, "description": "客人ID（与guest_name二选一）"},
+                        {"name": "guest_name", "type": "string", "required": False, "description": "客人姓名（用于查找客人，与guest_id二选一）"},
+                        {"name": "name", "type": "string", "required": False, "description": "新姓名"},
+                        {"name": "phone", "type": "string", "required": False, "description": "新手机号"},
+                        {"name": "email", "type": "string", "required": False, "description": "新邮箱"},
+                        {"name": "id_type", "type": "string", "required": False, "description": "证件类型"},
+                        {"name": "id_number", "type": "string", "required": False, "description": "证件号码"},
                         {"name": "tier", "type": "enum", "required": False, "description": "客户等级",
                          "enum_values": ["normal", "silver", "gold", "platinum"]},
                         {"name": "is_blacklisted", "type": "boolean", "required": False, "description": "是否黑名单"},
                     ],
-                    "requires_confirmation": False,
+                    "requires_confirmation": True,
                     "allowed_roles": ["manager", "receptionist"],
                     "writeback": True,
                     "undoable": False,

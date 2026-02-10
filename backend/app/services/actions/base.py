@@ -67,6 +67,26 @@ class WalkInCheckInParams(BaseModel):
         raise ValueError(f"无效的日期类型: {type(v)}")
 
 
+class UpdateGuestParams(BaseModel):
+    """
+    更新客人信息参数
+
+    用于 update_guest 动作，更新客人的联系方式、等级等信息。
+    支持通过 guest_id 或 guest_name 定位客人。
+    """
+    guest_id: Optional[int] = Field(default=None, description="客人ID", gt=0)
+    guest_name: Optional[str] = Field(default=None, description="客人姓名（用于查找客人）")
+    name: Optional[str] = Field(default=None, description="新姓名", max_length=100)
+    phone: Optional[str] = Field(default=None, description="新手机号", max_length=20)
+    email: Optional[str] = Field(default=None, description="新邮箱", max_length=100)
+    id_type: Optional[str] = Field(default=None, description="证件类型", max_length=20)
+    id_number: Optional[str] = Field(default=None, description="证件号码", max_length=50)
+    tier: Optional[str] = Field(default=None, description="客户等级: normal, silver, gold, platinum")
+    is_blacklisted: Optional[bool] = Field(default=None, description="是否黑名单")
+    blacklist_reason: Optional[str] = Field(default=None, description="黑名单原因")
+    notes: Optional[str] = Field(default=None, description="备注信息")
+
+
 # ============== Stay Action Parameters ==============
 
 class CheckoutParams(BaseModel):
@@ -379,8 +399,44 @@ class CreateRatePlanParams(BaseModel):
     is_weekend: bool = Field(default=False, description="是否仅周末有效")
 
 
+# ============== Webhook Action Parameters ==============
+
+class SyncOTAParams(BaseModel):
+    """同步OTA房态参数"""
+    channel: str = Field(default="all", description="OTA渠道: ctrip, meituan, all")
+    room_type: Optional[str] = Field(default=None, description="房型名称（空则同步所有）")
+
+
+class FetchChannelReservationsParams(BaseModel):
+    """拉取渠道预订参数"""
+    channel: str = Field(..., description="渠道名称: ctrip, meituan, booking")
+    date_from: Optional[date] = Field(default=None, description="起始日期")
+    date_to: Optional[date] = Field(default=None, description="截止日期")
+
+
+# ============== Notification Action Parameters ==============
+
+class NotificationParams(BaseModel):
+    """通知参数"""
+    target: Optional[str] = Field(default=None, description="通知目标（房间号或员工名）")
+    message: Optional[str] = Field(default=None, description="自定义消息")
+    channel: str = Field(default="system", description="通知渠道: system, sms, wechat")
+
+
+# ============== Interface Action Parameters ==============
+
+class BookResourceParams(BaseModel):
+    """预订资源参数（通用接口动作）"""
+    resource_type: str = Field(default="Room", description="资源类型")
+    resource_id: Optional[Union[int, str]] = Field(default=None, description="资源ID或编号")
+    guest_name: Optional[str] = Field(default=None, description="客人姓名")
+    start_date: Optional[date] = Field(default=None, description="开始日期")
+    end_date: Optional[date] = Field(default=None, description="结束日期")
+
+
 __all__ = [
     "WalkInCheckInParams",
+    "UpdateGuestParams",
     "CheckoutParams",
     "CreateTaskParams",
     "CreateReservationParams",
@@ -392,4 +448,8 @@ __all__ = [
     "ActionResult",
     "UpdatePriceParams",
     "CreateRatePlanParams",
+    "SyncOTAParams",
+    "FetchChannelReservationsParams",
+    "NotificationParams",
+    "BookResourceParams",
 ]

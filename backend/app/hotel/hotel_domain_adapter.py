@@ -182,41 +182,109 @@ class HotelDomainAdapter(IDomainAdapter):
         )
 
         entity_defs = [
-            (EntityMetadata(name="Room", description="酒店房间，物理空间单位",
+            (EntityMetadata(
+                name="Room",
+                description="酒店房间 - 物理空间单位，数字孪生的核心实体。房间号格式: 楼层+序号 (如 201, 202)。每个房间有固定的房型，决定基础价格和最大入住人数。",
                 table_name="rooms", category="master_data", is_aggregate_root=False,
-                lifecycle_states=["VACANT_CLEAN", "VACANT_DIRTY", "OCCUPIED", "OUT_OF_ORDER"]),
-             Room),
-            (EntityMetadata(name="Guest", description="客人信息",
+                lifecycle_states=["VACANT_CLEAN", "VACANT_DIRTY", "OCCUPIED", "OUT_OF_ORDER"],
+                implements=["BookableResource", "Maintainable"],
+                extensions={
+                    "business_purpose": "可销售的核心库存单元",
+                    "key_attributes": ["room_number", "status", "room_type_id"],
+                    "typical_lifecycle": "vacant_clean → occupied → vacant_dirty → vacant_clean",
+                    "invariants": ["房间状态必须符合状态机约束", "入住中房间不能被重复预订", "维修中房间不能办理入住"],
+                },
+            ), Room),
+            (EntityMetadata(
+                name="Guest",
+                description="客人信息 - 客户关系管理的核心实体。支持会员等级体系 (normal/silver/gold/platinum)，黑名单管理，以及完整的入住历史追踪。",
                 table_name="guests", category="master_data", is_aggregate_root=True,
-                tags=["customer", "crm"]),
-             Guest),
-            (EntityMetadata(name="Reservation", description="预订信息",
+                tags=["customer", "crm"],
+                extensions={
+                    "business_purpose": "客户关系管理与画像",
+                    "key_attributes": ["name", "phone", "id_number", "tier"],
+                    "invariants": ["身份证号唯一", "黑名单客人禁止入住"],
+                },
+            ), Guest),
+            (EntityMetadata(
+                name="Reservation",
+                description="预订信息 - 预订阶段的聚合根。管理从创建到入住或取消的完整预订生命周期，包括渠道来源、押金、特殊要求等。",
                 table_name="reservations", category="transactional",
-                lifecycle_states=["CONFIRMED", "CHECKED_IN", "COMPLETED", "CANCELLED"]),
-             Reservation),
-            (EntityMetadata(name="StayRecord", description="住宿记录",
+                lifecycle_states=["CONFIRMED", "CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW"],
+                extensions={
+                    "business_purpose": "预订管理与渠道分销",
+                    "key_attributes": ["reservation_no", "guest_id", "check_in_date", "check_out_date", "status"],
+                    "invariants": ["禁止重复预订同一房间同一时段", "入住日期必须是未来日期"],
+                },
+            ), Reservation),
+            (EntityMetadata(
+                name="StayRecord",
+                description="住宿记录 - 住宿期间的聚合根，代表一次完整的入住经历。关联客人、房间、账单，是营收管理的核心数据。",
                 table_name="stay_records", category="transactional", is_aggregate_root=True,
-                lifecycle_states=["ACTIVE", "CHECKED_OUT"]),
-             StayRecord),
-            (EntityMetadata(name="Task", description="任务（清洁、维修等）",
+                lifecycle_states=["ACTIVE", "CHECKED_OUT"],
+                extensions={
+                    "business_purpose": "住宿过程管理与营收追踪",
+                    "key_attributes": ["guest_id", "room_id", "check_in_time", "expected_check_out", "status"],
+                    "invariants": ["最短入住1小时", "延住需要房间可用"],
+                },
+            ), StayRecord),
+            (EntityMetadata(
+                name="Task",
+                description="任务 - 清洁和维修任务管理。支持任务创建、分配、执行、完成的完整工作流。退房自动创建清洁任务，任务完成自动更新房间状态。",
                 table_name="tasks", category="transactional",
-                lifecycle_states=["PENDING", "IN_PROGRESS", "COMPLETED", "CANCELLED"]),
-             Task),
-            (EntityMetadata(name="Bill", description="账单",
-                table_name="bills", category="transactional"),
-             Bill),
-            (EntityMetadata(name="Payment", description="支付记录",
-                table_name="payments", category="transactional"),
-             Payment),
-            (EntityMetadata(name="Employee", description="员工",
-                table_name="employees", category="master_data"),
-             Employee),
-            (EntityMetadata(name="RoomType", description="房型定义",
-                table_name="room_types", category="dimension"),
-             RoomType),
-            (EntityMetadata(name="RatePlan", description="价格方案",
-                table_name="rate_plans", category="dimension"),
-             RatePlan),
+                lifecycle_states=["PENDING", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "CANCELLED"],
+                extensions={
+                    "business_purpose": "运营任务管理与工作流",
+                    "key_attributes": ["room_id", "task_type", "assignee_id", "status"],
+                    "invariants": ["退房自动创建清洁任务", "任务完成更新房间状态"],
+                },
+            ), Task),
+            (EntityMetadata(
+                name="Bill",
+                description="账单 - 与住宿记录关联的财务记录。包含总金额、已付金额、调整金额，支持多种支付方式。",
+                table_name="bills", category="transactional",
+                extensions={
+                    "business_purpose": "财务管理与结算",
+                    "key_attributes": ["stay_record_id", "total_amount", "paid_amount", "is_settled"],
+                    "invariants": ["支付不超过余额", "调整需要经理审批"],
+                },
+            ), Bill),
+            (EntityMetadata(
+                name="Payment",
+                description="支付记录 - 账单的支付明细，记录每笔支付的金额、方式和时间。",
+                table_name="payments", category="transactional",
+                extensions={
+                    "business_purpose": "支付流水与对账",
+                    "key_attributes": ["bill_id", "amount", "method", "payment_time"],
+                },
+            ), Payment),
+            (EntityMetadata(
+                name="Employee",
+                description="员工 - 系统用户，按角色(sysadmin/manager/receptionist/cleaner)区分权限。负责执行各类酒店运营操作。",
+                table_name="employees", category="master_data",
+                extensions={
+                    "business_purpose": "员工管理与权限控制",
+                    "key_attributes": ["username", "name", "role", "is_active"],
+                },
+            ), Employee),
+            (EntityMetadata(
+                name="RoomType",
+                description="房型定义 - 定义房间类型（如标准间、豪华大床房、套房等），包括基础价格、最大入住人数和设施信息。",
+                table_name="room_types", category="dimension",
+                extensions={
+                    "business_purpose": "产品定义与定价基准",
+                    "key_attributes": ["name", "base_price", "max_occupancy"],
+                },
+            ), RoomType),
+            (EntityMetadata(
+                name="RatePlan",
+                description="价格方案 - 动态定价管理，支持按日期范围、周末/平日区分的灵活价格策略。",
+                table_name="rate_plans", category="dimension",
+                extensions={
+                    "business_purpose": "动态定价与收益管理",
+                    "key_attributes": ["room_type_id", "price", "start_date", "end_date"],
+                },
+            ), RatePlan),
         ]
 
         for entity_meta, model_cls in entity_defs:
@@ -362,9 +430,10 @@ class HotelDomainAdapter(IDomainAdapter):
         ))
 
     def _register_constraints(self, registry: "OntologyRegistry") -> None:
-        """注册酒店约束"""
+        """注册酒店约束 (20+ business rules)"""
 
-        # 入住约束：房间必须空闲
+        # ========== Room Rules (3+) ==========
+
         registry.register_constraint(ConstraintMetadata(
             id="room_must_be_vacant_for_checkin",
             name="入住时房间必须空闲",
@@ -378,7 +447,129 @@ class HotelDomainAdapter(IDomainAdapter):
             suggestion_message="请选择状态为 VACANT_CLEAN 的房间"
         ))
 
-        # 退房约束：账单必须结清
+        registry.register_constraint(ConstraintMetadata(
+            id="room_type_exists_before_room_creation",
+            name="房型必须存在",
+            description="创建房间时关联的房型必须已存在",
+            constraint_type=ConstraintType.REFERENCE,
+            severity=ConstraintSeverity.ERROR,
+            entity="Room",
+            action="create_room",
+            condition_text="room_type_id exists in RoomType",
+            error_message="指定的房型不存在",
+            suggestion_message="请先创建房型或选择已有房型"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="maintenance_requires_no_active_stay",
+            name="维修要求无在住客人",
+            description="标记房间为维修状态时，房间内不能有在住客人",
+            constraint_type=ConstraintType.STATE,
+            severity=ConstraintSeverity.ERROR,
+            entity="Room",
+            action="maintenance",
+            condition_text="room.status != 'OCCUPIED'",
+            error_message="房间有在住客人，无法标记为维修",
+            suggestion_message="请先办理客人退房或换房"
+        ))
+
+        # ========== Guest Rules (2+) ==========
+
+        registry.register_constraint(ConstraintMetadata(
+            id="guest_unique_by_id_number",
+            name="身份证号唯一",
+            description="同一身份证号不能重复注册",
+            constraint_type=ConstraintType.CARDINALITY,
+            severity=ConstraintSeverity.ERROR,
+            entity="Guest",
+            action="create_guest",
+            condition_text="id_number is unique across Guest",
+            error_message="该身份证号已注册",
+            suggestion_message="请检查是否已有该客人记录"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="blacklist_prevents_checkin",
+            name="黑名单客人禁止入住",
+            description="在黑名单中的客人不允许办理入住",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.ERROR,
+            entity="Guest",
+            action="checkin",
+            condition_text="guest.is_blacklisted == False",
+            error_message="该客人在黑名单中，禁止入住",
+            suggestion_message="如需解除黑名单，请联系经理审批"
+        ))
+
+        # ========== Reservation Rules (5+) ==========
+
+        registry.register_constraint(ConstraintMetadata(
+            id="checkout_date_must_be_after_checkin",
+            name="退房日期必须晚于入住日期",
+            description="预订时退房日期必须晚于入住日期",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.ERROR,
+            entity="Reservation",
+            action="create_reservation",
+            condition_text="check_out_date > check_in_date",
+            error_message="退房日期不能早于或等于入住日期",
+            suggestion_message="请选择正确的入住和退房日期"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="no_double_booking_same_room",
+            name="禁止重复预订同一房间",
+            description="同一房间在同一时间段内不能被多次预订",
+            constraint_type=ConstraintType.CARDINALITY,
+            severity=ConstraintSeverity.ERROR,
+            entity="Reservation",
+            action="create_reservation",
+            condition_text="no overlapping reservations for same room and date range",
+            error_message="该房间在指定日期已有预订",
+            suggestion_message="请选择其他房间或日期"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="checkin_requires_future_date",
+            name="入住日期必须是未来",
+            description="创建预订时入住日期不能是过去的日期",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.ERROR,
+            entity="Reservation",
+            action="create_reservation",
+            condition_text="check_in_date >= today",
+            error_message="入住日期不能是过去的日期",
+            suggestion_message="请选择今天或之后的日期"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="no_show_auto_cancel_after_24h",
+            name="未到店24小时自动取消",
+            description="客人未在预订入住日期后24小时内到达，预订自动标记为No Show",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.WARNING,
+            entity="Reservation",
+            action="",
+            condition_text="now() - check_in_date > 24 hours AND status == 'CONFIRMED'",
+            error_message="客人超时未到店",
+            suggestion_message="系统将自动标记为 No Show"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="deposit_required_for_confirmed",
+            name="确认预订需要押金",
+            description="预订确认时需收取押金",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.WARNING,
+            entity="Reservation",
+            action="create_reservation",
+            condition_text="prepaid_amount > 0 for confirmed reservations",
+            error_message="建议收取押金以确保预订",
+            suggestion_message="建议收取首晚房费作为押金"
+        ))
+
+        # ========== StayRecord Rules (4+) ==========
+
         registry.register_constraint(ConstraintMetadata(
             id="bill_must_be_settled_for_checkout",
             name="退房前必须结清账单",
@@ -392,18 +583,125 @@ class HotelDomainAdapter(IDomainAdapter):
             suggestion_message="请先收取未结清金额"
         ))
 
-        # 日期约束：退房日期必须晚于入住日期
         registry.register_constraint(ConstraintMetadata(
-            id="checkout_date_must_be_after_checkin",
-            name="退房日期必须晚于入住日期",
-            description="预订时退房日期必须晚于入住日期",
+            id="stay_duration_minimum_1_hour",
+            name="最短入住1小时",
+            description="住宿时长不得少于1小时",
             constraint_type=ConstraintType.BUSINESS_RULE,
             severity=ConstraintSeverity.ERROR,
-            entity="Reservation",
-            action="create_reservation",
-            condition_text="check_out_date > check_in_date",
-            error_message="退房日期不能早于或等于入住日期",
-            suggestion_message="请选择正确的入住和退房日期"
+            entity="StayRecord",
+            action="checkout",
+            condition_text="check_out_time - check_in_time >= 1 hour",
+            error_message="入住时间不足1小时，请稍后再办理退房",
+            suggestion_message="如需取消入住，请使用取消功能"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="extension_requires_availability",
+            name="延住需要房间可用",
+            description="延长住宿时需确认延住期间房间无其他预订",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.ERROR,
+            entity="StayRecord",
+            action="extend_stay",
+            condition_text="no reservations for room during extended period",
+            error_message="延住日期内该房间已有其他预订",
+            suggestion_message="请选择其他日期或考虑换房"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="change_room_requires_vacant_target",
+            name="换房目标必须空闲",
+            description="换房时目标房间必须处于空闲可住状态",
+            constraint_type=ConstraintType.STATE,
+            severity=ConstraintSeverity.ERROR,
+            entity="StayRecord",
+            action="change_room",
+            condition_text="target_room.status == 'VACANT_CLEAN'",
+            error_message="目标房间不可用，无法换房",
+            suggestion_message="请选择状态为空闲已清洁的房间"
+        ))
+
+        # ========== Bill Rules (3+) ==========
+
+        registry.register_constraint(ConstraintMetadata(
+            id="payment_not_exceed_balance",
+            name="支付不超过余额",
+            description="单次支付金额不能超过账单未付余额",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.ERROR,
+            entity="Bill",
+            action="add_payment",
+            condition_text="payment.amount <= bill.outstanding_amount",
+            error_message="支付金额超过未付余额",
+            suggestion_message="请确认支付金额"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="adjustment_requires_manager_approval",
+            name="账单调整需要经理审批",
+            description="账单调整（减免、折扣等）需要经理角色审批",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.ERROR,
+            entity="Bill",
+            action="adjust_bill",
+            condition_text="user.role in ('manager', 'sysadmin')",
+            error_message="账单调整需要经理或以上权限",
+            suggestion_message="请联系经理进行账单调整"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="daily_charges_auto_post",
+            name="每日自动计费",
+            description="在住客人每日自动产生房费，计入账单",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.INFO,
+            entity="Bill",
+            action="",
+            condition_text="daily charge posted for active stays",
+            error_message="",
+            suggestion_message="系统每日自动计算并记录房费"
+        ))
+
+        # ========== Task Rules (3+) ==========
+
+        registry.register_constraint(ConstraintMetadata(
+            id="cleaning_task_created_on_checkout",
+            name="退房自动创建清洁任务",
+            description="客人退房后系统自动为该房间创建清洁任务",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.INFO,
+            entity="Task",
+            action="checkout",
+            condition_text="auto create cleaning task on checkout",
+            error_message="",
+            suggestion_message="退房后系统会自动创建清洁任务"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="task_auto_assign_by_role",
+            name="任务按角色自动分配",
+            description="清洁任务自动分配给清洁工角色的空闲员工",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.INFO,
+            entity="Task",
+            action="create_task",
+            condition_text="auto assign to available cleaner",
+            error_message="",
+            suggestion_message="系统可自动分配任务给空闲清洁工"
+        ))
+
+        registry.register_constraint(ConstraintMetadata(
+            id="task_completion_updates_room_status",
+            name="任务完成更新房间状态",
+            description="清洁任务完成后自动将房间状态更新为 VACANT_CLEAN",
+            constraint_type=ConstraintType.BUSINESS_RULE,
+            severity=ConstraintSeverity.INFO,
+            entity="Task",
+            action="complete_task",
+            condition_text="on task complete: room.status = 'VACANT_CLEAN'",
+            error_message="",
+            suggestion_message="任务完成后房间状态会自动更新"
         ))
 
     def _register_events(self, registry: "OntologyRegistry") -> None:

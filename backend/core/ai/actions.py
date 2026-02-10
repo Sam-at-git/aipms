@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 # Category types for actions
-ActionCategory = Literal["query", "mutation", "system", "tool"]
+ActionCategory = Literal["query", "mutation", "system", "tool", "webhook", "notification", "interface"]
 
 
 @dataclass

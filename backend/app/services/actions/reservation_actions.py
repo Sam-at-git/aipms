@@ -11,7 +11,9 @@ from pydantic import ValidationError
 from core.ai.actions import ActionRegistry
 from app.models.ontology import Employee
 from app.services.param_parser_service import ParamParserService
-from app.services.actions.base import CreateReservationParams
+from app.services.actions.base import (
+    CreateReservationParams, CancelReservationParams, ModifyReservationParams,
+)
 
 import logging
 
@@ -120,7 +122,7 @@ def register_reservation_actions(
         # Execute reservation creation
         try:
             service = ReservationService(db)
-            reservation = service.create_reservation(request)
+            reservation = service.create_reservation(request, created_by=user.id)
 
             return {
                 "success": True,
@@ -130,9 +132,9 @@ def register_reservation_actions(
                 "reservation_id": reservation.id,
                 "reservation_no": reservation.reservation_no,
                 "guest_id": reservation.guest_id,
-                "guest_name": reservation.guest_name,
+                "guest_name": reservation.guest.name,
                 "room_type_id": reservation.room_type_id,
-                "room_type_name": reservation.room_type_name,
+                "room_type_name": reservation.room_type.name,
                 "check_in_date": reservation.check_in_date.isoformat(),
                 "check_out_date": reservation.check_out_date.isoformat(),
                 "total_amount": float(reservation.total_amount) if reservation.total_amount else 0,
@@ -157,6 +159,163 @@ def register_reservation_actions(
             return {
                 "success": False,
                 "message": f"创建预订失败: {str(e)}",
+                "error": "execution_error"
+            }
+
+
+    @registry.register(
+        name="cancel_reservation",
+        entity="Reservation",
+        description="取消预订。仅已确认状态的预订可以取消。",
+        category="mutation",
+        requires_confirmation=True,
+        allowed_roles={"receptionist", "manager"},
+        undoable=False,
+        side_effects=["cancels_reservation"],
+        search_keywords=["取消预订", "退订", "cancel reservation"]
+    )
+    def handle_cancel_reservation(
+        params: CancelReservationParams,
+        db: Session,
+        user: Employee,
+        **context
+    ) -> Dict[str, Any]:
+        """取消预订"""
+        from app.models.schemas import ReservationCancel
+        from app.services.reservation_service import ReservationService
+        from app.models.ontology import Reservation
+
+        try:
+            # Resolve reservation by ID or number
+            reservation = None
+            if params.reservation_id:
+                reservation = db.query(Reservation).filter(
+                    Reservation.id == params.reservation_id
+                ).first()
+            elif params.reservation_no:
+                reservation = db.query(Reservation).filter(
+                    Reservation.reservation_no == params.reservation_no
+                ).first()
+
+            if not reservation:
+                return {
+                    "success": False,
+                    "message": "预订不存在，请提供有效的预订ID或预订号",
+                    "error": "not_found"
+                }
+
+            cancel_data = ReservationCancel(
+                cancel_reason=params.reason or "客人要求取消"
+            )
+            service = ReservationService(db)
+            reservation = service.cancel_reservation(reservation.id, cancel_data)
+
+            return {
+                "success": True,
+                "message": f"预订 {reservation.reservation_no} 已取消",
+                "reservation_id": reservation.id,
+                "reservation_no": reservation.reservation_no,
+                "status": reservation.status.value
+            }
+        except ValueError as e:
+            return {
+                "success": False,
+                "message": str(e),
+                "error": "business_error"
+            }
+        except Exception as e:
+            logger.error(f"Error in cancel_reservation: {e}")
+            return {
+                "success": False,
+                "message": f"取消预订失败: {str(e)}",
+                "error": "execution_error"
+            }
+
+    @registry.register(
+        name="modify_reservation",
+        entity="Reservation",
+        description="修改预订信息。可修改入住/退房日期、房型、人数、特殊要求等。",
+        category="mutation",
+        requires_confirmation=True,
+        allowed_roles={"receptionist", "manager"},
+        undoable=False,
+        side_effects=["modifies_reservation"],
+        search_keywords=["修改预订", "更改预订", "调整预订", "modify reservation"]
+    )
+    def handle_modify_reservation(
+        params: ModifyReservationParams,
+        db: Session,
+        user: Employee,
+        **context
+    ) -> Dict[str, Any]:
+        """修改预订"""
+        from app.models.schemas import ReservationUpdate
+        from app.services.reservation_service import ReservationService
+        from app.models.ontology import Reservation
+
+        try:
+            # Resolve reservation
+            reservation = None
+            if params.reservation_id:
+                reservation = db.query(Reservation).filter(
+                    Reservation.id == params.reservation_id
+                ).first()
+            elif params.reservation_no:
+                reservation = db.query(Reservation).filter(
+                    Reservation.reservation_no == params.reservation_no
+                ).first()
+
+            if not reservation:
+                return {
+                    "success": False,
+                    "message": "预订不存在，请提供有效的预订ID或预订号",
+                    "error": "not_found"
+                }
+
+            # Build update dict from non-None fields
+            update_fields = {}
+            if params.check_in_date is not None:
+                update_fields['check_in_date'] = params.check_in_date
+            if params.check_out_date is not None:
+                update_fields['check_out_date'] = params.check_out_date
+            if params.room_type_id is not None:
+                update_fields['room_type_id'] = params.room_type_id
+            if params.adult_count is not None:
+                update_fields['adult_count'] = params.adult_count
+            if params.special_requests is not None:
+                update_fields['special_requests'] = params.special_requests
+
+            if not update_fields:
+                return {
+                    "success": False,
+                    "message": "没有需要修改的字段",
+                    "error": "no_updates"
+                }
+
+            update_data = ReservationUpdate(**update_fields)
+            service = ReservationService(db)
+            reservation = service.update_reservation(reservation.id, update_data)
+
+            return {
+                "success": True,
+                "message": f"预订 {reservation.reservation_no} 已更新",
+                "reservation_id": reservation.id,
+                "reservation_no": reservation.reservation_no,
+                "check_in_date": str(reservation.check_in_date),
+                "check_out_date": str(reservation.check_out_date),
+                "status": reservation.status.value
+            }
+        except ValueError as e:
+            return {
+                "success": False,
+                "message": str(e),
+                "error": "business_error"
+            }
+        except Exception as e:
+            logger.error(f"Error in modify_reservation: {e}")
+            return {
+                "success": False,
+                "message": f"修改预订失败: {str(e)}",
                 "error": "execution_error"
             }
 

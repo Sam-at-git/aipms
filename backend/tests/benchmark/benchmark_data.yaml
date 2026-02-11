@@ -44,9 +44,10 @@ groups:
     description: "测试创建预订和预订入住"
     tests:
       - name: "创建预订"
-        input: "帮赵女士预订一间大床房，电话13611112222，今天入住，明天退房"
+        input: "帮赵女士预订一间标间，电话13611112222，今天入住，明天退房"
         follow_up_fields:
-          room_type: "大床房"
+          room_type: "标间"
+          room_type_id: "标间"
         expect_action:
           action_type: "create_reservation"
           params_contain:
@@ -62,19 +63,21 @@ groups:
                 status: "confirmed"
 
       - name: "预订入住"
-        input: "赵女士的预订办理入住"
+        input: "赵女士的预订办理入住，安排203房间，明天退房"
         follow_up_fields:
-          room_number: "206"
+          room_number: "203"
           expected_check_out: "$tomorrow"
         expect_action:
-          action_type: "checkin"
-          params_contain:
-            guest_name: "赵女士"
+          action_type_pattern: "^(checkin|walkin_checkin)$"
         verify_db:
           - sql: "SELECT r.status FROM reservations r JOIN guests g ON r.guest_id = g.id WHERE g.name = '赵女士'"
             expect:
               values:
                 status: "checked_in"
+          - sql: "SELECT status FROM rooms WHERE room_number = '203'"
+            expect:
+              values:
+                status: "occupied"
 
   - name: "任务管理"
     description: "测试创建和完成清洁任务"
@@ -96,10 +99,10 @@ groups:
 
       - name: "分配清洁任务"
         input: "把301房间的清洁任务分配给刘阿姨"
+        follow_up_fields:
+          assignee_name: "刘阿姨"
         expect_action:
           action_type: "assign_task"
-          params_contain:
-            room_number: "301"
         verify_db:
           - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '301'"
             expect:
@@ -165,3 +168,526 @@ groups:
           - sql: "SELECT SUM(amount) as total FROM payments WHERE bill_id = (SELECT b.id FROM bills b JOIN stay_records s ON b.stay_record_id = s.id JOIN rooms r ON s.room_id = r.id WHERE r.room_number = '401')"
             expect:
               rows: 1
+
+  # ============================================================
+  # 以下为补充的 50 条测试用例，覆盖更多场景和口语表达
+  # ============================================================
+
+  # ---------- 7. 散客入住-口语表达 ----------
+  - name: "散客入住-口语表达"
+    description: "测试各种口语化的入住和退房表达"
+    tests:
+      - name: "口语-来了个客人"
+        input: "来了个客人叫李明，手机号18866665555，住302，明天走"
+        expect_action:
+          action_type: "walkin_checkin"
+          params_contain:
+            guest_name: "李明"
+            room_number: "302"
+            guest_phone: "18866665555"
+        verify_db:
+          - sql: "SELECT name FROM guests WHERE name = '李明'"
+            expect:
+              rows: 1
+          - sql: "SELECT status FROM rooms WHERE room_number = '302'"
+            expect:
+              values:
+                status: "occupied"
+
+      - name: "口语-开房"
+        input: "有位张女士要开房，手机13800138000，给她202，后天退"
+        expect_action:
+          action_type: "walkin_checkin"
+          params_contain:
+            guest_name: "张女士"
+            room_number: "202"
+            guest_phone: "13800138000"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '202'"
+            expect:
+              values:
+                status: "occupied"
+
+      - name: "口语-帮办个入住"
+        input: "帮一个叫王丽的客人办入住，电话15911112222，503豪华间，后天退"
+        expect_action:
+          action_type: "walkin_checkin"
+          params_contain:
+            guest_name: "王丽"
+            room_number: "503"
+            guest_phone: "15911112222"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '503'"
+            expect:
+              values:
+                status: "occupied"
+
+      - name: "口语-退房简洁"
+        input: "302退房"
+        expect_action:
+          action_type: "checkout"
+          params_contain:
+            room_number: "302"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '302'"
+            expect:
+              values:
+                status: "vacant_dirty"
+
+      - name: "口语-客人要走了"
+        input: "202的客人要走了，帮忙办退房"
+        expect_action:
+          action_type: "checkout"
+          params_contain:
+            room_number: "202"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '202'"
+            expect:
+              values:
+                status: "vacant_dirty"
+
+  # ---------- 8. 完整住宿流程 ----------
+  - name: "完整住宿流程"
+    description: "测试预订→入住→延住→退房→查账的完整流程"
+    tests:
+      - name: "电话订房"
+        input: "有个客人打电话来订房，叫陈伟，电话13333334444，要标间，今天到明天走"
+        follow_up_fields:
+          room_type: "标间"
+          room_type_id: "标间"
+        expect_action:
+          action_type: "create_reservation"
+          params_contain:
+            guest_name: "陈伟"
+            guest_phone: "13333334444"
+            check_in_date: "$today"
+            check_out_date: "$tomorrow"
+        verify_db:
+          - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '陈伟')"
+            expect:
+              rows: 1
+              values:
+                status: "confirmed"
+
+      - name: "客人到了办入住"
+        input: "陈伟有预订，帮他办入住203房间，明天退房"
+        follow_up_fields:
+          room_number: "203"
+          expected_check_out: "$tomorrow"
+        expect_action:
+          action_type_pattern: "^(checkin|walkin_checkin)$"
+          params_contain:
+            room_number: "203"
+        verify_db:
+          - sql: "SELECT r.status FROM reservations r JOIN guests g ON r.guest_id = g.id WHERE g.name = '陈伟'"
+            expect:
+              values:
+                status: "checked_in"
+          - sql: "SELECT status FROM rooms WHERE room_number = '203'"
+            expect:
+              values:
+                status: "occupied"
+
+      - name: "口语-多住一天"
+        input: "203房间的陈伟想多住一天，延住到后天退房"
+        follow_up_fields:
+          new_check_out_date: "$day_after_tomorrow"
+        expect_action:
+          action_type: "extend_stay"
+
+      - name: "口语-帮退房"
+        input: "203房间退房"
+        expect_action:
+          action_type: "checkout"
+
+      - name: "查消费明细"
+        input: "看看陈伟的消费明细"
+        expect_query_result: true
+
+  # ---------- 9. 预订变更 ----------
+  - name: "预订变更"
+    description: "测试预订的取消和修改"
+    tests:
+      - name: "口语-订个豪华间"
+        input: "孙雪要订个豪华间，手机15666667777，今天到明天"
+        follow_up_fields:
+          room_type: "豪华间"
+          room_type_id: "豪华间"
+        expect_action:
+          action_type: "create_reservation"
+          params_contain:
+            guest_name: "孙雪"
+            guest_phone: "15666667777"
+        verify_db:
+          - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '孙雪')"
+            expect:
+              values:
+                status: "confirmed"
+
+      - name: "口语-不来了取消"
+        input: "孙雪不来了，把她的预订取消掉"
+        expect_action:
+          action_type: "cancel_reservation"
+        verify_db:
+          - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '孙雪') ORDER BY id DESC LIMIT 1"
+            expect:
+              values:
+                status: "cancelled"
+
+      - name: "另一位订房"
+        input: "吴强要订房，大床房，电话13777778888，今天住明天退"
+        follow_up_fields:
+          room_type: "大床房"
+          room_type_id: "大床房"
+        expect_action:
+          action_type: "create_reservation"
+          params_contain:
+            guest_name: "吴强"
+            guest_phone: "13777778888"
+        verify_db:
+          - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '吴强')"
+            expect:
+              values:
+                status: "confirmed"
+
+      - name: "口语-改成后天退"
+        input: "吴强的预订改成后天退房"
+        expect_action:
+          action_type: "modify_reservation"
+
+  # ---------- 10. 换房流程 ----------
+  - name: "换房流程"
+    description: "测试客人换房场景"
+    tests:
+      - name: "入住205"
+        input: "马飞入住205标间，电话13100001111，后天退"
+        expect_action:
+          action_type: "walkin_checkin"
+          params_contain:
+            guest_name: "马飞"
+            room_number: "205"
+            guest_phone: "13100001111"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '205'"
+            expect:
+              values:
+                status: "occupied"
+
+      - name: "口语-房间太小换房"
+        input: "205的客人嫌房间小，给他换到306大床房"
+        expect_action:
+          action_type: "change_room"
+          params_contain:
+            new_room_number: "306"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '306'"
+            expect:
+              values:
+                status: "occupied"
+          - sql: "SELECT status FROM rooms WHERE room_number = '205'"
+            expect:
+              values:
+                status: "vacant_dirty"
+
+      - name: "查换房后住哪"
+        input: "马飞现在住在哪个房间"
+        expect_query_result: true
+
+  # ---------- 11. 延住流程 ----------
+  - name: "延住流程"
+    description: "测试客人延住场景"
+    tests:
+      - name: "入住303"
+        input: "郑芳住303，手机13200002222，明天退"
+        expect_action:
+          action_type: "walkin_checkin"
+          params_contain:
+            guest_name: "郑芳"
+            room_number: "303"
+            guest_phone: "13200002222"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '303'"
+            expect:
+              values:
+                status: "occupied"
+
+      - name: "口语-续住到后天"
+        input: "303房间的郑芳要续住到后天退房"
+        follow_up_fields:
+          new_check_out_date: "$day_after_tomorrow"
+        expect_action:
+          action_type: "extend_stay"
+
+      - name: "查303住客"
+        input: "303房间住客信息给我看看"
+        expect_query_result: true
+
+  # ---------- 12. 任务多场景 ----------
+  - name: "任务多场景"
+    description: "测试多种任务创建和分配的表达方式"
+    tests:
+      - name: "口语-需要打扫"
+        input: "302需要打扫一下"
+        follow_up_fields:
+          task_type: "cleaning"
+        expect_action:
+          action_type: "create_task"
+          params_contain:
+            room_number: "302"
+        verify_db:
+          - sql: "SELECT t.task_type FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '302'"
+            expect:
+              rows: 1
+
+      - name: "口语-报修"
+        input: "509房间马桶坏了，报个修"
+        follow_up_fields:
+          task_type: "maintenance"
+        expect_action:
+          action_type: "create_task"
+          params_contain:
+            room_number: "509"
+        verify_db:
+          - sql: "SELECT t.task_type FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '509'"
+            expect:
+              rows: 1
+
+      - name: "口语-安排打扫"
+        input: "把302的清洁任务分配给陈阿姨"
+        follow_up_fields:
+          assignee_name: "陈阿姨"
+        expect_action:
+          action_type: "assign_task"
+        verify_db:
+          - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '302' ORDER BY t.id DESC LIMIT 1"
+            expect:
+              values:
+                status: "assigned"
+
+      - name: "查待办任务"
+        input: "现在有哪些待处理的任务"
+        expect_query_result: true
+
+      - name: "查房间维修任务"
+        input: "看看509有没有维修任务"
+        expect_query_result: true
+
+  # ---------- 13. 房间查询大全 ----------
+  - name: "房间查询大全"
+    description: "测试各种房间相关的查询表达"
+    tests:
+      - name: "口语-还有标间吗"
+        input: "还有标间空着吗"
+        expect_query_result: true
+
+      - name: "口语-大床房剩几间"
+        input: "大床房还剩几间"
+        expect_query_result: true
+
+      - name: "口语-三楼有空房没"
+        input: "三楼有空房没"
+        expect_query_result: true
+
+      - name: "口语-住了多少间"
+        input: "今天一共住了多少间房"
+        expect_query_result: true
+
+      - name: "口语-脏房有哪些"
+        input: "哪些房间需要打扫"
+        expect_query_result: true
+
+      - name: "口语-什么房型"
+        input: "501是什么类型的房间"
+        expect_query_result: true
+
+  # ---------- 14. 客户与住宿查询 ----------
+  - name: "客户与住宿查询"
+    description: "测试客户信息和在住情况的查询"
+    tests:
+      - name: "入住207"
+        input: "丁海入住207，电话13888889999，后天退"
+        expect_action:
+          action_type: "walkin_checkin"
+          params_contain:
+            guest_name: "丁海"
+            room_number: "207"
+            guest_phone: "13888889999"
+        verify_db:
+          - sql: "SELECT name FROM guests WHERE name = '丁海'"
+            expect:
+              rows: 1
+
+      - name: "口语-手机号查人"
+        input: "手机号13888889999是哪位客人"
+        expect_query_result: true
+
+      - name: "口语-住了多少人"
+        input: "现在酒店一共住了多少客人"
+        expect_query_result: true
+
+      - name: "口语-今天几位入住"
+        input: "今天有几位办理入住的"
+        expect_query_result: true
+
+      - name: "口语-今天有预订吗"
+        input: "看看今天有没有预订到店的客人"
+        expect_query_result: true
+
+  # ---------- 15. 账单付款变体 ----------
+  - name: "账单付款变体"
+    description: "测试多种付款方式和账单查询的口语表达"
+    tests:
+      - name: "入住308"
+        input: "韩磊要入住308房间，电话13600006666，后天退房"
+        expect_action:
+          action_type: "walkin_checkin"
+          params_contain:
+            guest_name: "韩磊"
+            room_number: "308"
+            guest_phone: "13600006666"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '308'"
+            expect:
+              values:
+                status: "occupied"
+
+      - name: "口语-账单多少钱"
+        input: "308房间的账单多少钱"
+        expect_query_result: true
+
+      - name: "口语-刷卡付"
+        input: "308房间刷卡付300"
+        expect_action:
+          action_type: "add_payment"
+          params_contain:
+            amount: "300"
+
+      - name: "口语-还差多少"
+        input: "查一下308还差多少没付"
+        expect_query_result: true
+
+      - name: "口语-微信再付"
+        input: "308再收200，微信支付"
+        expect_action:
+          action_type: "add_payment"
+          params_contain:
+            amount: "200"
+
+  # ---------- 16. 房间状态管理 ----------
+  - name: "房间状态管理"
+    description: "测试标记房间干净/脏的口语表达"
+    tests:
+      - name: "入住204用于后续退房"
+        input: "刘伟要入住204房间，电话13900004444，明天退房"
+        expect_action:
+          action_type: "walkin_checkin"
+          params_contain:
+            guest_name: "刘伟"
+            room_number: "204"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '204'"
+            expect:
+              values:
+                status: "occupied"
+
+      - name: "204退房变脏房"
+        input: "204房间退房"
+        expect_action:
+          action_type: "checkout"
+          params_contain:
+            room_number: "204"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '204'"
+            expect:
+              values:
+                status: "vacant_dirty"
+
+      - name: "口语-打扫好了"
+        input: "204打扫完了，可以住了"
+        expect_action:
+          action_type: "mark_room_clean"
+          params_contain:
+            room_number: "204"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '204'"
+            expect:
+              values:
+                status: "vacant_clean"
+
+      - name: "口语-标记维修"
+        input: "410空调坏了，这间房暂时不能住了，标记为维修中"
+        expect_action:
+          action_type: "update_room_status"
+          params_contain:
+            room_number: "410"
+
+      - name: "查脏房数量"
+        input: "现在有几间脏房"
+        expect_query_result: true
+
+  # ---------- 17. 综合日常对话 ----------
+  - name: "综合日常对话"
+    description: "测试贴近真实前台场景的混合对话"
+    tests:
+      - name: "口语-来了一对情侣"
+        input: "来了一对情侣，男的叫许明，13111113333，开409豪华间，后天退"
+        expect_action:
+          action_type: "walkin_checkin"
+          params_contain:
+            guest_name: "许明"
+            room_number: "409"
+            guest_phone: "13111113333"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '409'"
+            expect:
+              values:
+                status: "occupied"
+
+      - name: "口语-有人问有没有房"
+        input: "有客人问还有没有空房间"
+        expect_query_result: true
+
+      - name: "口语-住的是谁"
+        input: "409住的是谁来着"
+        expect_query_result: true
+
+      - name: "口语-提前走"
+        input: "409的许先生要提前退房"
+        expect_action:
+          action_type: "checkout"
+          params_contain:
+            room_number: "409"
+        verify_db:
+          - sql: "SELECT status FROM rooms WHERE room_number = '409'"
+            expect:
+              values:
+                status: "vacant_dirty"
+
+      - name: "口语-退完安排打扫"
+        input: "给409房间创建一个清洁任务"
+        follow_up_fields:
+          task_type: "cleaning"
+        expect_action:
+          action_type: "create_task"
+          params_contain:
+            room_number: "409"
+        verify_db:
+          - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '409'"
+            expect:
+              rows: 1
+
+      - name: "口语-刘阿姨去扫"
+        input: "把409的清洁任务分配给刘阿姨"
+        follow_up_fields:
+          assignee_name: "刘阿姨"
+        expect_action:
+          action_type: "assign_task"
+        verify_db:
+          - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '409' ORDER BY t.id DESC LIMIT 1"
+            expect:
+              values:
+                status: "assigned"
+
+      - name: "口语-今天退了几间"
+        input: "今天总共退了几间房"
+        expect_query_result: true

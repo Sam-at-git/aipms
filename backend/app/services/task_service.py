@@ -330,6 +330,41 @@ class TaskService:
             'completed_at': task.completed_at
         }
 
+    def delete_task(self, task_id: int) -> Task:
+        """删除单个任务（仅允许删除 pending/assigned 状态）"""
+        task = self.get_task(task_id)
+        if not task:
+            raise ValueError("任务不存在")
+
+        if task.status not in [TaskStatus.PENDING, TaskStatus.ASSIGNED]:
+            raise ValueError(f"状态为 {task.status.value} 的任务无法删除，仅可删除待分配或已分配的任务")
+
+        self.db.delete(task)
+        self.db.commit()
+        return task
+
+    def batch_delete_tasks(self, status: Optional[TaskStatus] = None,
+                           task_type: Optional[TaskType] = None,
+                           room_id: Optional[int] = None) -> int:
+        """按条件批量删除任务，返回删除数量。仅删除 pending/assigned 状态的任务。"""
+        query = self.db.query(Task).filter(
+            Task.status.in_([TaskStatus.PENDING, TaskStatus.ASSIGNED])
+        )
+
+        if status:
+            query = query.filter(Task.status == status)
+        if task_type:
+            query = query.filter(Task.task_type == task_type)
+        if room_id:
+            query = query.filter(Task.room_id == room_id)
+
+        tasks = query.all()
+        count = len(tasks)
+        for task in tasks:
+            self.db.delete(task)
+        self.db.commit()
+        return count
+
     def get_task_summary(self) -> dict:
         """获取任务统计"""
         tasks = self.db.query(Task).filter(

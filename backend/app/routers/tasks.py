@@ -71,6 +71,37 @@ def get_task_summary(
     return service.get_task_summary()
 
 
+@router.delete("/batch")
+def batch_delete_tasks(
+    task_status: Optional[TaskStatus] = None,
+    task_type: Optional[TaskType] = None,
+    room_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_receptionist_or_manager)
+):
+    """批量删除任务（仅 pending/assigned 状态）"""
+    if current_user.role not in [EmployeeRole.MANAGER, EmployeeRole.SYSADMIN]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="仅管理员可批量删除任务")
+    service = TaskService(db)
+    count = service.batch_delete_tasks(status=task_status, task_type=task_type, room_id=room_id)
+    return {"message": f"已删除 {count} 条任务", "deleted_count": count}
+
+
+@router.delete("/{task_id}")
+def delete_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_receptionist_or_manager)
+):
+    """删除单个任务（仅 pending/assigned 状态）"""
+    service = TaskService(db)
+    try:
+        service.delete_task(task_id)
+        return {"message": f"任务 {task_id} 已删除"}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
 @router.get("/{task_id}", response_model=TaskResponse)
 def get_task(
     task_id: int,

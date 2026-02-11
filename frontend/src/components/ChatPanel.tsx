@@ -363,6 +363,7 @@ export default function ChatPanel() {
         timestamp: new Date(),
         actions: response.suggested_actions,
         query_result: response.query_result,
+        reasoning_trace: response.reasoning_trace,
         context: {
           topic_id: response.topic_id,
           // 保存追问上下文用于下次请求
@@ -891,6 +892,16 @@ export default function ChatPanel() {
                             </div>
                           ) : null}
 
+                          {/* SPEC-6: Side effects display */}
+                          {action.side_effects && action.side_effects.length > 0 && (
+                            <div className="mb-2 px-2 py-1 bg-dark-800 rounded border border-dark-600">
+                              <p className="text-[10px] text-dark-400 mb-1">级联效果:</p>
+                              {action.side_effects.map((effect, eIdx) => (
+                                <p key={eIdx} className="text-[10px] text-yellow-400/70">→ {effect}</p>
+                              ))}
+                            </div>
+                          )}
+
                           {action.requires_confirmation && (!action.missing_fields || action.missing_fields.length === 0) && (
                             <div className="flex gap-2">
                               <button
@@ -914,6 +925,23 @@ export default function ChatPanel() {
                         </div>
                       ))}
                     </div>
+                  )}
+
+                  {/* SPEC-6: Reasoning trace */}
+                  {msg.reasoning_trace && (
+                    <details className="mt-1 text-[10px] text-dark-500">
+                      <summary className="cursor-pointer hover:text-dark-400">推理过程</summary>
+                      <div className="mt-1 pl-2 border-l border-dark-700 space-y-0.5">
+                        <p>意图来源: {msg.reasoning_trace.intent_source}</p>
+                        {msg.reasoning_trace.action_type && <p>操作: {msg.reasoning_trace.action_type}</p>}
+                        {msg.reasoning_trace.validation_result && <p>校验: {msg.reasoning_trace.validation_result}</p>}
+                        {msg.reasoning_trace.guard_summary && <p>守卫: {msg.reasoning_trace.guard_summary}</p>}
+                        {msg.reasoning_trace.constraints_checked && msg.reasoning_trace.constraints_checked.length > 0 && (
+                          <p>约束: {msg.reasoning_trace.constraints_checked.join(', ')}</p>
+                        )}
+                        {msg.reasoning_trace.notes && <p>{msg.reasoning_trace.notes}</p>}
+                      </div>
+                    </details>
                   )}
 
                   {/* 时间戳 */}

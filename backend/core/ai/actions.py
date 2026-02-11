@@ -72,6 +72,9 @@ class ActionDefinition:
     undoable: bool = False
     side_effects: List[str] = field(default_factory=list)
 
+    # Effects declarations (SPEC-4: state changes this action produces)
+    effects: List[str] = field(default_factory=list)
+
     # Search keywords (for semantic matching)
     search_keywords: List[str] = field(default_factory=list)
 
@@ -121,6 +124,7 @@ class ActionDefinition:
             "allowed_roles": list(self.allowed_roles),
             "undoable": self.undoable,
             "side_effects": self.side_effects,
+            "effects": self.effects,
             "search_keywords": self.search_keywords,
             "semantic_category": self.semantic_category,
             "category_description": self.category_description,
@@ -165,7 +169,7 @@ class ActionRegistry:
     """
 
     def __init__(self, vector_store: Optional["VectorStore"] = None, ontology_registry=None,
-                 state_machine_executor=None, constraint_engine=None):
+                 state_machine_executor=None, constraint_engine=None, guard_executor=None):
         """
         Initialize the action registry.
 
@@ -175,11 +179,13 @@ class ActionRegistry:
             ontology_registry: Optional OntologyRegistry for automatic ActionMetadata sync.
             state_machine_executor: Optional StateMachineExecutor for pre-dispatch state validation.
             constraint_engine: Optional ConstraintEngine for pre-dispatch constraint validation.
+            guard_executor: Optional GuardExecutor for unified pre-dispatch guard (SPEC-2).
         """
         self._actions: Dict[str, ActionDefinition] = {}
         self._ontology_registry = ontology_registry
         self._state_machine_executor = state_machine_executor
         self._constraint_engine = constraint_engine
+        self._guard_executor = guard_executor
 
         # SPEC-09: Auto-create VectorStore if not provided
         if vector_store is None:
@@ -235,6 +241,7 @@ class ActionRegistry:
         allowed_roles: Optional[Set[str]] = None,
         undoable: bool = False,
         side_effects: Optional[List[str]] = None,
+        effects: Optional[List[str]] = None,
         search_keywords: Optional[List[str]] = None,
         semantic_category: Optional[str] = None,
         category_description: Optional[str] = None,
@@ -288,6 +295,7 @@ class ActionRegistry:
                 allowed_roles=allowed_roles or set(),
                 undoable=undoable,
                 side_effects=side_effects or [],
+                effects=effects or [],
                 search_keywords=search_keywords or [],
                 semantic_category=semantic_category,
                 category_description=category_description,
@@ -391,6 +399,7 @@ class ActionRegistry:
                 requires_confirmation=definition.requires_confirmation,
                 undoable=definition.undoable,
                 side_effects=definition.side_effects,
+                post_conditions=definition.effects,
                 allowed_roles=definition.allowed_roles,
             )
 
@@ -582,10 +591,32 @@ class ActionRegistry:
         context: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """
-        Run pre-dispatch guards (SPEC-12).
+        Run pre-dispatch guards (SPEC-12, SPEC-2).
 
         Returns None if all guards pass, or a structured error dict if a guard fails.
+        Uses GuardExecutor (SPEC-2) when available, falls back to legacy guards.
         """
+        # SPEC-2: Use GuardExecutor if available
+        if self._guard_executor and action_def.entity:
+            result = self._guard_executor.check(
+                entity=action_def.entity,
+                action=action_def.name,
+                params=params,
+                context=context
+            )
+            if not result.allowed:
+                violations = result.violations
+                return {
+                    "success": False,
+                    "error_code": "guard_violation",
+                    "message": violations[0].message if violations else "Guard check failed",
+                    "violations": [v.__dict__ for v in violations],
+                    "warnings": [w.__dict__ for w in result.warnings],
+                    "suggestions": result.suggestions,
+                }
+
+        # Legacy guards (used when GuardExecutor is not configured)
+
         # Guard 2: State machine validation
         if self._state_machine_executor:
             current_state = context.get("current_state")

@@ -443,6 +443,7 @@ class HotelDomainAdapter(IDomainAdapter):
             entity="Room",
             action="checkin",
             condition_text="room.status == 'VACANT_CLEAN'",
+            condition_code="state.status == 'VACANT_CLEAN'",
             error_message="房间状态不是空闲可住，无法入住",
             suggestion_message="请选择状态为 VACANT_CLEAN 的房间"
         ))
@@ -469,6 +470,7 @@ class HotelDomainAdapter(IDomainAdapter):
             entity="Room",
             action="maintenance",
             condition_text="room.status != 'OCCUPIED'",
+            condition_code="state.status != 'OCCUPIED'",
             error_message="房间有在住客人，无法标记为维修",
             suggestion_message="请先办理客人退房或换房"
         ))
@@ -497,6 +499,7 @@ class HotelDomainAdapter(IDomainAdapter):
             entity="Guest",
             action="checkin",
             condition_text="guest.is_blacklisted == False",
+            condition_code="state.is_blacklisted == False",
             error_message="该客人在黑名单中，禁止入住",
             suggestion_message="如需解除黑名单，请联系经理审批"
         ))
@@ -579,6 +582,7 @@ class HotelDomainAdapter(IDomainAdapter):
             entity="StayRecord",
             action="checkout",
             condition_text="stay.bill.outstanding_amount <= 0",
+            condition_code="state.outstanding_amount <= 0",
             error_message="账单未结清，无法退房",
             suggestion_message="请先收取未结清金额"
         ))
@@ -618,6 +622,7 @@ class HotelDomainAdapter(IDomainAdapter):
             entity="StayRecord",
             action="change_room",
             condition_text="target_room.status == 'VACANT_CLEAN'",
+            condition_code="state.target_room_status == 'VACANT_CLEAN'",
             error_message="目标房间不可用，无法换房",
             suggestion_message="请选择状态为空闲已清洁的房间"
         ))
@@ -633,6 +638,7 @@ class HotelDomainAdapter(IDomainAdapter):
             entity="Bill",
             action="add_payment",
             condition_text="payment.amount <= bill.outstanding_amount",
+            condition_code="param.amount <= state.outstanding_amount",
             error_message="支付金额超过未付余额",
             suggestion_message="请确认支付金额"
         ))
@@ -646,6 +652,7 @@ class HotelDomainAdapter(IDomainAdapter):
             entity="Bill",
             action="adjust_bill",
             condition_text="user.role in ('manager', 'sysadmin')",
+            condition_code="user.role in ('manager', 'sysadmin')",
             error_message="账单调整需要经理或以上权限",
             suggestion_message="请联系经理进行账单调整"
         ))

@@ -79,6 +79,20 @@ const EntityNode = ({ data }: { data: any }) => {
   const bgColor = entityColors[data.name] || '#6b7280'
   const interfaces: string[] = data.interfaces || []
 
+  // 使用简短的显示名称映射
+  const displayNames: Record<string, string> = {
+    'RoomType': '房型',
+    'Room': '房间',
+    'Guest': '客人',
+    'Reservation': '预订',
+    'StayRecord': '入住',
+    'Bill': '账单',
+    'Task': '任务',
+    'Employee': '员工',
+  }
+
+  const shortLabel = displayNames[data.name] || data.name
+
   return (
     <div
       className="px-4 py-3 rounded-lg border-2 shadow-lg min-w-[140px]"
@@ -89,8 +103,7 @@ const EntityNode = ({ data }: { data: any }) => {
     >
       <Handle type="target" position={Position.Top} className="!bg-dark-400" />
       <div className="text-center">
-        <div className="font-semibold text-white mb-1">{data.label}</div>
-        <div className="text-xs text-dark-400">{data.name}</div>
+        <div className="font-semibold text-white mb-1">{shortLabel}</div>
         {data.total !== undefined && (
           <div
             className="mt-2 text-2xl font-bold"
@@ -1571,7 +1584,6 @@ const Ontology: React.FC = () => {
         type: 'entityNode',
         position: { x, y },
         data: {
-          label: entity.description,
           name: entity.name,
           total: stat?.total || 0,
           attributes: entity.attributes,

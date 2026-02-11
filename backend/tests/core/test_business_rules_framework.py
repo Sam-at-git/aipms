@@ -56,8 +56,8 @@ class TestHotelBusinessRules:
         from app.hotel.business_rules import init_hotel_business_rules
         assert callable(init_hotel_business_rules)
 
-    def test_init_default_delegates_to_hotel(self):
-        """init_default_business_rules should delegate to hotel layer"""
+    def test_init_default_is_noop_in_core(self):
+        """init_default_business_rules should be a no-op (SPEC-5: core/domain separation)"""
         reg = BusinessRuleRegistry()
         reg._rules.clear()
         reg._rules_by_entity.clear()
@@ -65,10 +65,14 @@ class TestHotelBusinessRules:
 
         init_default_business_rules()
 
-        # Should have registered hotel-specific rules
+        # Core layer should NOT register any domain-specific rules
+        assert len(reg._rules) == 0
+
+        # Domain rules must be initialized explicitly by app layer
+        from app.hotel.business_rules import init_hotel_business_rules
+        init_hotel_business_rules()
         assert reg.get("vacant_room_expansion") is not None
         assert reg.get("guest_name_aliases") is not None
-        assert reg.get("reservation_status_aliases") is not None
 
         # Cleanup
         reg._rules.clear()

@@ -106,6 +106,7 @@ class TestHandleCreateReservation:
             mock_param_parser.parse_room_type.return_value = ParseResult(
                 value=1,
                 confidence=1.0,
+                matched_by='direct',
                 raw_input="1",
                 candidates=None
             )
@@ -172,6 +173,7 @@ class TestHandleCreateReservation:
         mock_param_parser.parse_room_type.return_value = ParseResult(
             value=1,
             confidence=1.0,
+            matched_by='exact',
             raw_input="豪华大床房",
             candidates=None
         )
@@ -210,6 +212,7 @@ class TestHandleCreateReservation:
         mock_param_parser.parse_room_type.return_value = ParseResult(
             value=None,
             confidence=0.5,
+            matched_by='fuzzy',
             raw_input="标",
             candidates=None
         )
@@ -271,6 +274,7 @@ class TestHandleCreateReservation:
         mock_param_parser.parse_room_type.return_value = ParseResult(
             value=999,
             confidence=1.0,
+            matched_by='direct',
             raw_input="999",
             candidates=None
         )

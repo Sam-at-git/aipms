@@ -52,6 +52,9 @@ def _create_action_registry() -> ActionRegistry:
         webhook_actions,
         notification_actions,
         interface_actions,
+        bill_actions,
+        room_actions,
+        employee_actions,
     )
 
     guest_actions.register_guest_actions(registry)
@@ -63,6 +66,9 @@ def _create_action_registry() -> ActionRegistry:
     webhook_actions.register_webhook_actions(registry)
     notification_actions.register_notification_actions(registry)
     interface_actions.register_interface_actions(registry)
+    bill_actions.register_bill_actions(registry)
+    room_actions.register_room_actions(registry)
+    employee_actions.register_employee_actions(registry)
 
     logger.info(f"ActionRegistry initialized with {len(registry.list_actions())} actions")
 

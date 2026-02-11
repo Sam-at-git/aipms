@@ -124,13 +124,15 @@ class TestEnhancedPromptBuilder:
             include_rules=True,
             include_state_machines=True,
             include_permissions=True,
+            domain_prompt="欢迎使用 AIPMS 酒店管理系统",  # Use domain_prompt for hotel-specific text
             custom_variables={"hotel_name": "AIPMS 酒店"}
         )
         prompt = builder.build_system_prompt(context)
 
         assert "Ontology" in prompt or "AIPMS" in prompt
         assert "manager" in prompt
-        assert "AIPMS 酒店" in prompt
+        # domain_prompt should be in the output
+        assert "AIPMS 酒店管理系统" in prompt
 
 
 if __name__ == "__main__":

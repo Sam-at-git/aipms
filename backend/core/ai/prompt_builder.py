@@ -234,15 +234,80 @@ class PromptBuilder:
                             security_note = f" [{prop.security_level}]"
 
                         lines.append(f"- **{prop.name}** ({type_info}) {required}{security_note}: {prop.description or ''}")
-                    else:
+                    elif isinstance(prop, dict):
                         # 回退到字典处理
                         required = "必填" if prop.get('required', False) else "可选"
                         lines.append(f"- **{prop.get('name')}** {required}: {prop.get('description', '')}")
+                    elif isinstance(prop, str):
+                        # 纯字符串属性名
+                        lines.append(f"- **{prop}**")
 
         return "\n".join(lines)
 
     def _build_action_descriptions(self) -> str:
-        """构建操作描述部分 (SPEC-51: 动态注入操作元数据)"""
+        """
+        构建操作描述部分 (SPEC-51: 动态注入操作元数据)
+
+        优先从 ActionRegistry 读取（含 Pydantic schema 参数信息），
+        回退到 OntologyRegistry.get_actions()。
+        """
+        if self._action_registry is not None:
+            return self._build_action_descriptions_from_action_registry()
+        return self._build_action_descriptions_from_ontology()
+
+    def _build_action_descriptions_from_action_registry(self) -> str:
+        """从 ActionRegistry 读取操作描述，利用 Pydantic model_json_schema() 提取参数"""
+        actions = self._action_registry.list_actions()
+
+        if not actions:
+            return "**支持的操作:** 暂无注册操作"
+
+        # 按 entity 分组
+        grouped: Dict[str, list] = {}
+        for action in actions:
+            entity = action.entity or "general"
+            if entity not in grouped:
+                grouped[entity] = []
+            grouped[entity].append(action)
+
+        lines = ["**支持的操作 (action_type):**"]
+        for entity, entity_actions in sorted(grouped.items()):
+            if entity != "general":
+                lines.append(f"\n### {entity} 操作:")
+
+            for action in entity_actions:
+                confirm_tag = "需确认" if action.requires_confirmation else "自动"
+                category_tag = action.category
+                lines.append(f"\n#### {action.name} [{category_tag}, {confirm_tag}]")
+                if action.description:
+                    lines.append(f"- **描述**: {action.description}")
+
+                # 从 Pydantic schema 提取参数
+                try:
+                    schema = action.parameters_schema.model_json_schema()
+                    properties = schema.get("properties", {})
+                    required_fields = set(schema.get("required", []))
+
+                    if properties:
+                        lines.append(f"- **参数**:")
+                        for field_name, field_info in properties.items():
+                            field_type = field_info.get("type", "string")
+                            # Handle anyOf (Optional fields)
+                            if "anyOf" in field_info:
+                                types = [o.get("type") for o in field_info["anyOf"] if o.get("type") != "null"]
+                                field_type = types[0] if types else "string"
+                            req_tag = "必填" if field_name in required_fields else "可选"
+                            desc = field_info.get("description", "")
+                            enum_vals = field_info.get("enum")
+                            enum_hint = f" (可选值: {', '.join(str(v) for v in enum_vals)})" if enum_vals else ""
+                            lines.append(f"  - {field_name} ({field_type}) {req_tag}: {desc}{enum_hint}")
+                except Exception as e:
+                    logger.debug(f"Failed to extract schema for {action.name}: {e}")
+
+        return "\n".join(lines)
+
+    def _build_action_descriptions_from_ontology(self) -> str:
+        """从 OntologyRegistry 读取操作描述（回退路径）"""
         actions = self.registry.get_actions()
 
         if not actions:
@@ -513,96 +578,37 @@ class PromptBuilder:
 
     def _generate_entity_paths(self, relationship_map: Dict[str, Dict[str, Tuple[str, str]]]) -> Dict[str, List[str]]:
         """
-        生成实体路径说明
+        Dynamically generate entity path descriptions from the relationship map
+        and ontology registry.
 
         Args:
-            relationship_map: 关系映射字典
+            relationship_map: Relationship mapping dict from query_engine
 
         Returns:
-            实体名到路径说明列表的映射
+            Entity name to path description list mapping
         """
-        # 常用字段的路径模板
-        common_fields = {
-            "Guest": ["id", "name", "phone", "email", "tier", "id_number"],
-            "Room": ["id", "room_number", "status", "floor"],
-            "StayRecord": ["id", "status", "check_in_time", "check_out_time"],
-            "Reservation": ["id", "status", "check_in_date", "check_out_date"],
-            "Task": ["id", "type", "status", "priority"],
-            "Bill": ["id", "total_amount", "status"],
-            "RoomType": ["id", "name", "price", "base_occupancy"],
-        }
-
-        # 关系路径模板
-        relationship_paths = {
-            "Guest": [
-                ("stay_records", "stays", [
-                    "stays.status - 住宿记录状态",
-                    "stays.check_in_time - 入住时间",
-                    "stays.check_out_time - 退房时间",
-                ]),
-                ("stay_records", "stays.room", [
-                    "stays.room.room_number - 住宿房间号",
-                    "stays.room.status - 房间状态",
-                ]),
-                ("stay_records", "stays.room.room_type", [
-                    "stays.room.room_type.name - 房型名称",
-                    "stays.room.room_type.price - 房型价格",
-                ]),
-            ],
-            "Room": [
-                ("room_type", "room_type", [
-                    "room_type.name - 房型名称",
-                    "room_type.price - 房型价格",
-                ]),
-                ("tasks", "tasks", [
-                    "tasks.type - 任务类型",
-                    "tasks.status - 任务状态",
-                ]),
-            ],
-            "StayRecord": [
-                ("guest", "guest", [
-                    "guest.name - 客人姓名",
-                    "guest.phone - 客人电话",
-                    "guest.tier - 客人等级",
-                ]),
-                ("room", "room", [
-                    "room.room_number - 房间号",
-                    "room.status - 房间状态",
-                ]),
-                ("room", "room.room_type", [
-                    "room.room_type.name - 房型名称",
-                    "room.room_type.price - 房型价格",
-                ]),
-            ],
-            "Reservation": [
-                ("guest", "guest", [
-                    "guest.name - 预订客人姓名",
-                    "guest.phone - 预订客人电话",
-                ]),
-                ("room_type", "room_type", [
-                    "room_type.name - 预订房型名称",
-                    "room_type.price - 房型价格",
-                ]),
-            ],
-            "Task": [
-                ("room", "room", [
-                    "room.room_number - 关联房间号",
-                    "room.status - 房间状态",
-                ]),
-            ],
-        }
-
         result = {}
 
-        for entity_name, fields in common_fields.items():
-            paths = [f"- **{f}** - 直接字段" for f in fields]
+        for entity_name, relationships in relationship_map.items():
+            paths = []
 
-            # 添加关系路径
-            if entity_name in relationship_paths:
-                for _, rel_name, rel_fields in relationship_paths[entity_name]:
-                    paths.extend([f"- **{f}**" for f in rel_fields])
+            # Get entity metadata from registry for direct fields
+            entity_meta = self.registry.get_entity(entity_name)
+            if entity_meta and hasattr(entity_meta, 'properties') and entity_meta.properties:
+                for prop_name in list(entity_meta.properties.keys())[:8]:
+                    paths.append(f"- **{prop_name}** - direct field")
 
-            result[entity_name] = paths
+            # Add relationship paths from the relationship map
+            for rel_attr, (target_entity, join_col) in relationships.items():
+                paths.append(f"- **{rel_attr}** -> {target_entity}")
+                # Add one-hop paths for target entity's key fields
+                target_meta = self.registry.get_entity(target_entity)
+                if target_meta and hasattr(target_meta, 'properties') and target_meta.properties:
+                    for prop_name in list(target_meta.properties.keys())[:4]:
+                        paths.append(f"- **{rel_attr}.{prop_name}**")
+
+            if paths:
+                result[entity_name] = paths
 
         return result
 

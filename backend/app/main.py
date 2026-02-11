@@ -61,6 +61,11 @@ async def lifespan(app: FastAPI):
         adapter.register_ontology(ont_registry)
         print(f"✓ 酒店领域本体已注册 ({len(ont_registry.get_entities())} entities)")
 
+        # ========== SPEC-5: Initialize hotel business rules (domain layer) ==========
+        from app.hotel.business_rules import init_hotel_business_rules
+        init_hotel_business_rules()
+        print("✓ 酒店业务规则已初始化")
+
         # ========== SPEC-R11: Sync ActionRegistry to OntologyRegistry ==========
         from app.services.actions import get_action_registry
         action_registry = get_action_registry()

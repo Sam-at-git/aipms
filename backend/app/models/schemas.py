@@ -511,6 +511,7 @@ class AIAction(BaseModel):
     description: str
     requires_confirmation: bool = True
     missing_fields: Optional[List[Union[MissingField, str, dict]]] = None  # 缺失字段（用于追问模式）- 支持多种格式以兼容LLM输出
+    side_effects: Optional[List[str]] = None  # SPEC-6: side effects from ontology metadata
 
     @field_validator('missing_fields', mode='before')
     @classmethod
@@ -548,6 +549,7 @@ class AIResponse(BaseModel):
     context: dict = {}
     follow_up: Optional[FollowUpInfo] = None  # 追问信息
     topic_id: Optional[str] = None  # 话题ID，用于关联对话上下文
+    reasoning_trace: Optional[dict] = None  # SPEC-6: reasoning transparency
 
 
 class ActionConfirmation(BaseModel):

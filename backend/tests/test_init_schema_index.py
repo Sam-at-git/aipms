@@ -120,16 +120,13 @@ class TestInitSchemaIndexScript:
 
     def test_check_api_key_without_key(self, monkeypatch):
         """Test that check_api_key warns when no API key is set"""
-        from scripts.init_schema_index import check_api_key
-
-        # Remove API keys
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
-
-        # Should return False and print warning
-        result = check_api_key()
-
-        assert result is False
+        # Need to patch settings directly since it's already loaded
+        with patch('app.config.settings.EMBEDDING_API_KEY', ""), \
+             patch('app.config.settings.OPENAI_API_KEY', None):
+            from scripts.init_schema_index import check_api_key
+            # Import after patching
+            result = check_api_key()
+            assert result is False
 
 
 class TestScriptCLI:

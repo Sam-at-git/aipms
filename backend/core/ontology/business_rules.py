@@ -174,26 +174,17 @@ def init_default_business_rules() -> None:
     """
     初始化默认业务规则
 
-    委托给领域层的 init_hotel_business_rules()。
-    框架层不再包含具体领域规则。
+    This is a no-op in the core layer. Domain-specific business rules
+    should be initialized by the domain layer directly (e.g., in app lifespan
+    or domain adapter).
     """
-    try:
-        from app.hotel.business_rules import init_hotel_business_rules
-        init_hotel_business_rules()
-    except ImportError:
-        pass
+    pass
 
 
 # 便捷函数
 def get_business_rules() -> BusinessRuleRegistry:
-    """获取业务规则注册表（自动初始化）"""
-    registry = BusinessRuleRegistry()
-
-    # 延迟初始化：第一次调用时加载默认规则
-    if not registry._rules:
-        init_default_business_rules()
-
-    return registry
+    """获取业务规则注册表"""
+    return BusinessRuleRegistry()
 
 
 __all__ = [

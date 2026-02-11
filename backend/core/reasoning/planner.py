@@ -113,17 +113,21 @@ class PlannerEngine:
     Decomposes complex tasks into multiple executable steps with
     dependency resolution and step-by-step execution.
 
-    The engine uses LLM to generate execution plans and executes them
-    with proper dependency tracking.
+    The engine uses a three-tier strategy (SPEC-4):
+    1. Template matching (deterministic, for known composite operations)
+    2. Ontology reasoning (future: precondition/effect graph search)
+    3. LLM plan generation (fallback for novel combinations)
     """
 
-    def __init__(self, registry: "OntologyRegistry"):
+    def __init__(self, registry: "OntologyRegistry", template_registry=None):
         """初始化规划引擎 - Initialize the planning engine
 
         Args:
             registry: 本体注册表实例 - Ontology registry instance
+            template_registry: Optional TemplateRegistry for composite templates (SPEC-4)
         """
         self.registry = registry
+        self._template_registry = template_registry
         self._action_handlers: Dict[str, Callable] = {}
 
     def register_handler(self, action_type: str, handler: Callable) -> None:
@@ -138,17 +142,35 @@ class PlannerEngine:
     def create_plan(
         self,
         goal: str,
-        context: Dict[str, Any]
+        context: Dict[str, Any],
+        action_type: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
     ) -> ExecutionPlan:
         """根据目标创建执行计划 - Create an execution plan from a goal
+
+        Uses three-tier strategy (SPEC-4):
+        1. Template matching if action_type is provided
+        2. (Future) Ontology reasoning via precondition/effect search
+        3. LLM plan generation as fallback
 
         Args:
             goal: 用户目标描述 - User goal description (e.g., "把201房客人换到305房间")
             context: 当前上下文 - Current context (user info, room states, etc.)
+            action_type: Optional action type to match against templates
+            params: Optional parameters for template expansion
 
         Returns:
             ExecutionPlan 执行计划 - Execution plan with steps
         """
+        # Tier 1: Template matching (SPEC-4)
+        if action_type and self._template_registry:
+            plan = self._template_registry.expand(action_type, params or {}, goal)
+            if plan:
+                return plan
+
+        # Tier 2: (Future) Ontology reasoning
+
+        # Tier 3: LLM plan generation (fallback)
         return self._llm_generate_plan(goal, context)
 
     def _llm_generate_plan(

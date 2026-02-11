@@ -493,6 +493,119 @@ async def get_business_rules(
     return {"rules": rules}
 
 
+# ============== SPEC-6: Reasoning Transparency APIs ==============
+
+@router.get("/dynamic/state-transitions/{entity_name}")
+async def get_state_transitions(
+    entity_name: str,
+    current_state: Optional[str] = Query(None, description="当前状态"),
+    current_user: Employee = Depends(get_current_user)
+):
+    """获取实体的有效状态转换列表
+
+    给定实体和当前状态，返回可达的下一状态及所需角色。
+    如果不指定 current_state，返回所有状态的转换。
+    """
+    from core.ontology.registry import registry
+    state_machine = registry.get_state_machine(entity_name)
+    if not state_machine:
+        return {"entity": entity_name, "transitions": [], "error": "No state machine registered"}
+
+    transitions = []
+    for t in state_machine.transitions:
+        if current_state and t.from_state.lower() != current_state.lower():
+            continue
+        transition_info = {
+            "from_state": t.from_state,
+            "to_state": t.to_state,
+            "trigger": t.trigger,
+        }
+        if hasattr(t, "condition") and t.condition:
+            transition_info["condition"] = t.condition
+        if hasattr(t, "side_effects") and t.side_effects:
+            transition_info["side_effects"] = t.side_effects
+        transitions.append(transition_info)
+
+    return {
+        "entity": entity_name,
+        "current_state": current_state,
+        "transitions": transitions,
+    }
+
+
+@router.post("/dynamic/constraints/validate")
+async def validate_constraints(
+    body: dict,
+    current_user: Employee = Depends(get_current_user)
+):
+    """校验操作约束
+
+    给定 action_type 和 entity_type，检查该操作的所有注册约束。
+    可选提供 params 和 entity_state 来评估可执行约束。
+
+    Request body:
+    {
+        "entity_type": "Room",
+        "action_type": "checkin",
+        "params": {},
+        "entity_state": {}
+    }
+    """
+    from core.ontology.registry import registry
+
+    entity_type = body.get("entity_type", "")
+    action_type = body.get("action_type", "")
+    params = body.get("params", {})
+    entity_state = body.get("entity_state", {})
+
+    # Get registered constraints
+    constraints = registry.get_constraints_for_entity_action(entity_type, action_type)
+
+    constraint_list = []
+    for c in constraints:
+        info = {
+            "id": c.id,
+            "name": c.name,
+            "description": c.description,
+            "severity": c.severity.value if hasattr(c.severity, "value") else str(c.severity),
+            "has_executable_code": bool(c.condition_code) if hasattr(c, "condition_code") else False,
+        }
+        constraint_list.append(info)
+
+    # If we have a GuardExecutor and entity_state, run evaluation
+    violations = []
+    warnings = []
+    try:
+        from core.ontology.guard_executor import GuardExecutor
+        guard = GuardExecutor(ontology_registry=registry)
+        result = guard.check(entity_type, action_type, params, {
+            "entity_state": entity_state,
+            "user_context": {"role": current_user.role.value},
+        })
+        for v in result.violations:
+            violations.append({
+                "constraint_id": v.constraint_id,
+                "message": v.message,
+                "severity": v.severity,
+            })
+        for w in result.warnings:
+            warnings.append({
+                "constraint_id": w.constraint_id,
+                "message": w.message,
+                "severity": w.severity,
+            })
+    except Exception:
+        pass  # GuardExecutor evaluation is optional
+
+    return {
+        "entity_type": entity_type,
+        "action_type": action_type,
+        "constraints": constraint_list,
+        "violations": violations,
+        "warnings": warnings,
+    }
+
+
 # ============== 接口系统 (Interfaces) - Phase 2.5 ==============
 
 @router.get("/interfaces")

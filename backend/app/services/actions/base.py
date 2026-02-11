@@ -7,7 +7,8 @@ Provides Pydantic models for action parameter validation.
 These models define the expected parameters for each AI-executable action.
 """
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+import re
 from typing import Any, Optional, List, Union
 from pydantic import BaseModel, Field, field_validator
 
@@ -45,7 +46,7 @@ class WalkInCheckInParams(BaseModel):
             if amount < 0:
                 raise ValueError("押金金额不能为负数")
             return amount
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, InvalidOperation) as e:
             raise ValueError(f"无效的押金金额: {v}") from e
 
     @field_validator('expected_check_out')
@@ -85,6 +86,28 @@ class UpdateGuestParams(BaseModel):
     is_blacklisted: Optional[bool] = Field(default=None, description="是否黑名单")
     blacklist_reason: Optional[str] = Field(default=None, description="黑名单原因")
     notes: Optional[str] = Field(default=None, description="备注信息")
+
+
+class UpdateGuestSmartParams(BaseModel):
+    """
+    智能更新客人信息参数
+
+    用于 update_guest_smart 动作，支持自然语言式的部分修改指令。
+    例如：'把电话号码后两位改为77'、'将邮箱改为新邮箱@qq.com'
+
+    LLM 会自动解析修改意图并应用到当前值。
+    """
+    guest_id: Optional[int] = Field(default=None, description="客人ID", gt=0)
+    guest_name: Optional[str] = Field(default=None, description="客人姓名（用于查找客人）")
+    instructions: str = Field(..., description="自然语言修改指令，如: '电话号码后两位改为77'")
+
+    @field_validator('instructions')
+    @classmethod
+    def validate_instructions(cls, v: str) -> str:
+        """验证修改指令不为空"""
+        if not v or not v.strip():
+            raise ValueError("修改指令不能为空")
+        return v.strip()
 
 
 # ============== Stay Action Parameters ==============
@@ -154,6 +177,55 @@ class CreateTaskParams(BaseModel):
                 return TaskType(v_lower)
             except ValueError:
                 pass
+        raise ValueError(f"无效的任务类型: {v}. 支持: cleaning, maintenance")
+
+
+class DeleteTaskParams(BaseModel):
+    """
+    删除单个任务参数
+
+    用于 delete_task 动作，删除指定任务（仅 pending/assigned 状态可删除）。
+    """
+    task_id: int = Field(..., description="任务 ID", gt=0)
+
+
+class BatchDeleteTasksParams(BaseModel):
+    """
+    批量删除任务参数
+
+    用于 batch_delete_tasks 动作，按条件批量删除任务。
+    仅删除 pending/assigned 状态的任务。
+    """
+    status: Optional[str] = Field(default=None, description="按状态过滤: pending, assigned")
+    task_type: Optional[str] = Field(default=None, description="按类型过滤: cleaning, maintenance")
+    room_id: Optional[Union[int, str]] = Field(default=None, description="按房间过滤（房间 ID 或房间号）")
+
+    @field_validator('status')
+    @classmethod
+    def validate_status(cls, v: Optional[str]) -> Optional[str]:
+        """验证状态值"""
+        if v is None:
+            return v
+        valid = {'pending', 'assigned'}
+        v_lower = v.lower().strip()
+        if v_lower not in valid:
+            raise ValueError(f"无效的状态: {v}. 仅支持: pending, assigned")
+        return v_lower
+
+    @field_validator('task_type')
+    @classmethod
+    def validate_task_type(cls, v: Optional[str]) -> Optional[str]:
+        """验证任务类型"""
+        if v is None:
+            return v
+        aliases = {
+            'cleaning': ['cleaning', '清洁', '打扫', 'clean'],
+            'maintenance': ['maintenance', '维修', '修理', 'fix']
+        }
+        v_lower = v.lower().strip()
+        for task_type, alias_list in aliases.items():
+            if v_lower in alias_list:
+                return task_type
         raise ValueError(f"无效的任务类型: {v}. 支持: cleaning, maintenance")
 
 
@@ -434,11 +506,257 @@ class BookResourceParams(BaseModel):
     end_date: Optional[date] = Field(default=None, description="结束日期")
 
 
+# ============== Task Workflow Parameters ==============
+
+class AssignTaskParams(BaseModel):
+    """分配任务参数"""
+    task_id: int = Field(..., description="任务ID", gt=0)
+    assignee_id: Optional[int] = Field(default=None, description="清洁员ID", gt=0)
+    assignee_name: Optional[str] = Field(default=None, description="清洁员姓名")
+
+
+class StartTaskParams(BaseModel):
+    """开始任务参数"""
+    task_id: int = Field(..., description="任务ID", gt=0)
+
+
+class CompleteTaskParams(BaseModel):
+    """完成任务参数"""
+    task_id: int = Field(..., description="任务ID", gt=0)
+    notes: Optional[str] = Field(default=None, description="完成备注")
+
+
+# ============== Checkin / Stay Workflow Parameters ==============
+
+class CheckinParams(BaseModel):
+    """预订入住参数"""
+    reservation_id: Optional[int] = Field(default=None, description="预订ID", gt=0)
+    reservation_no: Optional[str] = Field(default=None, description="预订号")
+    room_number: Optional[str] = Field(default=None, description="入住房间号（覆盖预订房型）")
+
+
+class ExtendStayParams(BaseModel):
+    """续住参数"""
+    stay_record_id: int = Field(..., description="住宿记录ID", gt=0)
+    new_check_out_date: Union[date, str] = Field(..., description="新退房日期")
+
+    @field_validator('new_check_out_date')
+    @classmethod
+    def parse_new_check_out(cls, v: Union[date, str]) -> date:
+        if isinstance(v, date):
+            return v
+        try:
+            return date.fromisoformat(v)
+        except ValueError as e:
+            raise ValueError(f"无效的日期格式: {v}. 请使用 YYYY-MM-DD 格式") from e
+
+
+class ChangeRoomParams(BaseModel):
+    """换房参数"""
+    stay_record_id: int = Field(..., description="住宿记录ID", gt=0)
+    new_room_number: str = Field(..., description="新房间号")
+
+
+# ============== Reservation Workflow Parameters ==============
+
+class CancelReservationParams(BaseModel):
+    """取消预订参数"""
+    reservation_id: Optional[int] = Field(default=None, description="预订ID", gt=0)
+    reservation_no: Optional[str] = Field(default=None, description="预订号")
+    reason: Optional[str] = Field(default="客人要求取消", description="取消原因")
+
+
+class ModifyReservationParams(BaseModel):
+    """修改预订参数"""
+    reservation_id: Optional[int] = Field(default=None, description="预订ID", gt=0)
+    reservation_no: Optional[str] = Field(default=None, description="预订号")
+    check_in_date: Optional[Union[date, str]] = Field(default=None, description="新入住日期")
+    check_out_date: Optional[Union[date, str]] = Field(default=None, description="新退房日期")
+    room_type_id: Optional[int] = Field(default=None, description="新房型ID")
+    adult_count: Optional[int] = Field(default=None, description="成人数", ge=1)
+    special_requests: Optional[str] = Field(default=None, description="特殊要求")
+
+    @field_validator('check_in_date', 'check_out_date')
+    @classmethod
+    def parse_dates(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, date):
+            return v
+        try:
+            return date.fromisoformat(v)
+        except ValueError as e:
+            raise ValueError(f"无效的日期格式: {v}") from e
+
+
+# ============== Billing Parameters ==============
+
+class AddPaymentParams(BaseModel):
+    """添加支付参数"""
+    bill_id: Optional[int] = Field(default=None, description="账单ID", gt=0)
+    stay_record_id: Optional[int] = Field(default=None, description="住宿记录ID", gt=0)
+    amount: Union[str, int, float, Decimal] = Field(..., description="支付金额")
+    payment_method: str = Field(..., description="支付方式: cash/card")
+
+    @field_validator('amount')
+    @classmethod
+    def parse_amount(cls, v) -> Decimal:
+        try:
+            amount = Decimal(str(v))
+            if amount <= 0:
+                raise ValueError("金额必须大于0")
+            return amount
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"无效的金额: {v}") from e
+
+
+class AdjustBillParams(BaseModel):
+    """调整账单参数"""
+    bill_id: Optional[int] = Field(default=None, description="账单ID", gt=0)
+    stay_record_id: Optional[int] = Field(default=None, description="住宿记录ID", gt=0)
+    amount: Union[str, int, float, Decimal] = Field(..., description="调整金额（正数加价，负数减价）")
+    reason: str = Field(..., description="调整原因")
+
+    @field_validator('amount')
+    @classmethod
+    def parse_amount(cls, v) -> Decimal:
+        try:
+            return Decimal(str(v))
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"无效的金额: {v}") from e
+
+
+class RefundPaymentParams(BaseModel):
+    """退款参数"""
+    payment_id: int = Field(..., description="支付记录ID", gt=0)
+    amount: Optional[Union[str, int, float, Decimal]] = Field(default=None, description="退款金额（空则全额退款）")
+    reason: str = Field(..., description="退款原因")
+
+    @field_validator('amount')
+    @classmethod
+    def parse_amount(cls, v):
+        if v is None:
+            return v
+        try:
+            amount = Decimal(str(v))
+            if amount <= 0:
+                raise ValueError("退款金额必须大于0")
+            return amount
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"无效的金额: {v}") from e
+
+
+# ============== Room & RoomType Parameters ==============
+
+class UpdateRoomStatusParams(BaseModel):
+    """更新房间状态参数"""
+    room_number: str = Field(..., description="房间号")
+    status: str = Field(..., description="目标状态: vacant_clean, vacant_dirty, out_of_order")
+
+
+class CreateRoomTypeParams(BaseModel):
+    """创建房型参数"""
+    name: str = Field(..., description="房型名称", max_length=50)
+    base_price: Union[str, int, float, Decimal] = Field(..., description="基础价格")
+    description: Optional[str] = Field(default=None, description="房型描述")
+    max_occupancy: int = Field(default=2, description="最大入住人数", ge=1)
+
+    @field_validator('base_price')
+    @classmethod
+    def parse_price(cls, v) -> Decimal:
+        try:
+            price = Decimal(str(v))
+            if price < 0:
+                raise ValueError("价格不能为负数")
+            return price
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"无效的价格: {v}") from e
+
+
+class UpdateRoomTypeParams(BaseModel):
+    """更新房型参数"""
+    room_type_id: Optional[int] = Field(default=None, description="房型ID", gt=0)
+    room_type_name: Optional[str] = Field(default=None, description="房型名称（用于查找）")
+    name: Optional[str] = Field(default=None, description="新名称", max_length=50)
+    base_price: Optional[Union[str, int, float, Decimal]] = Field(default=None, description="新基础价格")
+    description: Optional[str] = Field(default=None, description="新描述")
+
+    @field_validator('base_price')
+    @classmethod
+    def parse_price(cls, v):
+        if v is None:
+            return v
+        try:
+            price = Decimal(str(v))
+            if price < 0:
+                raise ValueError("价格不能为负数")
+            return price
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"无效的价格: {v}") from e
+
+
+# ============== Guest Parameters ==============
+
+class CreateGuestParams(BaseModel):
+    """创建客人参数"""
+    name: str = Field(..., description="客人姓名", min_length=1, max_length=100)
+    phone: Optional[str] = Field(default=None, description="手机号", max_length=20)
+    id_type: Optional[str] = Field(default=None, description="证件类型")
+    id_number: Optional[str] = Field(default=None, description="证件号码")
+    email: Optional[str] = Field(default=None, description="邮箱")
+
+
+# ============== Employee Parameters ==============
+
+class CreateEmployeeParams(BaseModel):
+    """创建员工参数"""
+    username: str = Field(..., description="登录账号", min_length=1, max_length=50)
+    name: str = Field(..., description="姓名", min_length=1, max_length=100)
+    role: str = Field(..., description="角色: receptionist, cleaner, manager, sysadmin")
+    phone: Optional[str] = Field(default=None, description="手机号", max_length=20)
+    password: Optional[str] = Field(default=None, description="密码（默认123456）")
+
+    @field_validator('role')
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        valid = {'receptionist', 'cleaner', 'manager', 'sysadmin'}
+        v_lower = v.lower().strip()
+        if v_lower not in valid:
+            raise ValueError(f"无效的角色: {v}. 支持: {', '.join(valid)}")
+        return v_lower
+
+
+class UpdateEmployeeParams(BaseModel):
+    """更新员工参数"""
+    employee_id: int = Field(..., description="员工ID", gt=0)
+    name: Optional[str] = Field(default=None, description="新姓名", max_length=100)
+    phone: Optional[str] = Field(default=None, description="新手机号", max_length=20)
+    role: Optional[str] = Field(default=None, description="新角色")
+
+    @field_validator('role')
+    @classmethod
+    def validate_role(cls, v):
+        if v is None:
+            return v
+        valid = {'receptionist', 'cleaner', 'manager', 'sysadmin'}
+        v_lower = v.lower().strip()
+        if v_lower not in valid:
+            raise ValueError(f"无效的角色: {v}. 支持: {', '.join(valid)}")
+        return v_lower
+
+
+class DeactivateEmployeeParams(BaseModel):
+    """停用员工参数"""
+    employee_id: int = Field(..., description="员工ID", gt=0)
+
+
 __all__ = [
     "WalkInCheckInParams",
     "UpdateGuestParams",
     "CheckoutParams",
     "CreateTaskParams",
+    "DeleteTaskParams",
+    "BatchDeleteTasksParams",
     "CreateReservationParams",
     "FilterClauseParams",
     "JoinClauseParams",
@@ -452,4 +770,29 @@ __all__ = [
     "FetchChannelReservationsParams",
     "NotificationParams",
     "BookResourceParams",
+    # Task workflow
+    "AssignTaskParams",
+    "StartTaskParams",
+    "CompleteTaskParams",
+    # Stay workflow
+    "CheckinParams",
+    "ExtendStayParams",
+    "ChangeRoomParams",
+    # Reservation workflow
+    "CancelReservationParams",
+    "ModifyReservationParams",
+    # Billing
+    "AddPaymentParams",
+    "AdjustBillParams",
+    "RefundPaymentParams",
+    # Room & RoomType
+    "UpdateRoomStatusParams",
+    "CreateRoomTypeParams",
+    "UpdateRoomTypeParams",
+    # Guest
+    "CreateGuestParams",
+    # Employee
+    "CreateEmployeeParams",
+    "UpdateEmployeeParams",
+    "DeactivateEmployeeParams",
 ]

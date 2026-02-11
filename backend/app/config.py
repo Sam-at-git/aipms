@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     )
     LLM_MODEL: str = os.environ.get("LLM_MODEL", "deepseek-chat")
     LLM_TEMPERATURE: float = float(os.environ.get("LLM_TEMPERATURE", "0.7"))
-    LLM_MAX_TOKENS: int = int(os.environ.get("LLM_MAX_TOKENS", "1000"))
+    LLM_MAX_TOKENS: int = int(os.environ.get("LLM_MAX_TOKENS", "2000"))
 
     # LLM 功能开关
     ENABLE_LLM: bool = os.environ.get("ENABLE_LLM", "true").lower() == "true"

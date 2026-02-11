@@ -121,8 +121,9 @@ class TestSettingsConfiguration:
         """Test that embedding settings have sensible defaults"""
         s = Settings()
 
-        assert s.EMBEDDING_MODEL == "text-embedding-3-small"
-        assert s.EMBEDDING_BASE_URL == "https://api.openai.com"
+        # Project uses Ollama as default
+        assert s.EMBEDDING_MODEL == "nomic-embed-text"
+        assert s.EMBEDDING_BASE_URL == "http://localhost:11434/v1"
         assert s.EMBEDDING_CACHE_SIZE == 1000
         assert s.EMBEDDING_ENABLED is True
 

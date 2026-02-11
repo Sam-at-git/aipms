@@ -215,6 +215,17 @@ export interface AIResponse {
   follow_up?: FollowUpInfo
   topic_id?: string
   query_result?: QueryResultData
+  reasoning_trace?: ReasoningTrace
+}
+
+// SPEC-6: Reasoning trace for UI transparency
+export interface ReasoningTrace {
+  intent_source: string
+  action_type?: string
+  constraints_checked?: string[]
+  guard_summary?: string
+  validation_result?: string
+  notes?: string
 }
 
 // 缺失字段定义（用于追问模式）
@@ -250,6 +261,7 @@ export interface AIAction {
   requires_confirmation: boolean
   candidates?: CandidateOption[]
   missing_fields?: MissingField[]
+  side_effects?: string[]
 }
 
 export interface CandidateOption {
@@ -271,6 +283,7 @@ export interface ChatMessage {
   actions?: AIAction[]
   context?: MessageContext
   query_result?: QueryResultData
+  reasoning_trace?: ReasoningTrace
 }
 
 // 消息上下文

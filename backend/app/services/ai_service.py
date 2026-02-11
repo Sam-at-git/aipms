@@ -714,7 +714,7 @@ class AIService:
     # 各操作类型必需的参数定义
     ACTION_REQUIRED_PARAMS = {
         'walkin_checkin': ['room_number', 'guest_name', 'guest_phone', 'expected_check_out'],
-        'create_reservation': ['guest_name', 'guest_phone', 'room_type', 'check_in_date', 'check_out_date'],
+        'create_reservation': ['guest_name', 'guest_phone', 'room_type_id', 'check_in_date', 'check_out_date'],
         'checkin': ['reservation_id', 'room_number'],
         'checkout': ['stay_record_id'],
         'extend_stay': ['stay_record_id', 'new_check_out_date'],
@@ -792,8 +792,8 @@ class AIService:
                 placeholder='请输入手机号',
                 required=True
             ),
-            'room_type': MissingField(
-                field_name='room_type',
+            'room_type_id': MissingField(
+                field_name='room_type_id',
                 display_name='房型',
                 field_type='select',
                 options=self._get_room_type_options(),
@@ -862,7 +862,7 @@ class AIService:
         """获取房型选项列表"""
         room_types = self.room_service.get_room_types()
         return [
-            {'value': rt.name, 'label': f'{rt.name} ¥{rt.base_price}/晚'}
+            {'value': str(rt.id), 'label': f'{rt.name} ¥{rt.base_price}/晚'}
             for rt in room_types
         ]
 
@@ -972,11 +972,13 @@ class AIService:
         context = self._build_llm_context(user)
 
         # 使用 LLM 解析用户输入
+        prev_missing_fields = follow_up_context.get('missing_fields')
         llm_result = self.llm_service.parse_followup_input(
             user_input=message,
             action_type=action_type,
             collected_params=collected_params,
-            context=context
+            context=context,
+            missing_fields=prev_missing_fields
         )
 
         # LLM 返回的合并后参数
@@ -3264,6 +3266,143 @@ class AIService:
                     'success': True,
                     'message': f'{room.room_number}号房状态已更新为 {room.status.value}'
                 }
+
+            # ========== ActionRegistry 回退支持 ==========
+            # 以下动作已在 ActionRegistry 中注册，此处提供回退实现
+
+            # create_guest: 创建客人
+            if action_type == 'create_guest':
+                from app.models.schemas import GuestCreate
+                from app.services.guest_service import GuestService
+                from app.models.ontology import Guest
+
+                if params.get('phone'):
+                    existing = self.db.query(Guest).filter(
+                        Guest.phone == params['phone']
+                    ).first()
+                    if existing:
+                        return {
+                            'success': False,
+                            'message': f"手机号 {params['phone']} 已被客人「{existing.name}」使用",
+                            'error': 'duplicate'
+                        }
+
+                create_data = GuestCreate(
+                    name=params.get('name', ''),
+                    phone=params.get('phone'),
+                    id_type=params.get('id_type'),
+                    id_number=params.get('id_number'),
+                    email=params.get('email')
+                )
+                service = GuestService(self.db)
+                guest = service.create_guest(create_data)
+                return {
+                    'success': True,
+                    'message': f"客人「{guest.name}」已创建",
+                    'guest_id': guest.id,
+                    'guest_name': guest.name,
+                    'phone': guest.phone
+                }
+
+            # mark_room_clean: 标记房间已清洁
+            if action_type == 'mark_room_clean':
+                from app.services.room_service import RoomService
+                from app.models.ontology import RoomStatus
+                room_id = params.get('room_id') or params.get('room_number')
+                if isinstance(room_id, str) and room_id.isdigit():
+                    room_id = int(room_id)
+                service = RoomService(self.db)
+                room = service.get_room(room_id) if room_id else None
+                if room:
+                    room = service.update_room_status(room.id, RoomStatus.VACANT_CLEAN)
+                    return {
+                        'success': True,
+                        'message': f'{room.room_number}号房已标记为已清洁'
+                    }
+                return {
+                    'success': False,
+                    'message': '房间不存在'
+                }
+
+            # mark_room_dirty: 标记房间待清洁
+            if action_type == 'mark_room_dirty':
+                from app.services.room_service import RoomService
+                from app.models.ontology import RoomStatus
+                room_id = params.get('room_id') or params.get('room_number')
+                if isinstance(room_id, str) and room_id.isdigit():
+                    room_id = int(room_id)
+                service = RoomService(self.db)
+                room = service.get_room(room_id) if room_id else None
+                if room:
+                    room = service.update_room_status(room.id, RoomStatus.VACANT_DIRTY)
+                    return {
+                        'success': True,
+                        'message': f'{room.room_number}号房已标记为待清洁'
+                    }
+                return {
+                    'success': False,
+                    'message': '房间不存在'
+                }
+
+            # delete_task: 删除任务
+            if action_type == 'delete_task':
+                from app.models.schemas import TaskDelete
+                from app.services.task_service import TaskService
+                task_id = params.get('task_id')
+                service = TaskService(self.db)
+                service.delete_task(task_id, user.id)
+                return {
+                    'success': True,
+                    'message': '任务已删除'
+                }
+
+            # update_guest: 更新客人
+            if action_type == 'update_guest':
+                from app.models.schemas import GuestUpdate
+                from app.services.guest_service import GuestService
+                from app.models.ontology import Guest
+
+                guest_id = params.get('guest_id')
+                guest_name = params.get('guest_name')
+
+                guest = None
+                if guest_id:
+                    service = GuestService(self.db)
+                    guest = service.get_guest(guest_id)
+                elif guest_name:
+                    guest = self.db.query(Guest).filter(
+                        Guest.name == guest_name
+                    ).first()
+
+                if not guest:
+                    return {
+                        'success': False,
+                        'message': '未找到客人',
+                        'error': 'not_found'
+                    }
+
+                update_fields = {}
+                for field in ['name', 'phone', 'email', 'id_type', 'id_number', 'tier']:
+                    if field in params and params[field] is not None:
+                        update_fields[field] = params[field]
+
+                if not update_fields:
+                    return {
+                        'success': False,
+                        'message': '没有需要更新的字段',
+                        'error': 'no_updates'
+                    }
+
+                update_data = GuestUpdate(**update_fields)
+                service = GuestService(self.db)
+                updated_guest = service.update_guest(guest.id, update_data)
+                return {
+                    'success': True,
+                    'message': f"已更新客人「{updated_guest.name}」的信息",
+                    'guest_id': updated_guest.id
+                }
+
+            # ========== End of ActionRegistry 回退支持 ==========
 
             # ontology_query: NL2OntologyQuery - 动态字段选择查询
             if action_type == 'ontology_query':

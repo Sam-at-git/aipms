@@ -20,6 +20,9 @@ uv run pytest tests/core/ -v               # Core framework tests
 uv run pytest tests/services/actions/ -v   # Action handler tests
 uv run pytest tests/integration/ -v        # Integration tests
 uv run pytest -k "test_name"               # Single test by name
+
+# Benchmark (real LLM, no mocking — requires API key)
+OPENAI_API_KEY=sk-xxx uv run pytest tests/benchmark/ -v -s --no-cov
 ```
 
 ### Frontend Commands
@@ -110,7 +113,7 @@ All hotel-specific logic lives here.
   - `snapshots.py`: `OperationSnapshot` for undo (24-hour expiry)
 
 - **`app/services/`** — Business logic
-  - `actions/`: AI-executable action handlers organized by domain (`guest_actions.py`, `stay_actions.py`, `task_actions.py`, `reservation_actions.py`, `query_actions.py`)
+  - `actions/`: AI-executable action handlers organized by domain (12 modules: `guest_actions`, `stay_actions`, `task_actions`, `reservation_actions`, `query_actions`, `bill_actions`, `room_actions`, `employee_actions`, `price_actions`, `webhook_actions`, `notification_actions`, `interface_actions`)
   - `actions/base.py`: Pydantic parameter models for all actions
   - `ai_service.py`: OODA loop controller — LLM-first with rule-based fallback
   - `llm_service.py`: LLM integration with date context injection
@@ -219,9 +222,17 @@ my_actions.register_my_actions(registry)
 - `manager_token` / `receptionist_token` / `cleaner_token` / `sysadmin_token`: Pre-created users with JWT tokens
 - `clean_registry`: Resets `OntologyRegistry` singleton between tests (required when testing registry operations)
 
+### Benchmark Tests (`tests/benchmark/`)
+- YAML-driven end-to-end tests with real LLM calls (no mocking)
+- `benchmark_data.yaml`: Declarative test cases with `expect_action`, `expect_query_result`, `follow_up_fields`, `verify_db`
+- Each group runs in an independent in-memory SQLite with seeded init_data
+- Tests within a group execute sequentially (support cross-test dependencies)
+- `_resolve_action_params` auto-resolves entity IDs (task_id, bill_id, stay_record_id, reservation_id) from DB context before execution
+
 ### Important Constraints
 - Event handlers (pub/sub) don't fire in test environment
 - `OntologyRegistry` is a singleton — tests that modify it must use the `clean_registry` fixture to avoid cross-test pollution
+- DB enum values are stored UPPERCASE (e.g., `OCCUPIED`, `CONFIRMED`, `PENDING`) — use case-insensitive comparison
 
 ---
 
@@ -244,7 +255,36 @@ All endpoints require JWT authentication. Key groups:
 
 **Query:** `ontology_query` (dynamic field-level), `semantic_query` (dot-notation paths)
 
-**Mutation:** `walkin_checkin`, `checkin`, `checkout`, `extend_stay`, `change_room`, `create_reservation`, `cancel_reservation`, `create_task`, `assign_task`, `start_task`, `complete_task`, `add_payment`, `adjust_bill`
+**Guest/Stay:** `walkin_checkin`, `checkin`, `checkout`, `extend_stay`, `change_room`, `create_guest`, `update_guest`
+
+**Reservation:** `create_reservation`, `cancel_reservation`, `modify_reservation`
+
+**Task:** `create_task`, `assign_task`, `start_task`, `complete_task`, `delete_task`
+
+**Bill/Payment:** `add_payment`, `adjust_bill`, `refund_payment`
+
+**Room:** `mark_room_clean`, `mark_room_dirty`, `update_room_status`
+
+**Admin:** `create_employee`, `update_employee`, `deactivate_employee`, `update_price`, `create_rate_plan`
+
+### Parameter Validation Flow (Critical)
+
+`ai_service.py` defines `ACTION_REQUIRED_PARAMS` for actions that need mandatory fields:
+```python
+ACTION_REQUIRED_PARAMS = {
+    'walkin_checkin': ['room_number', 'guest_name', 'guest_phone', 'expected_check_out'],
+    'create_reservation': ['guest_name', 'guest_phone', 'room_type', 'check_in_date', 'check_out_date'],
+    'checkin': ['reservation_id', 'room_number'],
+    'checkout': ['stay_record_id'],
+    'extend_stay': ['stay_record_id', 'new_check_out_date'],
+    'change_room': ['stay_record_id', 'new_room_number'],
+    'create_task': ['room_number', 'task_type'],
+}
+```
+
+When `_validate_action_params()` finds missing fields, it returns `missing_fields` with UI form definitions (select dropdowns with DB options, text inputs, date pickers). The frontend presents these to the user, who fills them in. The response is sent back via `follow_up_context` in the next `process_message()` call, which bypasses LLM and goes straight to action execution.
+
+Actions NOT in this dict (e.g., `complete_task`, `add_payment`, `mark_room_clean`) skip validation and go directly to the handler, which must have all required params from the LLM extraction.
 
 ---
 
@@ -275,6 +315,18 @@ All endpoints require JWT authentication. Key groups:
 - Type validation: Pydantic v2
 - ORM: SQLAlchemy 2.0+
 
+### Seed Data Reference (`init_data.py`)
+
+**Room layout (40 rooms):**
+- 2F: 201–205 标间, 206–210 大床房
+- 3F: 301–305 标间, 306–310 大床房
+- 4F: 401–405 标间, 406–408 大床房, 409–410 豪华间
+- 5F: 501–502 大床房, 503–510 豪华间
+
+**Employees:** sysadmin (系统管理员), manager (张经理), front1/front2/front3 (李前台/王前台/赵前台), cleaner1/cleaner2 (刘阿姨/陈阿姨)
+
+**Room types:** 标间 ¥288, 大床房 ¥328, 豪华间 ¥458
+
 ---
 
 ## Ralph Loop / Sam Loop Refactoring Process
@@ -288,3 +340,21 @@ This project uses structured AI-assisted development loops with Architect→Edit
 - Never modify test files to make tests pass (unless the task explicitly requires it)
 - Never skip test verification
 - Prefer minimal, precise edits over rewriting entire files
+- **Critical**: Always validate field name consistency between `ACTION_REQUIRED_PARAMS`, `_get_field_definition`, `param_parser`, and LLM prompt examples
+
+### Known Issues & Solutions
+
+#### Field Name Mismatch (2025-02-11)
+**Issue**: LLM returns `room_type_id` and `room_type_name`, but `ACTION_REQUIRED_PARAMS` expects `room_type`, causing "还需要补充：房型" error.
+
+**Root Cause**: Three components use different field names:
+- `ACTION_REQUIRED_PARAMS`: `room_type` (str)
+- `_get_field_definition`: returns `room_type` with options as `rt.name` (string values)
+- `param_parser.parse_room_type()`: accepts `room_type_id` (int) or `room_type` (string name)
+- LLM examples: show `room_type` in `missing_fields`, but LLM may send `room_type_id` in params
+
+**Status**: Documented in `docs/ralphloop/FIELD_NAME_MISMATCH_ANALYSIS.md`
+
+**Temporary Fix Added**: Special handling in `ai_service.py:755-763` (to be removed after proper fix)
+
+---

@@ -12,8 +12,34 @@ tests/core/test_prompt_builder_semantic.py
 """
 import pytest
 from datetime import date
+from unittest.mock import patch
 
 from core.ai.prompt_builder import PromptBuilder, PromptContext
+
+
+# Sample relationship map for testing (mirrors hotel domain structure)
+SAMPLE_RELATIONSHIP_MAP = {
+    "Guest": {
+        "stays": ("StayRecord", "guest_id"),
+        "reservations": ("Reservation", "guest_id"),
+    },
+    "Room": {
+        "room_type": ("RoomType", "room_type_id"),
+        "stays": ("StayRecord", "room_id"),
+    },
+    "StayRecord": {
+        "guest": ("Guest", "guest_id"),
+        "room": ("Room", "room_id"),
+        "bill": ("Bill", "stay_record_id"),
+    },
+    "Reservation": {
+        "guest": ("Guest", "guest_id"),
+    },
+    "Bill": {
+        "stay_record": ("StayRecord", "stay_record_id"),
+        "payments": ("Payment", "bill_id"),
+    },
+}
 
 
 class TestSemanticQuerySyntax:
@@ -44,7 +70,8 @@ class TestSemanticQuerySyntax:
         assert "**单跳关联**" in result
         assert "**多跳导航**" in result
 
-    def test_contains_entity_paths(self):
+    @patch("core.ontology.query_engine.RELATIONSHIP_MAP", return_value=SAMPLE_RELATIONSHIP_MAP)
+    def test_contains_entity_paths(self, mock_rel_map):
         """测试包含实体路径"""
         builder = PromptBuilder()
         result = builder._build_semantic_query_syntax()
@@ -128,7 +155,7 @@ class TestSemanticQuerySyntax:
 
 
 class TestGenerateEntityPaths:
-    """测试实体路径生成"""
+    """测试实体路径生成 (SPEC-5: dynamic from relationship_map)"""
 
     def test_generate_entity_paths_returns_dict(self):
         """测试返回字典"""
@@ -137,10 +164,17 @@ class TestGenerateEntityPaths:
 
         assert isinstance(result, dict)
 
+    def test_empty_map_returns_empty(self):
+        """测试空关系映射返回空字典"""
+        builder = PromptBuilder()
+        result = builder._generate_entity_paths({})
+
+        assert result == {}
+
     def test_contains_guest_entity(self):
         """测试包含Guest实体"""
         builder = PromptBuilder()
-        result = builder._generate_entity_paths({})
+        result = builder._generate_entity_paths(SAMPLE_RELATIONSHIP_MAP)
 
         assert "Guest" in result
         assert len(result["Guest"]) > 0
@@ -148,23 +182,15 @@ class TestGenerateEntityPaths:
     def test_contains_room_entity(self):
         """测试包含Room实体"""
         builder = PromptBuilder()
-        result = builder._generate_entity_paths({})
+        result = builder._generate_entity_paths(SAMPLE_RELATIONSHIP_MAP)
 
         assert "Room" in result
         assert len(result["Room"]) > 0
 
-    def test_guest_paths_include_name(self):
-        """测试Guest路径包含name"""
-        builder = PromptBuilder()
-        result = builder._generate_entity_paths({})
-
-        guest_paths = " ".join(result["Guest"])
-        assert "name" in guest_paths
-
     def test_guest_paths_include_stays(self):
         """测试Guest路径包含stays关系"""
         builder = PromptBuilder()
-        result = builder._generate_entity_paths({})
+        result = builder._generate_entity_paths(SAMPLE_RELATIONSHIP_MAP)
 
         guest_paths = " ".join(result["Guest"])
         assert "stays" in guest_paths
@@ -172,15 +198,15 @@ class TestGenerateEntityPaths:
     def test_stayrecord_paths_include_guest(self):
         """测试StayRecord路径包含guest关系"""
         builder = PromptBuilder()
-        result = builder._generate_entity_paths({})
+        result = builder._generate_entity_paths(SAMPLE_RELATIONSHIP_MAP)
 
         stayrecord_paths = " ".join(result.get("StayRecord", []))
-        assert "guest.name" in stayrecord_paths
+        assert "guest" in stayrecord_paths
 
     def test_stayrecord_paths_include_room(self):
         """测试StayRecord路径包含room关系"""
         builder = PromptBuilder()
-        result = builder._generate_entity_paths({})
+        result = builder._generate_entity_paths(SAMPLE_RELATIONSHIP_MAP)
 
         stayrecord_paths = " ".join(result.get("StayRecord", []))
         assert "room" in stayrecord_paths

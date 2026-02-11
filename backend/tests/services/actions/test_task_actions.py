@@ -90,6 +90,7 @@ class TestHandleCreateTask:
             mock_param_parser.parse_room.return_value = ParseResult(
                 value=101,
                 confidence=1.0,
+                matched_by='direct',
                 raw_input="101",
                 candidates=None
             )
@@ -129,6 +130,7 @@ class TestHandleCreateTask:
         mock_param_parser.parse_room.return_value = ParseResult(
             value=201,
             confidence=1.0,
+            matched_by='room_number',
             raw_input="201",
             candidates=None
         )
@@ -226,6 +228,7 @@ class TestHandleCreateTask:
         mock_param_parser.parse_room.return_value = ParseResult(
             value=None,
             confidence=0.5,
+            matched_by='fuzzy',
             raw_input="10",
             candidates=[
                 {"id": 101, "room_number": "101"},

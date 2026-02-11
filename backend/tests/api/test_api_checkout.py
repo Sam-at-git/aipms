@@ -98,10 +98,55 @@ class TestExecuteCheckout:
 
         assert response.status_code == 400
 
-    @pytest.mark.skip(reason="事件处理器在测试环境中未正确初始化")
-    def test_checkout_creates_cleaning_task(self, client: TestClient, receptionist_auth_headers, db_session):
+    def test_checkout_creates_cleaning_task(self, client: TestClient, receptionist_auth_headers, db_session, test_event_bus):
         """测试退房后自动创建清洁任务"""
-        pass
+        from app.models.ontology import (
+            StayRecord, StayRecordStatus, Room, RoomType, Guest,
+            RoomStatus, Bill, Task, TaskType, TaskStatus
+        )
+
+        room_type = RoomType(name="标准间", base_price=Decimal("288"), max_occupancy=2)
+        db_session.add(room_type)
+        db_session.commit()
+        room = Room(room_number="301", floor=3, room_type_id=room_type.id, status=RoomStatus.OCCUPIED)
+        db_session.add(room)
+        guest = Guest(name="王五", phone="13700137000")
+        db_session.add(guest)
+        db_session.commit()
+
+        stay = StayRecord(
+            guest_id=guest.id,
+            room_id=room.id,
+            check_in_time=datetime.now() - timedelta(days=1),
+            expected_check_out=date.today(),
+            status=StayRecordStatus.ACTIVE
+        )
+        db_session.add(stay)
+        db_session.commit()
+
+        bill = Bill(
+            stay_record_id=stay.id,
+            total_amount=Decimal("288.00"),
+            paid_amount=Decimal("288.00"),
+            is_settled=True
+        )
+        db_session.add(bill)
+        db_session.commit()
+        db_session.refresh(stay)
+
+        response = client.post("/checkout", headers=receptionist_auth_headers, json={
+            "stay_record_id": stay.id
+        })
+
+        assert response.status_code == 200
+
+        # Verify cleaning task was auto-created by event handler
+        cleaning_task = db_session.query(Task).filter(
+            Task.room_id == room.id,
+            Task.task_type == TaskType.CLEANING
+        ).first()
+        assert cleaning_task is not None
+        assert cleaning_task.status == TaskStatus.PENDING
 
 
 class TestOverdueList:

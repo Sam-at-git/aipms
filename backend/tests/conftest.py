@@ -221,6 +221,30 @@ def multiple_rooms(db_session, sample_room_type):
 
 
 @pytest.fixture
+def test_event_bus(db_engine):
+    """
+    Set up event handlers wired to the test's in-memory database.
+    Use this fixture in tests that need event-driven behavior
+    (e.g., checkout → auto cleaning task).
+    """
+    from app.services.event_bus import event_bus
+    from app.services.event_handlers import EventHandlers
+
+    test_session_factory = sessionmaker(autocommit=False, autoflush=False, bind=db_engine)
+    handlers = EventHandlers(db_session_factory=test_session_factory)
+
+    # Clear any existing subscribers and register test handlers
+    event_bus.clear_subscribers()
+    handlers.register_handlers()
+
+    yield event_bus
+
+    # Cleanup
+    handlers.unregister_handlers()
+    event_bus.clear_subscribers()
+
+
+@pytest.fixture
 def sample_cleaner(db_session):
     """创建测试清洁员（使用不同用户名避免与cleaner_token冲突）"""
     cleaner = Employee(

@@ -691,3 +691,417 @@ groups:
       - name: "口语-今天退了几间"
         input: "今天总共退了几间房"
         expect_query_result: true
+
+  # ============================================================
+  # 18. 电话号码更新 - OAG 约束验证测试
+  # ============================================================
+  - name: "电话号码更新"
+    description: "测试客户电话号码更新场景，包括格式验证、唯一性验证和部分修改"
+    tests:
+      # ---------- Setup: 先创建测试用客人 ----------
+      - name: "创建张三客人"
+        input: "张三入住201房间，电话13800138000，后天退房"
+        expect_action:
+          action_type: "walkin_checkin"
+          params_contain:
+            guest_name: "张三"
+            room_number: "201"
+            guest_phone: "13800138000"
+        verify_db:
+          - sql: "SELECT name, phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                name: "张三"
+                phone: "13800138000"
+
+      - name: "创建李瓶儿客人"
+        input: "李瓶儿入住202房间，电话13500135799，后天退房"
+        expect_action:
+          action_type: "walkin_checkin"
+          params_contain:
+            guest_name: "李瓶儿"
+            room_number: "202"
+            guest_phone: "13500135799"
+        verify_db:
+          - sql: "SELECT name, phone FROM guests WHERE name = '李瓶儿'"
+            expect:
+              rows: 1
+              values:
+                name: "李瓶儿"
+                phone: "13500135799"
+
+      # ---------- 正常更新场景 ----------
+      - name: "完整更新有效手机号"
+        input: "把张三的电话改成13912345678"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "13912345678"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "13912345678"
+
+      - name: "智能修改-后两位改为11"
+        input: "张三的手机号后两位改为11"
+        expect_action:
+          action_type: "update_guest_smart"
+          params_contain:
+            guest_name: "张三"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "13912345611"  # 上一步改为 13912345678，后两位改为 11
+
+      - name: "智能修改-后三位改为888"
+        input: "张三的手机号后三位改为888"
+        expect_action:
+          action_type: "update_guest_smart"
+          params_contain:
+            guest_name: "张三"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "13912345888"  # 上一步改为 13912345611，后三位改为 888
+
+      - name: "智能修改-换前缀"
+        input: "张三的手机号前缀改为159"
+        expect_action:
+          action_type: "update_guest_smart"
+          params_contain:
+            guest_name: "张三"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "15912345888"  # 上一步改为 13912345888，前缀改为 159
+
+      # ---------- 格式验证场景 ----------
+      - name: "格式错误-太短"
+        input: "把张三的电话改成12345"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "12345"
+        expect_result:
+          success: false
+          allowed: false
+          error_type: "FormatValidation"
+          error_message_contain: "手机号"
+          correction_prompt_contain: "11位"
+
+      - name: "格式错误-非1开头"
+        input: "把张三的电话改成23456789012"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "23456789012"
+        expect_result:
+          success: false
+          allowed: false
+          error_type: "FormatValidation"
+          error_message_contain: "以1开头"
+
+      - name: "格式错误-第二位不对"
+        input: "把张三的电话改成122345678"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "122345678"
+        expect_result:
+          success: false
+          allowed: false
+          error_type: "FormatValidation"
+          error_message_contain: "第二位"
+
+      - name: "李瓶-完整更新有效手机号"
+        input: "把李瓶儿的电话改成13912345678"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "李瓶儿"
+            phone: "13912345678"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '李瓶儿'"
+            expect:
+              rows: 1
+              values:
+                phone: "13912345678"
+
+      - name: "李瓶-智能修改-后两位改为11"
+        input: "李瓶儿的手机号后两位改成11"
+        expect_action:
+          action_type: "update_guest_smart"
+          params_contain:
+            guest_name: "李瓶儿"
+            instructions: "后两位改为11"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '李瓶儿'"
+            expect:
+              rows: 1
+              values:
+                phone: "13500135711"  # 原手机号 13500135799 后两位改为 11
+
+      - name: "格式错误-全是1"
+        input: "把张三的电话改成11111111111"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "11111111111"
+        expect_result:
+          success: false
+          allowed: false
+          error_type: "FormatValidation"
+          error_message_contain: "格式"
+
+      - name: "智能修改-结果无效"
+        input: "把张三的电话后两位改成aa"
+        expect_action:
+          action_type: "update_guest_smart"
+          params_contain:
+            guest_name: "张三"
+            instructions: "后两位改成aa"
+        expect_result:
+          success: false
+          allowed: false
+          error_type: "FormatValidation"
+          error_message_contain: "数字"
+
+      # ---------- 唯一性验证场景 ----------
+      - name: "唯一性冲突-已存在手机"
+        input: "把张三的电话改成李四的号码13900139000"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "13900139000"
+        expect_result:
+          success: false
+          allowed: false
+          error_type: "UniquenessValidation"
+          error_message_contain: "已被"
+          correction_prompt_contain: "李四"
+
+      - name: "唯一性冲突-多候选人选手机"
+        input: "把张三的电话改成13500135000"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "13500135000"
+        expect_result:
+          success: false
+          allowed: false
+          error_type: "UniquenessValidation"
+          error_message_contain: "已被"
+
+      # ---------- 口语化表达场景 ----------
+      - name: "口语-换个手机号"
+        input: "张三换个手机号吧，新号是18612345678"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "18612345678"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "18612345678"
+
+      - name: "口语-手机号改成"
+        input: "张三的手机号改成15811112222"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "15811112222"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "15811112222"
+
+      - name: "口语-联系方式改成"
+        input: "把张三的联系方式改成17799887766"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "17799887766"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "17799887766"
+
+      - name: "口语-换下手机号"
+        input: "张三换下手机号，现在是19876543210"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "19876543210"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "19876543210"
+
+      - name: "口语-更新联系方式"
+        input: "帮我更新一下张三的联系方式，新电话15555555555"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "15555555555"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "15555555555"
+
+      # ---------- 边界场景 ----------
+      - name: "边界值-最小有效138开头"
+        input: "把张三的电话改成13800138000"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "13800138000"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "13800138000"
+
+      - name: "边界值-最小有效139开头"
+        input: "把张三的电话改成13900139000"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "13900139000"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "13900139000"
+
+      - name: "边界值-最大有效198开头"
+        input: "把张三的电话改成19800139000"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "19800139000"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "19800139000"
+
+      - name: "边界值-最大有效199开头"
+        input: "把张三的电话改成19900139000"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "19900139000"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "19900139000"
+
+      - name: "边界-超过最大值"
+        input: "把张三的电话改成20000139000"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "20000139000"
+        expect_result:
+          success: false
+          allowed: false
+          error_type: "FormatValidation"
+          error_message_contain: "第二位"
+
+      - name: "边界值-低于最小值"
+        input: "把张三的电话改成13700138000"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "张三"
+            phone: "13700138000"
+        expect_result:
+          success: false
+          allowed: false
+          error_type: "FormatValidation"
+          error_message_contain: "第二位"
+
+      # ---------- 智能修改复杂场景 ----------
+      - name: "智能修改-中间4位改成8888"
+        input: "张三的手机号中间4位改成8888"
+        expect_action:
+          action_type: "update_guest_smart"
+          params_contain:
+            guest_name: "张三"
+            instructions: "中间4位改成8888"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '张三'"
+            expect:
+              rows: 1
+              values:
+                phone: "13888888000"  # 13800138000 中间4位改成 8888
+
+      # ---------- 多客户场景 ----------
+      - name: "多客户-李四更新"
+        input: "把李四的电话改成18666668888"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "李四"
+            phone: "18666668888"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '李四'"
+            expect:
+              rows: 1
+              values:
+                phone: "18666668888"
+
+      - name: "多客户-王五更新"
+        input: "王五换个手机号，新号17712345678"
+        expect_action:
+          action_type: "update_guest"
+          params_contain:
+            guest_name: "王五"
+            phone: "17712345678"
+        verify_db:
+          - sql: "SELECT phone FROM guests WHERE name = '王五'"
+            expect:
+              rows: 1
+              values:
+                phone: "17712345678"

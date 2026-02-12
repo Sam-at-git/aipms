@@ -57,6 +57,27 @@ def benchmark_db():
 def ai_service(benchmark_db):
     """创建真实 AIService 实例（需要 OPENAI_API_KEY 环境变量）"""
     from app.services.ai_service import AIService
+    from app.services.actions import get_action_registry, reset_action_registry, register_smart_updates
+
+    # Reset to ensure fresh registry each test
+    reset_action_registry()
+
+    # Bootstrap OntologyRegistry + smart update actions (mirrors main.py startup)
+    try:
+        from core.ontology.registry import OntologyRegistry
+        from app.hotel.hotel_domain_adapter import HotelDomainAdapter
+
+        ont_registry = OntologyRegistry()
+        adapter = HotelDomainAdapter()
+        adapter.register_ontology(ont_registry)
+
+        action_registry = get_action_registry()
+        action_registry.set_ontology_registry(ont_registry)
+        register_smart_updates(ont_registry)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Ontology bootstrap warning: {e}")
+
     return AIService(benchmark_db)
 
 

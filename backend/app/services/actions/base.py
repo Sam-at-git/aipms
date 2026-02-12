@@ -88,18 +88,27 @@ class UpdateGuestParams(BaseModel):
     notes: Optional[str] = Field(default=None, description="备注信息")
 
 
-class UpdateGuestSmartParams(BaseModel):
+class SmartUpdateParams(BaseModel):
     """
-    智能更新客人信息参数
+    通用智能更新参数
 
-    用于 update_guest_smart 动作，支持自然语言式的部分修改指令。
+    用于 update_{entity}_smart 动作，支持自然语言式的部分修改指令。
     例如：'把电话号码后两位改为77'、'将邮箱改为新邮箱@qq.com'
 
-    LLM 会自动解析修改意图并应用到当前值。
+    通过 entity_id/entity_name 通用字段定位实体，
+    同时支持 guest_id/guest_name/employee_id/employee_name 等别名字段以兼容 LLM 输出。
     """
-    guest_id: Optional[int] = Field(default=None, description="客人ID", gt=0)
-    guest_name: Optional[str] = Field(default=None, description="客人姓名（用于查找客人）")
+    entity_id: Optional[int] = Field(default=None, description="实体ID", gt=0)
+    entity_name: Optional[str] = Field(default=None, description="实体名称（用于查找）")
     instructions: str = Field(..., description="自然语言修改指令，如: '电话号码后两位改为77'")
+
+    # Alias fields for backward LLM compatibility
+    guest_id: Optional[int] = Field(default=None, description="客人ID（别名→entity_id）", gt=0, exclude=True)
+    guest_name: Optional[str] = Field(default=None, description="客人姓名（别名→entity_name）", exclude=True)
+    employee_id: Optional[int] = Field(default=None, description="员工ID（别名→entity_id）", gt=0, exclude=True)
+    employee_name: Optional[str] = Field(default=None, description="员工姓名（别名→entity_name）", exclude=True)
+    room_type_id: Optional[int] = Field(default=None, description="房型ID（别名→entity_id）", gt=0, exclude=True)
+    room_type_name: Optional[str] = Field(default=None, description="房型名称（别名→entity_name）", exclude=True)
 
     @field_validator('instructions')
     @classmethod
@@ -108,6 +117,25 @@ class UpdateGuestSmartParams(BaseModel):
         if not v or not v.strip():
             raise ValueError("修改指令不能为空")
         return v.strip()
+
+    def model_post_init(self, __context: Any) -> None:
+        """Resolve alias fields to generic entity_id/entity_name."""
+        if self.entity_id is None:
+            for alias in ('guest_id', 'employee_id', 'room_type_id'):
+                val = getattr(self, alias, None)
+                if val is not None:
+                    self.entity_id = val
+                    break
+        if self.entity_name is None:
+            for alias in ('guest_name', 'employee_name', 'room_type_name'):
+                val = getattr(self, alias, None)
+                if val is not None:
+                    self.entity_name = val
+                    break
+
+
+# Backward compatibility alias
+UpdateGuestSmartParams = SmartUpdateParams
 
 
 # ============== Stay Action Parameters ==============
@@ -795,4 +823,7 @@ __all__ = [
     "CreateEmployeeParams",
     "UpdateEmployeeParams",
     "DeactivateEmployeeParams",
+    # Smart Update (generic)
+    "SmartUpdateParams",
+    "UpdateGuestSmartParams",
 ]

@@ -3,7 +3,6 @@ app/services/actions/guest_actions.py
 
 Guest-related action handlers using ActionRegistry.
 """
-import json
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from pydantic import ValidationError
@@ -11,7 +10,7 @@ from pydantic import ValidationError
 from core.ai.actions import ActionRegistry
 from app.models.ontology import Employee, Guest
 from app.services.param_parser_service import ParamParserService, ParseResult
-from app.services.actions.base import WalkInCheckInParams, UpdateGuestParams, CreateGuestParams, UpdateGuestSmartParams
+from app.services.actions.base import WalkInCheckInParams, UpdateGuestParams, CreateGuestParams
 
 import logging
 
@@ -139,12 +138,19 @@ def register_guest_actions(
     @registry.register(
         name="update_guest",
         entity="Guest",
-        description="更新客人信息，包括联系方式（手机号、邮箱）、姓名、证件信息、客户等级、黑名单状态等。",
+        description="直接更新客人信息（需提供完整新值）。仅当用户提供了完整、明确的新值时使用。",
         category="mutation",
         requires_confirmation=True,
         allowed_roles={"receptionist", "manager"},
         undoable=False,
         side_effects=["updates_guest"],
+        search_keywords=["修改客人", "更新客人", "直接更新", "改成", "改为"],
+        semantic_category="update_style",
+        category_description="更新方式（直接赋值 vs 智能解析修改指令）",
+        glossary_examples=[
+            {"correct": '"把张三的电话改成13912345678" → update_guest（已提供完整新值）',
+             "incorrect": '"张三的手机号后两位改为88" → update_guest（无法直接得出完整新值，应使用同实体的 _smart 操作）'},
+        ],
     )
     def handle_update_guest(
         params: UpdateGuestParams,
@@ -227,6 +233,45 @@ def register_guest_actions(
                 "error": "no_updates"
             }
 
+        # ========== OAG: 属性级约束验证 ==========
+        from core.reasoning.constraint_engine import ConstraintEngine
+
+        # Get the ontology registry from the action registry (already initialized)
+        # The action registry stores it in _ontology_registry
+        from app.services.actions import get_action_registry
+        action_registry = get_action_registry()
+        ontology = action_registry._ontology_registry
+        if not ontology:
+            # Fallback: create a new ontology registry if not available
+            from core.ontology.registry import OntologyRegistry
+            from app.hotel.hotel_domain_adapter import HotelDomainAdapter
+            ontology = OntologyRegistry()
+            HotelDomainAdapter().register_ontology(ontology)
+            action_registry.set_ontology_registry(ontology)
+
+        constraint_engine = ConstraintEngine(ontology)
+
+        # 对每个要更新的字段进行约束检查
+        user_context = {"role": user.role.value if hasattr(user.role, 'value') else user.role}
+        for field_name, new_value in update_fields.items():
+            old_value = getattr(guest, field_name, None)
+            if new_value == old_value:
+                continue  # 值未变更，跳过验证
+
+            decision = constraint_engine.validate_property_update(
+                entity_type="Guest",
+                property_name=field_name,
+                old_value=old_value,
+                new_value=new_value,
+                user_context=user_context,
+                db=db,
+                entity_id=guest.id
+            )
+
+            if not decision.allowed:
+                # 返回 OAG 决策结果
+                return decision.to_response_dict()
+
         # Execute update
         try:
             update_data = GuestUpdate(**update_fields)
@@ -241,11 +286,12 @@ def register_guest_actions(
                     "tier": "客户等级", "is_blacklisted": "黑名单",
                     "blacklist_reason": "黑名单原因", "notes": "备注"
                 }
-                changes.append(f"{field_labels.get(k, k)}: {v}")
+                old_val = getattr(guest, k, "")
+                changes.append(f"{field_labels.get(k, k)}: {old_val} → {v}")
 
             return {
                 "success": True,
-                "message": f"已更新客人「{updated_guest.name}」的信息：{'、'.join(changes)}",
+                "message": f"已更新客人「{updated_guest.name}」的信息：{'；'.join(changes)}",
                 "guest_id": updated_guest.id,
                 "guest_name": updated_guest.name,
                 "updated_fields": update_fields
@@ -318,192 +364,6 @@ def register_guest_actions(
                 "error": "execution_error"
             }
 
-
-    @registry.register(
-        name="update_guest_smart",
-        entity="Guest",
-        description="智能更新客人信息。支持自然语言式的部分修改指令，例如：'把电话号码后两位改为77'、'将邮箱改为新邮箱@qq.com'。会自动解析修改意图并应用到当前值。",
-        category="mutation",
-        requires_confirmation=True,
-        allowed_roles={"receptionist", "manager"},
-        undoable=False,
-        side_effects=["updates_guest"],
-        search_keywords=["修改电话", "改号码", "更新信息", "智能修改", "部分修改"],
-    )
-    def handle_update_guest_smart(
-        params: UpdateGuestSmartParams,
-        db: Session,
-        user: Employee,
-        **context
-    ) -> Dict[str, Any]:
-        """
-        智能更新客人信息 - 使用 LLM 解析部分修改指令
-
-        处理流程:
-        1. 查找客人（通过ID或姓名）
-        2. 使用 LLM 解析修改意图
-        3. 获取当前值并应用修改
-        4. 执行更新
-        """
-        from app.models.schemas import GuestUpdate
-        from app.services.guest_service import GuestService
-        from app.services.llm_service import LLMService
-
-        guest_service = GuestService(db)
-
-        # 1. 查找客人
-        guest = None
-        if params.guest_id:
-            guest = guest_service.get_guest(params.guest_id)
-            if not guest:
-                return {
-                    "success": False,
-                    "message": f"未找到ID为 {params.guest_id} 的客人",
-                    "error": "not_found"
-                }
-        elif params.guest_name:
-            candidates = db.query(Guest).filter(
-                Guest.name == params.guest_name
-            ).all()
-
-            if not candidates:
-                candidates = db.query(Guest).filter(
-                    Guest.name.like(f"%{params.guest_name}%")
-                ).all()
-
-            if len(candidates) == 0:
-                return {
-                    "success": False,
-                    "message": f"未找到名为「{params.guest_name}」的客人",
-                    "error": "not_found"
-                }
-            elif len(candidates) > 1:
-                candidate_list = [
-                    {"id": g.id, "name": g.name, "phone": g.phone or ""}
-                    for g in candidates
-                ]
-                return {
-                    "success": False,
-                    "requires_confirmation": True,
-                    "action": "select_guest",
-                    "message": f"找到多个名为「{params.guest_name}」的客人，请确认：",
-                    "candidates": candidate_list
-                }
-            else:
-                guest = candidates[0]
-        else:
-            return {
-                "success": False,
-                "message": "请提供客人ID或客人姓名",
-                "error": "missing_identifier"
-            }
-
-        # 2. 构建 LLM 提示来解析修改指令
-        current_info = {
-            "name": guest.name,
-            "phone": guest.phone or "无",
-            "email": guest.email or "无",
-        }
-
-        # 3. 使用 LLM 解析修改意图
-        llm_service = LLMService()
-
-        prompt = f"""你是酒店管理系统的修改意图解析器。
-
-当前客人信息：
-- 姓名: {current_info['name']}
-- 电话: {current_info['phone']}
-- 邮箱: {current_info['email']}
-
-用户的修改指令：
-{params.instructions}
-
-请根据修改指令计算出新值。特别注意：
-1. "后两位改为77" 意味着保留前9位，将最后两位改为77
-2. "电话号码改为13800138000" 意味着完全替换
-3. 如果当前值为"无"，则直接使用新值
-
-只返回JSON格式：
-{{
-    "new_name": "新姓名（如果不修改则为null）",
-    "new_phone": "新电话号码（必须是11位数字，如果不修改则为null）",
-    "new_email": "新邮箱（如果不修改则为null）",
-    "explanation": "修改说明"
-}}
-
-如果某个字段没有对应的修改指令，设为null。"""
-
-        try:
-            if not llm_service.is_enabled():
-                return {
-                    "success": False,
-                    "message": "LLM 服务未启用，无法解析复杂修改指令。请使用 update_guest 动作直接提供完整的新值。",
-                    "error": "llm_disabled"
-                }
-
-            # 使用 LLM 解析
-            response = llm_service.client.chat.completions.create(
-                model=llm_service.model,
-                messages=[
-                    {"role": "system", "content": "你是精确的数据修改解析器，只返回纯JSON格式。"},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0,
-                max_tokens=500,
-                response_format={"type": "json_object"}
-            )
-
-            result = json.loads(response.choices[0].message.content)
-
-            update_fields = {}
-            changes = []
-
-            if result.get("new_name"):
-                update_fields["name"] = result["new_name"]
-                changes.append(f"姓名: {guest.name} → {result['new_name']}")
-
-            if result.get("new_phone"):
-                update_fields["phone"] = result["new_phone"]
-                if guest.phone:
-                    changes.append(f"手机号: {guest.phone} → {result['new_phone']}")
-                else:
-                    changes.append(f"手机号: 设置为 {result['new_phone']}")
-
-            if result.get("new_email"):
-                update_fields["email"] = result["new_email"]
-                if guest.email:
-                    changes.append(f"邮箱: {guest.email} → {result['new_email']}")
-                else:
-                    changes.append(f"邮箱: 设置为 {result['new_email']}")
-
-            # 4. 执行更新
-            if not update_fields:
-                return {
-                    "success": False,
-                    "message": "LLM 未解析出任何需要修改的字段",
-                    "error": "no_updates"
-                }
-
-            update_data = GuestUpdate(**update_fields)
-            updated_guest = guest_service.update_guest(guest.id, update_data)
-
-            return {
-                "success": True,
-                "message": f"已更新客人「{guest.name}」的信息：{'；'.join(changes)}",
-                "guest_id": updated_guest.id,
-                "guest_name": updated_guest.name,
-                "updated_fields": update_fields,
-                "changes": changes,
-                "explanation": result.get("explanation", "")
-            }
-
-        except Exception as e:
-            logger.error(f"Error in update_guest_smart: {e}")
-            return {
-                "success": False,
-                "message": f"处理修改指令时出错: {str(e)}",
-                "error": "execution_error"
-            }
 
 
 __all__ = ["register_guest_actions"]

@@ -512,9 +512,21 @@ class TestUnknownActions:
 class TestBackwardCompatibility:
     """Test that legacy actions still work."""
 
-    def test_legacy_start_task_still_works(self, db_session, receptionist, room_type):
-        """Test that unmigrated actions (like start_task) still work."""
+    def test_start_task_via_registry_with_correct_role(self, db_session, room_type):
+        """Test that start_task dispatches via registry with correct role (cleaner/manager)."""
+        from app.security.auth import get_password_hash
         service = AIService(db_session)
+
+        # start_task requires cleaner or manager role
+        cleaner = Employee(
+            username="cleaner_e2e",
+            password_hash=get_password_hash("password"),
+            name="E2E清洁员",
+            role=EmployeeRole.CLEANER,
+            is_active=True
+        )
+        db_session.add(cleaner)
+        db_session.flush()
 
         room = Room(
             room_number="103",
@@ -523,14 +535,14 @@ class TestBackwardCompatibility:
             status=RoomStatus.VACANT_DIRTY
         )
         db_session.add(room)
-        db_session.flush()  # Flush to get room.id
+        db_session.flush()
 
         task = Task(
             room_id=room.id,
             task_type=TaskType.CLEANING,
-            status=TaskStatus.ASSIGNED,  # Must be ASSIGNED to be started
+            status=TaskStatus.ASSIGNED,
             priority=1,
-            assignee_id=receptionist.id  # Assign to receptionist so they can start it
+            assignee_id=cleaner.id
         )
         db_session.add(task)
         db_session.commit()
@@ -540,9 +552,9 @@ class TestBackwardCompatibility:
             "params": {"task_id": task.id}
         }
 
-        result = service.execute_action(action, receptionist)
+        result = service.execute_action(action, cleaner)
 
-        # Should succeed via legacy path
+        # Should succeed via registry
         assert result["success"] is True
 
         # Verify task status changed

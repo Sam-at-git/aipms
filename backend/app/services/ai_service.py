@@ -1394,7 +1394,7 @@ class AIService:
             for rt in room_types
         ]
 
-        # 添加在住客人（最近5位）
+        # 添加在住客人（最近20位）
         active_stays = self.checkin_service.get_active_stays()
         context["active_stays"] = [
             {
@@ -1403,7 +1403,7 @@ class AIService:
                 "guest_name": s.guest.name,
                 "expected_check_out": str(s.expected_check_out)
             }
-            for s in active_stays[:5]
+            for s in active_stays[:20]
         ]
 
         # 添加待处理任务
@@ -1414,7 +1414,7 @@ class AIService:
                 "room_number": t.room.room_number,
                 "task_type": t.task_type.value
             }
-            for t in pending_tasks[:5]
+            for t in pending_tasks[:20]
         ]
 
         # conversation_history 将在 process_message 中添加
@@ -2927,15 +2927,15 @@ class AIService:
 
         # ========== SPEC-08: 新路径 - ActionRegistry ==========
         if self.use_action_registry():
-            try:
-                registry = self.get_action_registry()
-                if registry.get_action(action_type):
+            registry = self.get_action_registry()
+            if registry.get_action(action_type):
+                try:
                     logger.info(f"Executing {action_type} via ActionRegistry")
                     return self.dispatch_via_registry(action_type, params, user)
-            except Exception as e:
-                logger.warning(f"Registry dispatch failed for {action_type}: {e}, falling back to legacy")
-                # 继续尝试旧路径
-                pass
+                except Exception as e:
+                    logger.error(f"Registry dispatch failed for {action_type}: {e}")
+                    return {"success": False, "message": f"操作执行失败: {str(e)}"}
+        # Only unregistered actions fall through to legacy chain
         # ========== SPEC-08 End ==========
 
         try:

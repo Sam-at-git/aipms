@@ -67,9 +67,12 @@ async def lifespan(app: FastAPI):
         print("✓ 酒店业务规则已初始化")
 
         # ========== SPEC-R11: Sync ActionRegistry to OntologyRegistry ==========
-        from app.services.actions import get_action_registry
+        from app.services.actions import get_action_registry, register_smart_updates
         action_registry = get_action_registry()
         action_registry.set_ontology_registry(ont_registry)
+
+        # Register smart update actions (requires populated OntologyRegistry)
+        register_smart_updates(ont_registry)
         print(f"✓ ActionRegistry 已同步到 OntologyRegistry ({len(action_registry.list_actions())} actions)")
 
     except Exception as e:

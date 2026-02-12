@@ -165,29 +165,24 @@ class TestExecuteActionWithRegistry:
             assert result["success"] is True
             mock_dispatch.assert_called_once()
 
-    def test_execute_action_falls_back_to_legacy_on_error(self, db_session, mock_user):
-        """Test that execute_action falls back to legacy path on registry error."""
+    def test_execute_action_returns_error_on_registry_dispatch_failure(self, db_session, mock_user):
+        """Test that registered action dispatch failure returns error directly (no legacy fallback)."""
         service = AIService(db_session)
 
         # Mock dispatch_via_registry to raise an error
         with patch.object(service, 'dispatch_via_registry') as mock_dispatch:
             mock_dispatch.side_effect = Exception("Registry error")
 
-            # Mock the legacy path to succeed
-            with patch.object(service, 'checkout_service') as mock_checkout:
-                mock_stay = Mock()
-                mock_stay.room.room_number = "201"
-                mock_checkout.check_out.return_value = mock_stay
+            action = {
+                "action_type": "checkout",
+                "params": {"stay_record_id": 1}
+            }
 
-                action = {
-                    "action_type": "checkout",
-                    "params": {"stay_record_id": 1}
-                }
+            result = service.execute_action(action, mock_user)
 
-                result = service.execute_action(action, mock_user)
-
-                # Should succeed via legacy path
-                assert result["success"] is True
+            # Should return error directly, NOT fall through to legacy
+            assert result["success"] is False
+            assert "Registry error" in result["message"]
 
     def test_execute_action_registry_unavailable(self, db_session, mock_user):
         """Test execute_action when registry is not available."""
@@ -257,35 +252,31 @@ class TestGetRelevantTools:
 class TestBackwardCompatibility:
     """Test backward compatibility with legacy actions."""
 
-    def test_legacy_actions_still_work(self, db_session, mock_user):
-        """Test that non-migrated actions still work via legacy path."""
+    def test_registered_actions_use_registry(self, db_session, mock_user):
+        """Test that registered actions dispatch via registry, not legacy path."""
         service = AIService(db_session)
 
-        # Use an action that hasn't been migrated yet
-        # For example: assign_task, start_task, complete_task, etc.
-
-        # Mock the legacy path
-        with patch.object(service, 'task_service') as mock_task:
-            mock_task.start_task.return_value = Mock(id=1)
-
-            action = {
-                "action_type": "start_task",
-                "params": {"task_id": 1}
+        # start_task is in registry, so it uses registry dispatch
+        with patch.object(service, 'dispatch_via_registry') as mock_registry:
+            mock_registry.return_value = {
+                "success": True,
+                "message": "Registry action",
+                "data": {}
             }
 
-            result = service.execute_action(action, mock_user)
+            result = service.execute_action({
+                "action_type": "start_task",
+                "params": {"task_id": 1}
+            }, mock_user)
 
-            # Should succeed via legacy path
             assert result["success"] is True
+            mock_registry.assert_called_once()
 
     def test_registry_and_legacy_coexist(self, db_session, mock_user):
-        """Test that both registry and legacy paths can coexist."""
+        """Test that registry handles registered actions and legacy handles unknown ones."""
         service = AIService(db_session)
 
-        # Since registry is now enabled, we need to disable it to test legacy path
-        # Or we should patch the registry dispatch to simulate both paths
-
-        # Registry action (using create_task which is in registry)
+        # Registry action (walkin_checkin is in registry)
         with patch.object(service, 'dispatch_via_registry') as mock_registry:
             mock_registry.return_value = {
                 "success": True,
@@ -300,18 +291,12 @@ class TestBackwardCompatibility:
 
             assert registry_result["success"] is True
 
-        # Legacy action (unmigrated action like start_task)
-        # Since start_task is not in registry, it should use legacy path
-        # But we need to mock task_service since we don't have real data
-        with patch.object(service, 'task_service') as mock_task_service:
-            mock_task = Mock()
-            mock_task.status = "in_progress"
-            mock_task_service.start_task.return_value = mock_task
+        # Unregistered action falls through to legacy chain
+        # Use a fake action_type that isn't registered anywhere
+        legacy_result = service.execute_action({
+            "action_type": "some_nonexistent_action",
+            "params": {}
+        }, mock_user)
 
-            legacy_result = service.execute_action({
-                "action_type": "start_task",
-                "params": {"task_id": 1}
-            }, mock_user)
-
-            # start_task is not in registry, so it uses legacy path
-            assert legacy_result["success"] is True
+        # Legacy chain doesn't handle this either, returns error
+        assert legacy_result["success"] is False

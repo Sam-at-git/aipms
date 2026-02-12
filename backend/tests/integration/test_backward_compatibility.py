@@ -170,15 +170,26 @@ class TestLegacyActions:
         db_session.refresh(sample_task)
         assert sample_task.assignee_id == cleaner.id
 
-    def test_legacy_complete_task_action(self, db_session, mock_user, sample_task):
+    def test_legacy_complete_task_action(self, db_session, sample_task):
         """
-        Test that complete_task (unmigrated, but create_task is migrated)
-        still works via legacy path.
+        Test that complete_task dispatches via registry with correct role.
         """
+        from app.security.auth import get_password_hash
+        # complete_task requires cleaner or manager role
+        cleaner_user = Employee(
+            username="cleaner_compat",
+            password_hash=get_password_hash("password"),
+            name="清洁员",
+            role=EmployeeRole.CLEANER,
+            is_active=True
+        )
+        db_session.add(cleaner_user)
+        db_session.commit()
+
         service = AIService(db_session)
 
-        # Assign task to mock_user first (required for completion)
-        sample_task.assignee_id = mock_user.id
+        # Assign task to cleaner_user first (required for completion)
+        sample_task.assignee_id = cleaner_user.id
         sample_task.status = TaskStatus.IN_PROGRESS
         db_session.commit()
 
@@ -187,7 +198,7 @@ class TestLegacyActions:
             "params": {"task_id": sample_task.id}
         }
 
-        result = service.execute_action(action, mock_user)
+        result = service.execute_action(action, cleaner_user)
 
         assert result["success"] is True
 
@@ -203,11 +214,12 @@ class TestLegacyActions:
 class TestRegistryAndLegacyCoexistence:
     """Test that registry and legacy paths can coexist."""
 
-    def test_both_paths_work_in_same_session(self, db_session, mock_user):
+    def test_both_actions_via_registry_in_same_session(self, db_session, mock_user):
         """
-        Test that both registry actions and legacy actions can be executed
-        in the same session without interference.
+        Test that multiple registry actions can be executed in the same session.
+        All actions now go through registry (no legacy path needed).
         """
+        from app.security.auth import get_password_hash
         service = AIService(db_session)
 
         # Create test data
@@ -218,7 +230,7 @@ class TestRegistryAndLegacyCoexistence:
             max_occupancy=2
         )
         db_session.add(room_type)
-        db_session.flush()  # Flush to get room_type.id
+        db_session.flush()
 
         room = Room(
             room_number="102",
@@ -227,46 +239,44 @@ class TestRegistryAndLegacyCoexistence:
             status=RoomStatus.VACANT_CLEAN
         )
         db_session.add(room)
-        db_session.flush()  # Flush to get room.id
+        db_session.flush()
 
-        task = Task(
-            room_id=room.id,
-            task_type=TaskType.CLEANING,
-            status=TaskStatus.ASSIGNED,  # Must be ASSIGNED to be started
-            priority=1,  # Integer 1-5, not string
-            notes="测试任务",
-            assignee_id=mock_user.id  # Assign to mock_user so they can start it
-        )
-        db_session.add(task)
-        db_session.commit()
-
-        # Execute registry action (create_task)
+        # create_task is allowed for receptionist
         registry_action = {
             "action_type": "create_task",
             "params": {
                 "room_id": room.id,
                 "task_type": "CLEANING",
-                "priority": "normal",
-                "description": "新任务"
             }
         }
 
         registry_result = service.execute_action(registry_action, mock_user)
         assert registry_result["success"] is True
 
-        # Execute legacy action (start_task)
-        legacy_action = {
+        # Create a manager user for start_task (requires manager or cleaner role)
+        manager = Employee(
+            username="manager_compat",
+            password_hash=get_password_hash("password"),
+            name="兼容经理",
+            role=EmployeeRole.MANAGER,
+            is_active=True
+        )
+        db_session.add(manager)
+        db_session.commit()
+
+        # Get the task we just created
+        task = db_session.query(Task).filter(Task.room_id == room.id).first()
+        task.status = TaskStatus.ASSIGNED
+        task.assignee_id = manager.id
+        db_session.commit()
+
+        start_action = {
             "action_type": "start_task",
             "params": {"task_id": task.id}
         }
 
-        legacy_result = service.execute_action(legacy_action, mock_user)
-        # Debug: check result
-        import sys
-        if not legacy_result.get("success"):
-            sys.stderr.write(f"Legacy result: {legacy_result}\n")
-            sys.stderr.flush()
-        assert legacy_result["success"] is True, f"start_task failed: {legacy_result}"
+        start_result = service.execute_action(start_action, manager)
+        assert start_result["success"] is True
 
         # Both should have worked independently
         # Note: registry_result has task_id in the 'data' field
@@ -323,30 +333,12 @@ class TestRegistryAndLegacyCoexistence:
         # Should succeed via legacy path
         assert result["success"] is True
 
-    def test_registry_error_falls_back_to_legacy(self, db_session, mock_user, sample_room):
+    def test_registry_error_returns_error_directly(self, db_session, mock_user, sample_room):
         """
-        Test that when registry dispatch raises an exception,
-        the system falls back to legacy path if available.
+        Test that when registry dispatch raises an exception for a registered action,
+        the error is returned directly (no legacy fallback for registered actions).
         """
         service = AIService(db_session)
-
-        # Create a stay record for checkout
-        guest = Guest(name="张三", phone="13800138000")
-        db_session.add(guest)
-        db_session.flush()
-
-        sample_room.status = RoomStatus.OCCUPIED
-        db_session.add(sample_room)
-
-        stay = StayRecord(
-            guest_id=guest.id,
-            room_id=sample_room.id,
-            check_in_time=datetime.now(),
-            expected_check_out=date.today() + timedelta(days=1),
-            status=StayRecordStatus.ACTIVE
-        )
-        db_session.add(stay)
-        db_session.commit()
 
         # Mock registry to raise an error
         original_dispatch = service.dispatch_via_registry
@@ -354,13 +346,14 @@ class TestRegistryAndLegacyCoexistence:
 
         action = {
             "action_type": "checkout",
-            "params": {"stay_record_id": stay.id}
+            "params": {"stay_record_id": 1}
         }
 
         result = service.execute_action(action, mock_user)
 
-        # Should succeed via legacy fallback
-        assert result["success"] is True
+        # Should return error directly, NOT fall through to legacy
+        assert result["success"] is False
+        assert "Registry error" in result["message"]
 
         # Restore original method
         service.dispatch_via_registry = original_dispatch
@@ -464,26 +457,23 @@ class TestMigrationPath:
             # Note: The registry handler may internally use checkin_service,
             # but the execute_action method should dispatch via registry first
 
-    def test_unmigrated_action_uses_legacy_code(self, db_session, mock_user, sample_task):
+    def test_unregistered_action_falls_through_to_legacy(self, db_session, mock_user):
         """
-        Test that unmigrated actions use the legacy code path.
+        Test that truly unregistered actions fall through to the legacy code path.
+        Registered actions dispatch via registry (and return error on failure).
         """
         service = AIService(db_session)
 
-        # Assign task to mock_user and set status to ASSIGNED
-        sample_task.assignee_id = mock_user.id
-        sample_task.status = TaskStatus.ASSIGNED
-        db_session.commit()
-
+        # Use an action that doesn't exist in registry or legacy chain
         action = {
-            "action_type": "start_task",
-            "params": {"task_id": sample_task.id}
+            "action_type": "nonexistent_action_xyz",
+            "params": {}
         }
 
         result = service.execute_action(action, mock_user)
 
-        # Should succeed via legacy path
-        assert result["success"] is True
+        # Should return error (neither registry nor legacy handles it)
+        assert result["success"] is False
 
     def test_action_can_be_checked_in_registry(self, db_session):
         """

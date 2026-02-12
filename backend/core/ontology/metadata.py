@@ -420,7 +420,13 @@ class ActionMetadata:
 
 @dataclass
 class PropertyMetadata:
-    """属性元数据 - 增强版"""
+    """属性元数据 - 增强版
+
+    OAG (Ontology-Augmented Generation) 增强字段：
+    - 支持属性可变性控制
+    - 支持基于角色的更新权限
+    - 支持格式验证和约束检查
+    """
     name: str
     type: str
     python_type: str
@@ -466,6 +472,33 @@ class PropertyMetadata:
     pii_type: PIIType = PIIType.NONE
     relationship_target: Optional[str] = None  # 关联目标实体
     relationship_cardinality: Optional[str] = None  # one-to-one, one-to-many, many-to-one
+
+    # ========== OAG (Ontology-Augmented Generation) 增强字段 ==========
+
+    # 属性可变性 - 此属性是否可以被修改
+    mutable: bool = True
+
+    # 更新权限列表 - 允许修改此属性的角色列表
+    # 空列表表示所有已授权角色都可以修改
+    updatable_by: List[str] = field(default_factory=list)
+
+    # 格式验证正则表达式
+    format_regex: Optional[str] = None
+
+    # 更新频率限制 - 每个时间周期内最多修改次数（None表示无限制）
+    update_frequency_limit: Optional[int] = None
+
+    # 更新频率限制的时间周期（小时）
+    update_frequency_period_hours: Optional[int] = None
+
+    # 更新验证规则列表 - 运行时验证函数
+    update_validation_rules: List[Callable] = field(default_factory=list)
+
+    # 是否为敏感字段（修改需要额外确认）
+    sensitive: bool = False
+
+    # 修改原因要求 - 修改此字段是否需要填写原因
+    requires_reason: bool = False
 
     def to_llm_description(self) -> str:
         """生成 LLM 可理解的描述"""

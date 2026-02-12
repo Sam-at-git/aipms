@@ -631,14 +631,28 @@ ontology_query 用于动态字段级查询，params 结构如下：
         user_date_hint = f"\n(当前日期: {today.strftime('%Y-%m-%d')})"
 
         try:
+            # 构建 messages 数组
+            messages = [{"role": "system", "content": system_prompt}]
+
+            # 插入对话历史（如果有）
+            conv_history = context.get("conversation_history", []) if context else []
+            for h in conv_history[-6:]:  # 最近 3 轮
+                role = h.get("role", "user")
+                content = h.get("content", "")
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content[:500]})
+
+            # 当前用户消息
+            messages.append({
+                "role": "user",
+                "content": f"{context_info}{user_date_hint}\n\n用户输入: {message}"
+            })
+
             # 尝试使用 json_object 模式
             try:
                 response = self.client.chat.completions.create(
                     model=settings.LLM_MODEL,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"{context_info}{user_date_hint}\n\n用户输入: {message}"}
-                    ],
+                    messages=messages,
                     temperature=settings.LLM_TEMPERATURE,
                     max_tokens=settings.LLM_MAX_TOKENS,
                     response_format={"type": "json_object"}
@@ -647,13 +661,21 @@ ontology_query 用于动态字段级查询，params 结构如下：
                 # 某些 API 不支持 json_object 模式，回退到普通模式
                 # 在系统提示词中强调返回 JSON
                 enhanced_prompt = system_prompt + "\n\n**重要：请务必只返回纯 JSON 格式，不要添加任何其他文字说明。**"
+                fallback_messages = [{"role": "system", "content": enhanced_prompt}]
+                # 复用对话历史
+                for h in conv_history[-6:]:
+                    role = h.get("role", "user")
+                    content = h.get("content", "")
+                    if role in ("user", "assistant") and content:
+                        fallback_messages.append({"role": role, "content": content[:500]})
+                fallback_messages.append({
+                    "role": "user",
+                    "content": f"{context_info}{user_date_hint}\n\n用户输入: {message}"
+                })
 
                 response = self.client.chat.completions.create(
                     model=settings.LLM_MODEL,
-                    messages=[
-                        {"role": "system", "content": enhanced_prompt},
-                        {"role": "user", "content": f"{context_info}{user_date_hint}\n\n用户输入: {message}"}
-                    ],
+                    messages=fallback_messages,
                     temperature=settings.LLM_TEMPERATURE,
                     max_tokens=settings.LLM_MAX_TOKENS
                 )
@@ -706,11 +728,21 @@ ontology_query 用于动态字段级查询，params 结构如下：
 
         if context.get("active_stays"):
             info_parts.append(f"- 在住客人: {len(context['active_stays'])} 位")
-            for stay in context.get("active_stays", [])[:3]:
-                info_parts.append(f"  - {stay.get('room_number')}号房: {stay.get('guest_name')}")
+            for stay in context.get("active_stays", []):
+                info_parts.append(
+                    f"  - stay_record_id={stay.get('id')}, "
+                    f"{stay.get('room_number')}号房: {stay.get('guest_name')}, "
+                    f"预计退房: {stay.get('expected_check_out')}"
+                )
 
         if context.get("pending_tasks"):
             info_parts.append(f"- 待处理任务: {len(context['pending_tasks'])} 个")
+            for task in context.get("pending_tasks", []):
+                info_parts.append(
+                    f"  - task_id={task.get('id')}, "
+                    f"{task.get('room_number')}号房, "
+                    f"类型: {task.get('task_type')}"
+                )
 
         if context.get("user_role"):
             info_parts.append(f"- 当前用户角色: {context['user_role']}")

@@ -180,6 +180,11 @@ class HotelDomainAdapter(IDomainAdapter):
             Room, Guest, Reservation, StayRecord, Bill,
             Payment, Task, Employee, RoomType, RatePlan,
         )
+        from core.reasoning.constraint_engine import PhoneFormatValidator, PhoneUniquenessValidator
+
+        # OAG: 实例化验证器用于属性级别约束
+        _phone_format_validator = PhoneFormatValidator()
+        _phone_uniqueness_validator = PhoneUniquenessValidator()
 
         entity_defs = [
             (EntityMetadata(
@@ -204,6 +209,23 @@ class HotelDomainAdapter(IDomainAdapter):
                     "business_purpose": "客户关系管理与画像",
                     "key_attributes": ["name", "phone", "id_number", "tier"],
                     "invariants": ["身份证号唯一", "黑名单客人禁止入住"],
+                    "smart_update": {
+                        "enabled": True,
+                        "identifier_fields": {"name_column": "name"},
+                        "editable_fields": ["name", "phone", "email"],
+                        "update_schema": "GuestUpdate",
+                        "service_class": "app.services.guest_service.GuestService",
+                        "service_method": "update_guest",
+                        "allowed_roles": {"receptionist", "manager"},
+                        "display_name": "客人",
+                        "action_description": "智能修改客人信息。当用户描述的是相对修改、部分修改等无法直接得出完整新值的指令时使用此操作（例如：'手机号后两位改为88'、'名字最后一个字改为华'、'邮箱前缀改为abc'）。注意：如果用户提供了完整的新值（如'电话改成13912345678'），应使用 update_guest 而非此操作。",
+                        "glossary_examples": [
+                            {"correct": '"张三的手机号后三位改为888" → update_guest_smart（需要基于当前值计算新值）',
+                             "incorrect": '"张三的手机号后三位改为888" → update_guest（无法直接得出完整新手机号）'},
+                            {"correct": '"把张三的电话改成13912345678" → update_guest（已提供完整新值）',
+                             "incorrect": '"把张三的电话改成13912345678" → update_guest_smart（已有完整值，不需要智能解析）'},
+                        ],
+                    },
                 },
             ), Guest),
             (EntityMetadata(
@@ -265,6 +287,16 @@ class HotelDomainAdapter(IDomainAdapter):
                 extensions={
                     "business_purpose": "员工管理与权限控制",
                     "key_attributes": ["username", "name", "role", "is_active"],
+                    "smart_update": {
+                        "enabled": True,
+                        "identifier_fields": {"name_column": "name"},
+                        "editable_fields": ["name", "phone"],
+                        "update_schema": "EmployeeUpdate",
+                        "service_class": "app.services.employee_service.EmployeeService",
+                        "service_method": "update_employee",
+                        "allowed_roles": {"manager"},
+                        "display_name": "员工",
+                    },
                 },
             ), Employee),
             (EntityMetadata(
@@ -274,6 +306,16 @@ class HotelDomainAdapter(IDomainAdapter):
                 extensions={
                     "business_purpose": "产品定义与定价基准",
                     "key_attributes": ["name", "base_price", "max_occupancy"],
+                    "smart_update": {
+                        "enabled": True,
+                        "identifier_fields": {"name_column": "name"},
+                        "editable_fields": ["name", "description", "base_price", "max_occupancy", "amenities"],
+                        "update_schema": "RoomTypeUpdate",
+                        "service_class": "app.services.room_service.RoomService",
+                        "service_method": "update_room_type",
+                        "allowed_roles": {"manager"},
+                        "display_name": "房型",
+                    },
                 },
             ), RoomType),
             (EntityMetadata(
@@ -288,6 +330,23 @@ class HotelDomainAdapter(IDomainAdapter):
         ]
 
         for entity_meta, model_cls in entity_defs:
+            self._auto_register_properties(entity_meta, model_cls)
+
+            # ========== OAG: Guest.phone 属性增强 ==========
+            if entity_meta.name == "Guest":
+                phone_metadata = entity_meta.get_property("phone")
+                if phone_metadata:
+                    # 覆盖自动注册的属性，添加 OAG 增强字段
+                    phone_metadata.format_regex = r'^1[3-9]\d{9}$'  # 中国手机号格式
+                    phone_metadata.sensitive = True  # 敏感字段
+                    phone_metadata.requires_reason = False  # 修改不需要原因
+                    # 添加验证规则到列表
+                    phone_metadata.update_validation_rules.extend([
+                        _phone_format_validator,  # 格式验证
+                        _phone_uniqueness_validator,  # 唯一性验证
+                    ])
+
+            registry.register_entity(entity_meta)
             self._auto_register_properties(entity_meta, model_cls)
             registry.register_entity(entity_meta)
 

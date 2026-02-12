@@ -11,6 +11,9 @@ from app.models.ontology import (
     TaskType, TaskStatus, PaymentMethod, EmployeeRole, GuestTier
 )
 
+# 手机号格式验证正则
+PHONE_REGEX = r'^1[3-9]\d{9}$'
+
 
 # ============== 房型 Schemas ==============
 
@@ -84,6 +87,17 @@ class GuestBase(BaseModel):
     phone: Optional[str] = Field(None, max_length=20)
     email: Optional[str] = Field(None, max_length=100)
 
+    @field_validator('phone')
+    @classmethod
+    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        """验证手机号格式（中国手机号：11位，1开头，第二位3-9）"""
+        if v is None or v == "":
+            return v
+        import re
+        if not re.match(PHONE_REGEX, v):
+            raise ValueError(f"手机号格式无效：{v}。应为11位数字，以1开头，第二位为3-9")
+        return v
+
 
 class GuestCreate(GuestBase):
     pass
@@ -100,6 +114,17 @@ class GuestUpdate(BaseModel):
     is_blacklisted: Optional[bool] = None
     blacklist_reason: Optional[str] = None
     notes: Optional[str] = None
+
+    @field_validator('phone')
+    @classmethod
+    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        """验证手机号格式（中国手机号：11位，1开头，第二位3-9）"""
+        if v is None or v == "":
+            return v
+        import re
+        if not re.match(PHONE_REGEX, v):
+            raise ValueError(f"手机号格式无效：{v}。应为11位数字，以1开头，第二位为3-9")
+        return v
 
 
 class GuestResponse(GuestBase):

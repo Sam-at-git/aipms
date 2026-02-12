@@ -38,6 +38,8 @@ def _create_action_registry() -> ActionRegistry:
     Create and initialize the global action registry.
 
     Imports all action modules and registers their actions.
+    Note: Smart update actions are registered separately via
+    register_smart_updates() after OntologyRegistry is available.
     """
     registry = ActionRegistry()
 
@@ -75,6 +77,20 @@ def _create_action_registry() -> ActionRegistry:
     return registry
 
 
+def register_smart_updates(ontology_registry) -> None:
+    """
+    Register smart update actions for entities with smart_update config.
+
+    Must be called after OntologyRegistry is populated (i.e., after
+    set_ontology_registry). This is a separate step because smart update
+    registration reads entity metadata from OntologyRegistry at registration time.
+    """
+    registry = get_action_registry()
+    from app.services.actions import smart_update_actions
+    smart_update_actions.register_smart_update_actions(registry, ontology_registry)
+    logger.info(f"Smart update actions registered (total: {len(registry.list_actions())} actions)")
+
+
 def get_action_registry() -> ActionRegistry:
     """
     Get the global action registry instance.
@@ -104,4 +120,5 @@ def reset_action_registry() -> None:
 __all__ = [
     "get_action_registry",
     "reset_action_registry",
+    "register_smart_updates",
 ]

@@ -14,7 +14,7 @@ from app.services.guest_service import GuestService
 
 # 导入新的 GuestServiceV2 (SPEC-58)
 try:
-    from core.services.guest_service import GuestServiceV2
+    from app.services.guest_service_v2 import GuestServiceV2
     CORE_GUEST_SERVICE_AVAILABLE = True
 except ImportError:
     CORE_GUEST_SERVICE_AVAILABLE = False

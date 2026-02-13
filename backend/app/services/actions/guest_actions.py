@@ -11,6 +11,7 @@ from core.ai.actions import ActionRegistry
 from app.models.ontology import Employee, Guest
 from app.services.param_parser_service import ParamParserService, ParseResult
 from app.services.actions.base import WalkInCheckInParams, UpdateGuestParams, CreateGuestParams
+from app.services.checkin_service import CheckInService
 
 import logging
 
@@ -71,7 +72,6 @@ def register_guest_actions(
             Result dict with success status and message
         """
         from app.models.schemas import WalkInCheckIn as WalkInCheckInRequest
-        from app.services.checkin_service import CheckInService
 
         # Debug logging
         logger.info(f"[DEBUG] walkin_checkin called with params: {params.model_dump()}")

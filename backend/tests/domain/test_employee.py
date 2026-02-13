@@ -2,7 +2,7 @@
 import pytest
 import hashlib
 
-from core.domain.employee import EmployeeRole, EmployeeEntity, EmployeeRepository
+from app.hotel.domain.employee import EmployeeRole, EmployeeEntity, EmployeeRepository
 from app.models.ontology import Employee, EmployeeRole as ORMRole
 
 

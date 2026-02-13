@@ -11,6 +11,8 @@ from core.ai.actions import ActionRegistry
 from app.models.ontology import Employee
 from app.services.actions.base import CheckoutParams, CheckinParams, ExtendStayParams, ChangeRoomParams
 from app.services.param_parser_service import ParamParserService
+from app.services.checkout_service import CheckOutService
+from app.services.checkin_service import CheckInService
 
 import logging
 
@@ -63,7 +65,6 @@ def register_stay_actions(
             Result dict with success status and message
         """
         from app.models.schemas import CheckOutRequest
-        from app.services.checkout_service import CheckOutService
 
         # Build service request
         request = CheckOutRequest(
@@ -140,7 +141,6 @@ def register_stay_actions(
     ) -> Dict[str, Any]:
         """预订入住"""
         from app.models.schemas import CheckInFromReservation
-        from app.services.checkin_service import CheckInService
         from app.models.ontology import Reservation, Room
 
         try:
@@ -239,7 +239,6 @@ def register_stay_actions(
     ) -> Dict[str, Any]:
         """续住"""
         from app.models.schemas import ExtendStay
-        from app.services.checkin_service import CheckInService
 
         try:
             request = ExtendStay(new_check_out_date=params.new_check_out_date)
@@ -287,7 +286,6 @@ def register_stay_actions(
     ) -> Dict[str, Any]:
         """换房"""
         from app.models.schemas import ChangeRoom
-        from app.services.checkin_service import CheckInService
         from app.models.ontology import Room
 
         try:

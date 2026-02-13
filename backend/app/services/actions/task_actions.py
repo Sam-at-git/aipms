@@ -14,6 +14,7 @@ from app.services.actions.base import (
     CreateTaskParams, DeleteTaskParams, BatchDeleteTasksParams,
     AssignTaskParams, StartTaskParams, CompleteTaskParams,
 )
+from app.services.task_service import TaskService
 
 import logging
 
@@ -65,7 +66,6 @@ def register_task_actions(
             Result dict with success status and message
         """
         from app.models.schemas import TaskCreate
-        from app.services.task_service import TaskService
 
         # Parse room (support room number string)
         room_result = param_parser.parse_room(params.room_id)
@@ -147,7 +147,6 @@ def register_task_actions(
         **context
     ) -> Dict[str, Any]:
         """删除单个任务"""
-        from app.services.task_service import TaskService
 
         try:
             service = TaskService(db)
@@ -192,7 +191,6 @@ def register_task_actions(
     ) -> Dict[str, Any]:
         """批量删除任务"""
         from app.models.ontology import TaskStatus, TaskType
-        from app.services.task_service import TaskService
 
         try:
             # Parse status filter
@@ -271,7 +269,6 @@ def register_task_actions(
     ) -> Dict[str, Any]:
         """分配任务给清洁员"""
         from app.models.schemas import TaskAssign
-        from app.services.task_service import TaskService
 
         try:
             # Resolve assignee: by ID or by name
@@ -340,7 +337,6 @@ def register_task_actions(
         **context
     ) -> Dict[str, Any]:
         """开始执行任务"""
-        from app.services.task_service import TaskService
 
         try:
             service = TaskService(db)
@@ -384,7 +380,6 @@ def register_task_actions(
         **context
     ) -> Dict[str, Any]:
         """完成任务"""
-        from app.services.task_service import TaskService
 
         try:
             service = TaskService(db)

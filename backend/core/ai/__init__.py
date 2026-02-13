@@ -44,45 +44,59 @@ from core.ai.response_generator import (
 # Global singleton instance (lazy initialized)
 _embedding_service: Optional[EmbeddingService] = None
 
+# Module-level configuration (injected by app layer at startup)
+_embedding_config: Optional[dict] = None
+
+
+def configure_embedding_service(
+    api_key: str = None,
+    base_url: str = None,
+    model: str = None,
+    cache_size: int = 1000,
+    enabled: bool = True,
+) -> None:
+    """
+    Configure the embedding service. Called by app layer at startup.
+
+    Args:
+        api_key: API key for embedding service
+        base_url: Base URL for embedding API
+        model: Model name for embeddings
+        cache_size: Cache size for embedding results
+        enabled: Whether embedding is enabled
+    """
+    global _embedding_config, _embedding_service
+    _embedding_config = {
+        "api_key": api_key,
+        "base_url": base_url,
+        "model": model,
+        "cache_size": cache_size,
+        "enabled": enabled,
+    }
+    _embedding_service = None  # Reset singleton so next call uses new config
+
 
 def get_embedding_service() -> EmbeddingService:
     """
     Get the global EmbeddingService singleton
 
-    Creates the instance on first call with configuration from app.config.settings.
-    Subsequent calls return the same instance.
+    Creates the instance on first call with injected configuration.
+    If not configured, falls back to trying app.config.settings.
 
     Returns:
         The global EmbeddingService instance
-
-    Example:
-        >>> from core.ai import get_embedding_service
-        >>> service = get_embedding_service()
-        >>> embedding = service.embed("客人姓名")
     """
     global _embedding_service
     if _embedding_service is None:
-        # Import here to avoid circular dependency
-        from app.config import settings
-
-        # Use EMBEDDING_API_KEY if set, otherwise fall back to OPENAI_API_KEY
-        api_key = settings.EMBEDDING_API_KEY or settings.OPENAI_API_KEY
-
-        # Service is only enabled if both ENABLE_LLM and EMBEDDING_ENABLED are true
-        # AND we have a valid API key
-        enabled = (
-            settings.ENABLE_LLM and
-            settings.EMBEDDING_ENABLED and
-            bool(api_key)
-        )
-
-        _embedding_service = EmbeddingService(
-            api_key=api_key,
-            base_url=settings.EMBEDDING_BASE_URL,
-            model=settings.EMBEDDING_MODEL,
-            cache_size=settings.EMBEDDING_CACHE_SIZE,
-            enabled=enabled
-        )
+        if _embedding_config is not None:
+            _embedding_service = EmbeddingService(**_embedding_config)
+        else:
+            # Not configured - create disabled service
+            import logging
+            logging.getLogger(__name__).warning(
+                "EmbeddingService not configured. Call configure_embedding_service() at startup."
+            )
+            _embedding_service = EmbeddingService(enabled=False)
     return _embedding_service
 
 
@@ -135,6 +149,7 @@ __all__ = [
     "EmbeddingService",
     "EmbeddingResult",
     "create_embedding_service",
+    "configure_embedding_service",
     "get_embedding_service",
     "create_embedding_service_for_test",
     "reset_embedding_service",

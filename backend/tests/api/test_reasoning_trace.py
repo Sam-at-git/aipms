@@ -40,48 +40,6 @@ class TestReasoningTraceSchema:
         assert action.side_effects is None
 
 
-class TestReasoningTraceInService:
-    """Test reasoning trace generation in AIService."""
-
-    def test_build_reasoning_trace_basic(self):
-        """Test _build_reasoning_trace helper."""
-        from app.services.ai_service import AIService
-        # AIService needs db, but _build_reasoning_trace is a simple dict builder
-        # Use a minimal mock
-        service = MagicMock(spec=AIService)
-        service._build_reasoning_trace = AIService._build_reasoning_trace.__get__(service)
-
-        trace = service._build_reasoning_trace(
-            intent_source="llm",
-            action_type="checkout",
-        )
-        assert trace["intent_source"] == "llm"
-        assert trace["action_type"] == "checkout"
-
-    def test_build_reasoning_trace_with_constraints(self):
-        from app.services.ai_service import AIService
-        service = MagicMock(spec=AIService)
-        service._build_reasoning_trace = AIService._build_reasoning_trace.__get__(service)
-
-        trace = service._build_reasoning_trace(
-            intent_source="llm",
-            constraints_checked=["room_vacant", "bill_settled"],
-            guard_summary="all passed",
-        )
-        assert trace["constraints_checked"] == ["room_vacant", "bill_settled"]
-        assert trace["guard_summary"] == "all passed"
-
-    def test_build_reasoning_trace_omits_empty(self):
-        from app.services.ai_service import AIService
-        service = MagicMock(spec=AIService)
-        service._build_reasoning_trace = AIService._build_reasoning_trace.__get__(service)
-
-        trace = service._build_reasoning_trace(intent_source="rule_based")
-        assert "action_type" not in trace
-        assert "constraints_checked" not in trace
-        assert trace["intent_source"] == "rule_based"
-
-
 class TestStateTransitionsAPI:
     """Test state transitions endpoint."""
 

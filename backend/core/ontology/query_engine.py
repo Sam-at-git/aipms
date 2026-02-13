@@ -51,19 +51,8 @@ def get_model_class(entity_name: str) -> Type:
     if model is not None:
         return model
 
-    # 2. Fallback to lazy import
-    if entity_name not in _FALLBACK_MODEL_MAP or _FALLBACK_MODEL_MAP[entity_name] is None:
-        try:
-            from app.models import ontology as ontology_models
-            model_cls = getattr(ontology_models, entity_name, None)
-            if model_cls is not None:
-                _FALLBACK_MODEL_MAP[entity_name] = model_cls
-            else:
-                raise ValueError(f"Unknown entity: {entity_name}")
-        except ImportError:
-            raise ValueError(f"Unknown entity: {entity_name}")
-
-    return _FALLBACK_MODEL_MAP[entity_name]
+    # 2. No fallback - registry must have the model
+    raise ValueError(f"Unknown entity: {entity_name}. Ensure it is registered in OntologyRegistry.")
 
 
 def get_relationship_info(source_entity: str, target_entity: str) -> Optional[tuple]:

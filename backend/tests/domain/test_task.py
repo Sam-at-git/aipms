@@ -2,7 +2,7 @@
 import pytest
 from datetime import datetime
 
-from core.domain.task import TaskState, TaskType, TaskEntity, TaskRepository
+from app.hotel.domain.task import TaskState, TaskType, TaskEntity, TaskRepository
 from app.models.ontology import Task, TaskStatus, TaskType as ORMTaskType, Room, RoomType
 
 

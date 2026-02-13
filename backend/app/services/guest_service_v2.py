@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, desc
 import json
 
-from core.domain.guest import GuestEntity, GuestRepository, GuestTier as DomainGuestTier
-from core.domain.relationships import relationship_registry
+from app.hotel.domain.guest import GuestEntity, GuestRepository, GuestTier as DomainGuestTier
+from app.hotel.domain import relationship_registry
 from app.models.ontology import Guest, GuestTier, StayRecord, Reservation
 from app.models.schemas import GuestCreate, GuestUpdate
 

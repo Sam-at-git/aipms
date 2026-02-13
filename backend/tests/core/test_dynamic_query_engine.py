@@ -25,12 +25,11 @@ class TestDynamicModelMap:
         result = get_model_class("FakeRoom")
         assert result is FakeRoom
 
-    def test_get_model_fallback_to_import(self):
-        """Known entities should still work via fallback"""
-        # This will use the lazy import path
-        model = get_model_class("Room")
-        assert model is not None
-        assert model.__tablename__ == "rooms"
+    def test_get_model_fallback_to_import(self, clean_registry):
+        """Unregistered entities should raise ValueError (fallback removed)"""
+        # After decoupling, get_model_class no longer falls back to app.models
+        with pytest.raises(ValueError, match="Unknown entity"):
+            get_model_class("Room")
 
 
 class TestDynamicRelationshipMap:

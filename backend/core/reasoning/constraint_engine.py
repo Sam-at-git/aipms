@@ -205,10 +205,13 @@ class PhoneUniquenessValidator:
         self._guest_model = None
 
     def _get_guest_model(self, db: "Session"):
-        """延迟导入 Guest 模型以避免循环依赖"""
+        """动态获取 Guest 模型以避免循环依赖"""
         if self._guest_model is None:
-            from app.models.ontology import Guest
-            self._guest_model = Guest
+            from core.ontology.registry import OntologyRegistry
+            guest_model = OntologyRegistry().get_model("Guest")
+            if guest_model is None:
+                raise ValueError("Guest model not registered in OntologyRegistry")
+            self._guest_model = guest_model
         return self._guest_model
 
     def validate(self, old_value: Any, new_value: Any, entity_id: Optional[int] = None, db: Optional["Session"] = None) -> tuple[bool, str]:

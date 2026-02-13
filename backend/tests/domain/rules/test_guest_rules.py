@@ -5,7 +5,7 @@ tests/domain/rules/test_guest_rules.py
 """
 import pytest
 
-from core.domain.rules.guest_rules import (
+from app.hotel.domain.rules.guest_rules import (
     register_guest_rules,
     calculate_guest_tier,
     get_tier_threshold,

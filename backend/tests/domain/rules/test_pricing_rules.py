@@ -6,7 +6,7 @@ tests/domain/rules/test_pricing_rules.py
 import pytest
 from datetime import date, timedelta
 
-from core.domain.rules.pricing_rules import (
+from app.hotel.domain.rules.pricing_rules import (
     register_pricing_rules,
     calculate_room_price,
     is_weekend,

@@ -3,13 +3,13 @@
 """
 import pytest
 from core.ontology.registry import OntologyRegistry
-from core.domain.interfaces import BookableResource, Maintainable, Billable, Trackable
+from app.hotel.domain.interfaces import BookableResource, Maintainable, Billable, Trackable
 
 
 @pytest.fixture(autouse=True)
 def ensure_room_registered():
     """确保 Room 的接口注册数据存在（装饰器在导入时只触发一次）"""
-    from core.domain.room import RoomEntity
+    from app.hotel.domain.room import RoomEntity
     reg = OntologyRegistry()
 
     # 重新注册接口和实现关系（因为其他测试的 autouse fixture 可能清空了 registry）
@@ -91,7 +91,7 @@ class TestRoomInterfaceRegistration:
 
     def test_room_has_implements_attribute(self):
         """RoomEntity 类上有 __implements_interfaces__ 属性"""
-        from core.domain.room import RoomEntity
+        from app.hotel.domain.room import RoomEntity
         assert hasattr(RoomEntity, '__implements_interfaces__')
         interface_names = [i.__name__ for i in RoomEntity.__implements_interfaces__]
         assert "BookableResource" in interface_names

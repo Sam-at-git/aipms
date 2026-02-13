@@ -2,7 +2,7 @@
 import pytest
 from datetime import datetime, date
 
-from core.domain.stay_record import StayRecordState, StayRecordEntity, StayRecordRepository
+from app.hotel.domain.stay_record import StayRecordState, StayRecordEntity, StayRecordRepository
 from app.models.ontology import StayRecord, StayRecordStatus, Guest, Room, RoomType
 
 

@@ -18,7 +18,7 @@ from app.services.room_service import RoomService
 
 # 导入新的 RoomServiceV2 (SPEC-57)
 try:
-    from core.services.room_service import RoomServiceV2, get_room_service_v2
+    from app.services.room_service_v2 import RoomServiceV2, get_room_service_v2
     CORE_ROOM_SERVICE_AVAILABLE = True
 except ImportError:
     CORE_ROOM_SERVICE_AVAILABLE = False

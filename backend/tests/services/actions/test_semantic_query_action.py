@@ -230,8 +230,8 @@ class TestHandleSemanticQuery:
         assert action.requires_confirmation is False
         assert action.undoable is False
 
-    @patch('core.ontology.semantic_path_resolver.SemanticPathResolver')
-    @patch('core.ontology.query_engine.QueryEngine')
+    @patch('app.services.actions.query_actions.SemanticPathResolver')
+    @patch('app.services.actions.query_actions.QueryEngine')
     def test_simple_query_success(
         self,
         mock_query_engine_class,
@@ -279,8 +279,8 @@ class TestHandleSemanticQuery:
         # Verify resolver was called
         mock_resolver.compile.assert_called_once()
 
-    @patch('core.ontology.semantic_path_resolver.SemanticPathResolver')
-    @patch('core.ontology.query_engine.QueryEngine')
+    @patch('app.services.actions.query_actions.SemanticPathResolver')
+    @patch('app.services.actions.query_actions.QueryEngine')
     def test_query_with_filters(
         self,
         mock_query_engine_class,
@@ -329,8 +329,8 @@ class TestHandleSemanticQuery:
         compiled_query = mock_resolver.compile.call_args[0][0]
         assert len(compiled_query.filters) == 1
 
-    @patch('core.ontology.semantic_path_resolver.SemanticPathResolver')
-    @patch('core.ontology.query_engine.QueryEngine')
+    @patch('app.services.actions.query_actions.SemanticPathResolver')
+    @patch('app.services.actions.query_actions.QueryEngine')
     def test_path_resolution_error_returns_friendly_message(
         self,
         mock_query_engine_class,
@@ -369,8 +369,8 @@ class TestHandleSemanticQuery:
         assert result["details"]["path"] == "Guest.invalid_path"
         assert "suggestions" in result["details"]
 
-    @patch('core.ontology.semantic_path_resolver.SemanticPathResolver')
-    @patch('core.ontology.query_engine.QueryEngine')
+    @patch('app.services.actions.query_actions.SemanticPathResolver')
+    @patch('app.services.actions.query_actions.QueryEngine')
     def test_validation_error_returns_friendly_message(
         self,
         mock_query_engine_class,
@@ -395,8 +395,8 @@ class TestHandleSemanticQuery:
         assert result["success"] is False
         assert result["error"] == "validation_error"
 
-    @patch('core.ontology.semantic_path_resolver.SemanticPathResolver')
-    @patch('core.ontology.query_engine.QueryEngine')
+    @patch('app.services.actions.query_actions.SemanticPathResolver')
+    @patch('app.services.actions.query_actions.QueryEngine')
     def test_multi_hop_query(
         self,
         mock_query_engine_class,
@@ -449,8 +449,8 @@ class TestHandleSemanticQuery:
         # The mock's return value already has joins set
         assert len(mock_resolver.compile.return_value.joins) >= 1  # Should have at least one JOIN
 
-    @patch('core.ontology.semantic_path_resolver.SemanticPathResolver')
-    @patch('core.ontology.query_engine.QueryEngine')
+    @patch('app.services.actions.query_actions.SemanticPathResolver')
+    @patch('app.services.actions.query_actions.QueryEngine')
     def test_query_with_limit_and_offset(
         self,
         mock_query_engine_class,
@@ -500,8 +500,8 @@ class TestHandleSemanticQuery:
         assert compiled_query.limit == 10
         assert compiled_query.offset == 20
 
-    @patch('core.ontology.semantic_path_resolver.SemanticPathResolver')
-    @patch('core.ontology.query_engine.QueryEngine')
+    @patch('app.services.actions.query_actions.SemanticPathResolver')
+    @patch('app.services.actions.query_actions.QueryEngine')
     def test_query_with_order_by(
         self,
         mock_query_engine_class,

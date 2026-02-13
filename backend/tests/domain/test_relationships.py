@@ -7,6 +7,10 @@ from core.domain.relationships import (
     LinkType,
     Cardinality,
     EntityLink,
+    RelationshipRegistry,
+    relationship_registry,
+)
+from app.hotel.domain.relationships import (
     ROOM_RELATIONSHIPS,
     GUEST_RELATIONSHIPS,
     RESERVATION_RELATIONSHIPS,
@@ -14,9 +18,17 @@ from core.domain.relationships import (
     BILL_RELATIONSHIPS,
     TASK_RELATIONSHIPS,
     EMPLOYEE_RELATIONSHIPS,
-    RelationshipRegistry,
-    relationship_registry,
+    register_hotel_relationships,
 )
+
+
+@pytest.fixture(autouse=True)
+def _setup_relationships():
+    """Ensure hotel relationships are registered for tests"""
+    RelationshipRegistry.clear()
+    register_hotel_relationships(relationship_registry)
+    yield
+    RelationshipRegistry.clear()
 
 
 class TestLinkType:

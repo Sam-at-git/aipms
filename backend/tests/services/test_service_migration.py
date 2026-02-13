@@ -6,10 +6,10 @@
 import pytest
 from datetime import date, datetime
 
-from core.services.room_service import RoomServiceV2, get_room_service_v2
-from core.services.guest_service import GuestServiceV2, get_guest_service_v2
-from core.domain.room import RoomState
-from core.domain.guest import GuestTier as DomainGuestTier
+from app.services.room_service_v2 import RoomServiceV2, get_room_service_v2
+from app.services.guest_service_v2 import GuestServiceV2, get_guest_service_v2
+from app.hotel.domain.room import RoomState
+from app.hotel.domain.guest import GuestTier as DomainGuestTier
 from app.models.ontology import Room, RoomStatus, Guest, RoomType, StayRecord
 
 

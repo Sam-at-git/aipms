@@ -726,24 +726,28 @@ class PromptBuilder:
         # 如果有数据库会话，获取实时数据
         if db_session:
             try:
-                from app.models.ontology import Room, Guest, Reservation, Task
+                # Use registry to dynamically get model classes
+                Room = self.registry.get_model("Room")
+                Task = self.registry.get_model("Task")
 
-                # 房间统计
-                total_rooms = db_session.query(Room).count()
-                occupied_rooms = db_session.query(Room).filter(
-                    Room.status == 'occupied'
-                ).count()
-                context["room_stats"] = {
-                    "total": total_rooms,
-                    "occupied": occupied_rooms,
-                    "available": total_rooms - occupied_rooms
-                }
+                if Room:
+                    # 房间统计
+                    total_rooms = db_session.query(Room).count()
+                    occupied_rooms = db_session.query(Room).filter(
+                        Room.status == 'occupied'
+                    ).count()
+                    context["room_stats"] = {
+                        "total": total_rooms,
+                        "occupied": occupied_rooms,
+                        "available": total_rooms - occupied_rooms
+                    }
 
-                # 任务统计
-                pending_tasks = db_session.query(Task).filter(
-                    Task.status == 'pending'
-                ).count()
-                context["pending_tasks"] = pending_tasks
+                if Task:
+                    # 任务统计
+                    pending_tasks = db_session.query(Task).filter(
+                        Task.status == 'pending'
+                    ).count()
+                    context["pending_tasks"] = pending_tasks
 
             except Exception:
                 pass  # 数据库查询失败时忽略

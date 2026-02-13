@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 import app.services.actions.task_actions as task_actions
 from app.services.actions.base import CreateTaskParams
-from app.models.ontology import Employee, EmployeeRole, Task, TaskType, Room
+from app.models.ontology import Employee, EmployeeRole, Task, TaskType, TaskStatus, Room
 from app.services.param_parser_service import ParseResult
 
 
@@ -54,7 +54,7 @@ def sample_task(sample_room):
     task.id = 1
     task.room_id = sample_room.id
     task.task_type = TaskType.CLEANING
-    task.status = "pending"  # Use string status instead of TaskType enum
+    task.status = TaskStatus.PENDING
     return task
 
 
@@ -165,6 +165,7 @@ class TestHandleCreateTask:
         mock_param_parser.parse_room.return_value = ParseResult(
             value=101,
             confidence=1.0,
+            matched_by='direct',
             raw_input="101",
             candidates=None
         )
@@ -197,6 +198,7 @@ class TestHandleCreateTask:
         mock_param_parser.parse_room.return_value = ParseResult(
             value=101,
             confidence=1.0,
+            matched_by='direct',
             raw_input="101",
             candidates=None
         )
@@ -254,36 +256,14 @@ class TestHandleCreateTask:
         assert result["requires_confirmation"] is True
         assert result["action"] == "select_room"
 
-    def test_task_creation_invalid_type_defaults_to_cleaning(
+    def test_task_creation_invalid_type_rejected_by_pydantic(
         self, mock_db, mock_user, mock_param_parser, sample_task
     ):
-        """Test task creation with invalid type defaults to cleaning"""
-        mock_param_parser.parse_room.return_value = ParseResult(
-            value=101,
-            confidence=1.0,
-            raw_input="101",
-            candidates=None
-        )
+        """Test task creation with invalid type is rejected at Pydantic validation level"""
+        from pydantic import ValidationError
 
-        mock_task_service = MagicMock()
-        mock_task_service.create_task.return_value = sample_task
-
-        params = CreateTaskParams(room_id=101, task_type="invalid_type")
-
-        with patch('app.services.actions.task_actions.TaskService', return_value=mock_task_service):
-            from core.ai.actions import ActionRegistry
-            registry = ActionRegistry()
-            task_actions.register_task_actions(registry)
-
-            action_def = registry.get_action("create_task")
-            result = action_def.handler(
-                params=params,
-                db=mock_db,
-                user=mock_user,
-                param_parser=mock_param_parser
-            )
-
-        assert result["success"] is True
+        with pytest.raises(ValidationError, match="无效的任务类型"):
+            CreateTaskParams(room_id=101, task_type="invalid_type")
 
     def test_task_creation_validation_error(
         self, mock_db, mock_user, mock_param_parser
@@ -294,13 +274,15 @@ class TestHandleCreateTask:
         mock_param_parser.parse_room.return_value = ParseResult(
             value=101,
             confidence=1.0,
+            matched_by='direct',
             raw_input="101",
             candidates=None
         )
 
         mock_task_service = MagicMock()
-        mock_task_service.create_task.side_effect = ValidationError(
-            [{"loc": ["room_id"], "msg": "Room not found"}]
+        mock_task_service.create_task.side_effect = ValidationError.from_exception_data(
+            title="TaskCreate",
+            line_errors=[{"type": "value_error", "loc": ("room_id",), "msg": "Room not found", "input": 101, "ctx": {"error": ValueError("Room not found")}}]
         )
 
         params = CreateTaskParams(room_id=101, task_type="cleaning")
@@ -328,6 +310,7 @@ class TestHandleCreateTask:
         mock_param_parser.parse_room.return_value = ParseResult(
             value=101,
             confidence=1.0,
+            matched_by='direct',
             raw_input="101",
             candidates=None
         )

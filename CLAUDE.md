@@ -51,7 +51,10 @@ The system is split into a **domain-agnostic ontology runtime** (`core/`) and a 
 
 ### Layer 1: `core/` — Ontology Runtime Framework (domain-agnostic)
 
-The framework provides reusable abstractions. No hotel-specific logic belongs here.
+The framework provides reusable abstractions. No hotel-specific logic belongs here. **Enforced**: `grep -r "from app\." backend/core/` must return zero results; an architecture guard test (`tests/domain/test_domain_separation.py::test_core_has_no_app_imports`) verifies this.
+
+- **`core/domain/`** — Generic relationship types only
+  - `relationships.py`: `LinkType`, `Cardinality`, `EntityLink`, `RelationshipRegistry` — domain-agnostic infrastructure for expressing entity relationships. All hotel-specific entity code lives in `app/hotel/domain/`.
 
 - **`core/ontology/`** — Entity abstractions and metadata
   - `base.py`: `BaseEntity`, `ObjectProxy` (attribute-level interception for security/audit)
@@ -65,8 +68,9 @@ The framework provides reusable abstractions. No hotel-specific logic belongs he
   - `state_machine_executor.py`: Execute validated state transitions
 
 - **`core/ai/`** — AI pipeline abstractions
+  - `__init__.py`: Exports + `configure_embedding_service()` — app layer injects embedding config at startup (no direct `app.config` import)
   - `actions.py`: `ActionRegistry` + `ActionDefinition` — declarative action registration replacing if/else chains
-  - `prompt_builder.py`: `PromptBuilder` dynamically injects ontology metadata (entities, actions, state machines, rules, permissions, date context) into LLM prompts
+  - `prompt_builder.py`: `PromptBuilder` dynamically injects ontology metadata (entities, actions, state machines, rules, permissions, date context) into LLM prompts. Uses `registry.get_model()` for DB stats (no hardcoded model imports).
   - `reflexion.py`: `ReflexionLoop` — self-healing execution with LLM error analysis (max 2 retries, then fallback)
   - `llm_client.py`: `OpenAICompatibleClient` — supports OpenAI, DeepSeek, Azure, Ollama
   - `vector_store.py` / `schema_retriever.py` / `embedding.py`: Pure-Python cosine similarity semantic search for schema retrieval
@@ -89,7 +93,7 @@ The framework provides reusable abstractions. No hotel-specific logic belongs he
 
 - **`core/security/`** — Security framework
   - `context.py`: User security context with role/permissions
-  - `attribute_acl.py`: Attribute-level access control
+  - `attribute_acl.py`: Attribute-level access control + `register_domain_permissions()` — app layer injects domain-specific ACL rules at startup (no hardcoded hotel permissions)
   - `masking.py`: PII data masking
   - `checker.py`: Permission checking
 
@@ -102,9 +106,15 @@ The framework provides reusable abstractions. No hotel-specific logic belongs he
 
 All hotel-specific logic lives here.
 
-- **`app/hotel/`** — Domain adapter (bridge between core and app)
+- **`app/hotel/`** — Domain adapter and domain entities
   - `hotel_domain_adapter.py`: `HotelDomainAdapter(IDomainAdapter)` — registers all hotel entities, relationships, state machines, actions, constraints, events into `OntologyRegistry`
   - `business_rules.py`: Hotel-specific rules (auto-task on checkout, pricing, guest tiers)
+  - **`domain/`** — Hotel domain entities, interfaces, rules, and metadata:
+    - `room.py`, `guest.py`, `reservation.py`, `stay_record.py`, `bill.py`, `task.py`, `employee.py`: Domain entities wrapping ORM models (Entity + State + Repository pattern)
+    - `interfaces.py`: `BookableResource`, `Maintainable`, `Billable`, `Trackable` — cross-entity business interfaces
+    - `relationships.py`: Hotel-specific relationship constants (ROOM_RELATIONSHIPS, GUEST_RELATIONSHIPS, etc.) + `register_hotel_relationships()` function
+    - `rules/`: `room_rules.py`, `guest_rules.py`, `pricing_rules.py` + `register_all_rules()`
+    - `metadata/`: `security_levels.yaml`, `hitl_policies.yaml` + loaders
 
 - **`app/models/`** — SQLAlchemy ORM + Pydantic schemas
   - `ontology.py`: Domain objects — `Room`, `Guest`, `Reservation`, `StayRecord`, `Bill`, `Task`, `Employee`, `RoomType`, `RatePlan`, `Payment`
@@ -118,6 +128,7 @@ All hotel-specific logic lives here.
   - `ai_service.py`: OODA loop controller — LLM-first with rule-based fallback
   - `llm_service.py`: LLM integration with date context injection
   - Domain services: `room_service.py`, `guest_service.py`, `reservation_service.py`, `checkin_service.py`, `checkout_service.py`, `task_service.py`, `billing_service.py`
+  - V2 services: `room_service_v2.py`, `guest_service_v2.py` — integrate domain entities with repositories
   - `event_bus.py` + `event_handlers.py`: In-memory pub/sub (checkout → cleaning task, task completion → room status)
   - `undo_service.py`: Operation undo with snapshots
 
@@ -143,6 +154,17 @@ class HotelDomainAdapter(IDomainAdapter):
         registry.register_relationship("Room", RelationshipMetadata(...))
         registry.register_state_machine("Room", StateMachine(...))
 ```
+
+### Bootstrap Sequence (`app/main.py` lifespan)
+At startup, the app layer injects all domain-specific configuration into the core framework:
+1. Register event handlers and alerts
+2. Register hotel relationships → `register_hotel_relationships(relationship_registry)`
+3. Register business rules → `register_all_rules(rule_engine)`
+4. Bootstrap `HotelDomainAdapter` → `adapter.register_ontology(registry)` (entities, state machines, constraints, events)
+5. Configure embedding service → `configure_embedding_service(api_key=..., base_url=..., model=...)`
+6. Register domain ACL permissions → `acl.register_domain_permissions([AttributePermission(...), ...])`
+7. Initialize hotel business rules → `init_hotel_business_rules()`
+8. Sync ActionRegistry to OntologyRegistry → `action_registry.set_ontology_registry(registry)`
 
 ### Action Dispatch
 Handler functions are NOT directly exported — access via `ActionRegistry.dispatch(action_name, params, context)`. All handlers use Pydantic models for parameter validation.
@@ -273,7 +295,7 @@ All endpoints require JWT authentication. Key groups:
 ```python
 ACTION_REQUIRED_PARAMS = {
     'walkin_checkin': ['room_number', 'guest_name', 'guest_phone', 'expected_check_out'],
-    'create_reservation': ['guest_name', 'guest_phone', 'room_type', 'check_in_date', 'check_out_date'],
+    'create_reservation': ['guest_name', 'guest_phone', 'room_type_id', 'check_in_date', 'check_out_date'],
     'checkin': ['reservation_id', 'room_number'],
     'checkout': ['stay_record_id'],
     'extend_stay': ['stay_record_id', 'new_check_out_date'],
@@ -329,11 +351,17 @@ Actions NOT in this dict (e.g., `complete_task`, `add_payment`, `mark_room_clean
 
 ---
 
+## Development Guides
+
+- `docs/add-entity-guide.md` — 新增 Entity 完整开发指南（13 步 checklist，含代码模板）
+- `docs/ontology-architecture-guide.md` — Ontology architecture design doc
+
+---
+
 ## Ralph Loop / Sam Loop Refactoring Process
 
 This project uses structured AI-assisted development loops with Architect→Editor phases. Key references:
 - `docs/ralphloop/RALPH_LOOP_EXPERIENCE.md` — Methodology and lessons learned
-- `docs/ontology-architecture-guide.md` — Ontology architecture design doc
 
 ### Behavioral Constraints
 - **STRUGGLE_SIGNAL**: Stop immediately if same bug fails 2x, guessing APIs, or 3 consecutive test failures
@@ -342,19 +370,13 @@ This project uses structured AI-assisted development loops with Architect→Edit
 - Prefer minimal, precise edits over rewriting entire files
 - **Critical**: Always validate field name consistency between `ACTION_REQUIRED_PARAMS`, `_get_field_definition`, `param_parser`, and LLM prompt examples
 
-### Known Issues & Solutions
+### Resolved Issues
 
-#### Field Name Mismatch (2025-02-11)
-**Issue**: LLM returns `room_type_id` and `room_type_name`, but `ACTION_REQUIRED_PARAMS` expects `room_type`, causing "还需要补充：房型" error.
-
-**Root Cause**: Three components use different field names:
-- `ACTION_REQUIRED_PARAMS`: `room_type` (str)
-- `_get_field_definition`: returns `room_type` with options as `rt.name` (string values)
+#### Field Name Mismatch (Resolved)
+LLM returned `room_type_id`/`room_type_name` but `ACTION_REQUIRED_PARAMS` expected `room_type`. Fixed by unifying all components to use `room_type_id`:
+- `ACTION_REQUIRED_PARAMS`: uses `room_type_id`
+- `_get_field_definition`: returns `room_type_id` options
 - `param_parser.parse_room_type()`: accepts `room_type_id` (int) or `room_type` (string name)
-- LLM examples: show `room_type` in `missing_fields`, but LLM may send `room_type_id` in params
-
-**Status**: Documented in `docs/ralphloop/FIELD_NAME_MISMATCH_ANALYSIS.md`
-
-**Temporary Fix Added**: Special handling in `ai_service.py:755-763` (to be removed after proper fix)
+- LLM prompts: updated to use `room_type_id`
 
 ---

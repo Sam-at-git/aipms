@@ -140,19 +140,11 @@ class SemanticPathResolver:
     def model_map(self):
         """Dynamic model map from OntologyRegistry (SPEC-14)"""
         mmap = self.registry.get_model_map()
-        # Fallback: try lazy import for known entities
         if not mmap:
-            known_entities = [
-                "Room", "Guest", "Reservation", "StayRecord",
-                "Bill", "Task", "Employee", "RoomType", "RatePlan", "Payment"
-            ]
-            for name in known_entities:
-                try:
-                    model = get_model_class(name)
-                    if model is not None:
-                        mmap[name] = model
-                except (ValueError, ImportError):
-                    pass
+            import logging
+            logging.getLogger(__name__).warning(
+                "OntologyRegistry model_map is empty. Ensure domain adapter has registered models."
+            )
         return mmap
 
     def compile(self, semantic_query: SemanticQuery) -> StructuredQuery:

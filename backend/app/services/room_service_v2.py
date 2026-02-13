@@ -8,8 +8,8 @@ from typing import List, Optional, Callable
 from datetime import date, datetime
 from sqlalchemy.orm import Session
 
-from core.domain.room import RoomEntity, RoomRepository, RoomState
-from core.domain.relationships import relationship_registry
+from app.hotel.domain.room import RoomEntity, RoomRepository, RoomState
+from app.hotel.domain import relationship_registry
 from app.models.ontology import Room, RoomType, RoomStatus, StayRecord, StayRecordStatus
 from app.models.schemas import (
     RoomCreate, RoomUpdate, RoomTypeCreate, RoomTypeUpdate, RoomStatusUpdate

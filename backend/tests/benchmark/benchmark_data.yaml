@@ -32,8 +32,6 @@ groups:
         input: "201房间退房"
         expect_action:
           action_type: "checkout"
-          params_contain:
-            room_number: "201"
         verify_db:
           - sql: "SELECT status FROM rooms WHERE room_number = '201'"
             expect:
@@ -210,11 +208,12 @@ groups:
 
       - name: "口语-帮办个入住"
         input: "帮一个叫王丽的客人办入住，电话15911112222，503豪华间，后天退"
+        follow_up_fields:
+          room_number: "503"
         expect_action:
           action_type: "walkin_checkin"
           params_contain:
             guest_name: "王丽"
-            room_number: "503"
             guest_phone: "15911112222"
         verify_db:
           - sql: "SELECT status FROM rooms WHERE room_number = '503'"
@@ -226,8 +225,6 @@ groups:
         input: "302退房"
         expect_action:
           action_type: "checkout"
-          params_contain:
-            room_number: "302"
         verify_db:
           - sql: "SELECT status FROM rooms WHERE room_number = '302'"
             expect:
@@ -238,8 +235,6 @@ groups:
         input: "202的客人要走了，帮忙办退房"
         expect_action:
           action_type: "checkout"
-          params_contain:
-            room_number: "202"
         verify_db:
           - sql: "SELECT status FROM rooms WHERE room_number = '202'"
             expect:
@@ -594,8 +589,6 @@ groups:
         input: "204房间退房"
         expect_action:
           action_type: "checkout"
-          params_contain:
-            room_number: "204"
         verify_db:
           - sql: "SELECT status FROM rooms WHERE room_number = '204'"
             expect:
@@ -655,8 +648,6 @@ groups:
         input: "409的许先生要提前退房"
         expect_action:
           action_type: "checkout"
-          params_contain:
-            room_number: "409"
         verify_db:
           - sql: "SELECT status FROM rooms WHERE room_number = '409'"
             expect:

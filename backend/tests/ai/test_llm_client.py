@@ -98,13 +98,15 @@ class TestLLMResponse:
 class TestOpenAICompatibleClient:
     """OpenAI 兼容客户端测试"""
 
-    def test_client_without_api_key(self):
+    def test_client_without_api_key(self, monkeypatch):
         """测试没有 API key 的客户端"""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         client = OpenAICompatibleClient(api_key=None)
         assert not client.is_enabled()
 
-    def test_client_with_empty_api_key(self):
+    def test_client_with_empty_api_key(self, monkeypatch):
         """测试空 API key 的客户端"""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         client = OpenAICompatibleClient(api_key="")
         assert not client.is_enabled()
 

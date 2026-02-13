@@ -14,6 +14,16 @@ from core.ontology.query_engine import QueryEngine, get_model_class
 from core.ontology.registry import registry
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _bootstrap_adapter():
+    """Ensure HotelDomainAdapter is bootstrapped so models are in OntologyRegistry."""
+    from core.ontology.registry import OntologyRegistry
+    from app.hotel.hotel_domain_adapter import HotelDomainAdapter
+    ont_registry = OntologyRegistry()
+    adapter = HotelDomainAdapter()
+    adapter.register_ontology(ont_registry)
+
+
 class TestStructuredQuery:
     """测试 StructuredQuery 数据结构"""
 
@@ -195,7 +205,7 @@ class TestQueryEngine:
 
         # 验证列名被正确映射为中文
         assert "姓名" in result["columns"] or "name" in result["columns"]
-        assert "电话" in result["columns"] or "phone" in result["columns"]
+        assert "手机号" in result["columns"] or "phone" in result["columns"] or "电话" in result["columns"]
 
 
 class TestOntologyQueryIntegration:

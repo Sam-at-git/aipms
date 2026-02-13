@@ -246,7 +246,29 @@ class TestOAGBenchmark:
             action.get("params", {}).setdefault("allow_unsettled", True)
             action.get("params", {}).setdefault("unsettled_reason", "benchmark test")
 
+        # 检查是否期望执行失败（如约束验证场景）
+        expect_result = case.get("expect_result", {})
+
         exec_result = ai_service.execute_action(action, user)
+
+        if expect_result and expect_result.get("success") is False:
+            # 期望执行失败的场景
+            assert not exec_result.get("success"), (
+                f"[{group_name}/{case_name}] Expected failure but got success.\n"
+                f"Action: {action}\nResult: {exec_result}"
+            )
+            logger.info(
+                f"  [EXPECTED FAIL] {exec_result.get('message', '')[:80]}"
+            )
+            # 验证错误消息内容
+            if "error_message_contain" in expect_result:
+                msg = exec_result.get("message", "") + str(exec_result.get("data", ""))
+                assert expect_result["error_message_contain"] in msg, (
+                    f"[{group_name}/{case_name}] error message should contain "
+                    f"'{expect_result['error_message_contain']}', got: {msg}"
+                )
+            return
+
         assert exec_result.get("success"), (
             f"[{group_name}/{case_name}] execute_action failed: "
             f"{exec_result.get('message')}\nAction: {action}"

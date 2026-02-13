@@ -4,7 +4,7 @@
 import pytest
 from datetime import datetime
 
-from core.domain.room import (
+from app.hotel.domain.room import (
     RoomState,
     RoomEntity,
     RoomRepository,

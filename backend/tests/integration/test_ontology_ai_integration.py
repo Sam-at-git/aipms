@@ -24,7 +24,7 @@ from core.ontology.metadata import (
 )
 from core.ontology.interface import OntologyInterface, implements
 from core.ai.prompt_builder import PromptBuilder
-from core.domain.interfaces import BookableResource, Maintainable, Billable, Trackable
+from app.hotel.domain.interfaces import BookableResource, Maintainable, Billable, Trackable
 
 
 @pytest.fixture(autouse=True)

@@ -4,7 +4,7 @@
 import pytest
 from datetime import datetime
 
-from core.domain.guest import (
+from app.hotel.domain.guest import (
     GuestTier,
     GuestEntity,
     GuestRepository,

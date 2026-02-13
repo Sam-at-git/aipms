@@ -6,7 +6,7 @@ tests/domain/metadata/test_metadata_config.py
 import pytest
 from pathlib import Path
 
-from core.domain.metadata import (
+from app.hotel.domain.metadata import (
     load_security_levels,
     load_hitl_policies,
     get_security_level,
@@ -258,13 +258,13 @@ class TestConfigFilesExist:
 
     def test_security_levels_file_exists(self):
         """测试安全等级配置文件存在"""
-        from core.domain.metadata import _security_levels_file
+        from app.hotel.domain.metadata import _security_levels_file
         assert _security_levels_file.exists()
         assert _security_levels_file.is_file()
 
     def test_hitl_policies_file_exists(self):
         """测试 HITL 策略配置文件存在"""
-        from core.domain.metadata import _hitl_policies_file
+        from app.hotel.domain.metadata import _hitl_policies_file
         assert _hitl_policies_file.exists()
         assert _hitl_policies_file.is_file()
 

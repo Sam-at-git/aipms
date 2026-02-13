@@ -10,6 +10,7 @@ from core.ai import (
     get_embedding_service,
     reset_embedding_service,
     create_embedding_service_for_test,
+    configure_embedding_service,
 )
 from app.config import Settings, settings
 
@@ -33,7 +34,16 @@ class TestEmbeddingServiceSingleton:
         assert service1 is service2
 
     def test_get_embedding_service_uses_config(self):
-        """Test that singleton is created with config values"""
+        """Test that singleton is created with config values when configured"""
+        # After decoupling, core no longer auto-imports app.config.
+        # Must explicitly configure before getting the service.
+        configure_embedding_service(
+            api_key=settings.EMBEDDING_API_KEY,
+            base_url=settings.EMBEDDING_BASE_URL,
+            model=settings.EMBEDDING_MODEL,
+            cache_size=settings.EMBEDDING_CACHE_SIZE,
+            enabled=settings.EMBEDDING_ENABLED,
+        )
         service = get_embedding_service()
 
         # Check that service uses values from settings
@@ -70,6 +80,7 @@ class TestEmbeddingServiceSingleton:
 
     def test_singleton_caches_results(self):
         """Test that singleton properly caches embeddings"""
+        configure_embedding_service(enabled=False)
         service = get_embedding_service()
 
         # Embed the same text twice
@@ -140,14 +151,14 @@ class TestSettingsConfiguration:
         assert s.EMBEDDING_ENABLED is False
 
     def test_embedding_api_key_fallback_to_openai_key(self, monkeypatch):
-        """Test that EMBEDDING_API_KEY falls back to OPENAI_API_KEY"""
+        """Test that EMBEDDING_API_KEY defaults to 'ollama' and OPENAI_API_KEY is separate"""
         monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
 
         s = Settings()
 
-        # EMBEDDING_API_KEY should be None, but service should use OPENAI_API_KEY
-        assert s.EMBEDDING_API_KEY is None
+        # EMBEDDING_API_KEY defaults to 'ollama' (Ollama doesn't need a real key)
+        assert s.EMBEDDING_API_KEY == "ollama"
         assert s.OPENAI_API_KEY == "sk-test-key"
 
     def test_embedding_api_key_overrides_openai_key(self, monkeypatch):
@@ -202,8 +213,10 @@ class TestIntegrationWithVectorStore:
 
     def test_multiple_components_share_embedding_service(self):
         """Test that multiple components can share the same embedding service"""
-        from core.ai import VectorStore, SchemaItem, get_embedding_service
+        from core.ai import VectorStore, SchemaItem, get_embedding_service, configure_embedding_service
 
+        # Configure disabled service to ensure caching works without real API
+        configure_embedding_service(enabled=False)
         # Get the shared service
         service = get_embedding_service()
 

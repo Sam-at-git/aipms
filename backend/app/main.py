@@ -34,17 +34,16 @@ async def lifespan(app: FastAPI):
         from core.ontology import registry
 
         # 导入并注册领域本体
-        from core.domain.room import RoomEntity
-        from core.domain.guest import GuestEntity
-        from core.domain.reservation import ReservationEntity
-        from core.domain.stay_record import StayRecordEntity
-        from core.domain.bill import BillEntity
-        from core.domain.task import TaskEntity
-        from core.domain.employee import EmployeeEntity
+        from app.hotel.domain import (
+            RoomEntity, GuestEntity, ReservationEntity,
+            StayRecordEntity, BillEntity, TaskEntity, EmployeeEntity,
+        )
         from core.domain.relationships import relationship_registry
+        from app.hotel.domain.relationships import register_hotel_relationships
+        register_hotel_relationships(relationship_registry)
 
         # 导入业务规则
-        from core.domain.rules import register_all_rules
+        from app.hotel.domain.rules import register_all_rules
 
         # 注册业务规则（这会注册规则到规则引擎）
         from core.engine.rule_engine import rule_engine
@@ -60,6 +59,32 @@ async def lifespan(app: FastAPI):
         adapter = HotelDomainAdapter()
         adapter.register_ontology(ont_registry)
         print(f"✓ 酒店领域本体已注册 ({len(ont_registry.get_entities())} entities)")
+
+        # ========== Configure embedding service ==========
+        from core.ai import configure_embedding_service
+        from app.config import settings
+        embed_api_key = settings.EMBEDDING_API_KEY or settings.OPENAI_API_KEY
+        configure_embedding_service(
+            api_key=embed_api_key,
+            base_url=settings.EMBEDDING_BASE_URL,
+            model=settings.EMBEDDING_MODEL,
+            cache_size=settings.EMBEDDING_CACHE_SIZE,
+            enabled=settings.ENABLE_LLM and settings.EMBEDDING_ENABLED and bool(embed_api_key),
+        )
+
+        # ========== Register hotel domain ACL permissions ==========
+        from core.security.attribute_acl import AttributeACL, AttributePermission, SecurityLevel
+        acl = AttributeACL()
+        acl.register_domain_permissions([
+            AttributePermission("Guest", "phone", SecurityLevel.CONFIDENTIAL),
+            AttributePermission("Guest", "id_card", SecurityLevel.RESTRICTED),
+            AttributePermission("Guest", "blacklist_reason", SecurityLevel.RESTRICTED),
+            AttributePermission("Guest", "tier", SecurityLevel.INTERNAL),
+            AttributePermission("Room", "price", SecurityLevel.INTERNAL),
+            AttributePermission("Employee", "salary", SecurityLevel.RESTRICTED, allow_write=False),
+            AttributePermission("Employee", "password_hash", SecurityLevel.RESTRICTED, allow_read=False),
+            AttributePermission("Bill", "total_amount", SecurityLevel.INTERNAL),
+        ])
 
         # ========== SPEC-5: Initialize hotel business rules (domain layer) ==========
         from app.hotel.business_rules import init_hotel_business_rules

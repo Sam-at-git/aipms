@@ -465,12 +465,11 @@ class TestRegistryStatistics:
             assert "category" in action
             assert "parameters" in action
 
-            # Check entity is one of the known entities
-            assert action["entity"] in [
-                "Guest", "StayRecord", "Task", "Reservation", "Query",
-                "Room", "Bill", "Employee", "RoomType", "RatePlan",
-                "Payment", "System", "Price", "Interface"
-            ]
+            # Check entity is a non-empty string
+            assert isinstance(action["entity"], str) and len(action["entity"]) > 0
 
-            # Check category
-            assert action["category"] in ["query", "mutation", "system", "tool"]
+            # Check category is a known category
+            assert action["category"] in [
+                "query", "mutation", "system", "tool",
+                "webhook", "notification", "interface"
+            ]

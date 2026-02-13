@@ -88,42 +88,17 @@ class AttributeACL:
         self._audit_engine: Optional[AuditEngine] = None
         self._initialized = True
 
-        # 注册预定义的属性规则
-        self._register_predefined_rules()
-
         logger.debug("AttributeACL initialized")
 
-    def _register_predefined_rules(self) -> None:
-        """注册预定义的属性权限规则"""
-        # Guest 实体敏感属性
-        guest_attributes = [
-            AttributePermission("Guest", "phone", SecurityLevel.CONFIDENTIAL),
-            AttributePermission("Guest", "id_card", SecurityLevel.RESTRICTED),
-            AttributePermission("Guest", "blacklist_reason", SecurityLevel.RESTRICTED),
-            AttributePermission("Guest", "tier", SecurityLevel.INTERNAL),
-        ]
+    def register_domain_permissions(self, permissions: list) -> None:
+        """
+        Register domain-specific attribute permissions.
+        Called by app layer (e.g., HotelDomainAdapter) at startup.
 
-        # Room 实体
-        room_attributes = [
-            AttributePermission("Room", "price", SecurityLevel.INTERNAL),
-        ]
-
-        # Employee 实体
-        employee_attributes = [
-            AttributePermission(
-                "Employee", "salary", SecurityLevel.RESTRICTED, allow_write=False
-            ),
-            AttributePermission(
-                "Employee", "password_hash", SecurityLevel.RESTRICTED, allow_read=False
-            ),
-        ]
-
-        # Bill 实体
-        bill_attributes = [
-            AttributePermission("Bill", "total_amount", SecurityLevel.INTERNAL),
-        ]
-
-        for attr in guest_attributes + room_attributes + employee_attributes + bill_attributes:
+        Args:
+            permissions: List of AttributePermission objects
+        """
+        for attr in permissions:
             self.register_attribute(attr)
 
     def set_audit_engine(self, engine: AuditEngine) -> None:

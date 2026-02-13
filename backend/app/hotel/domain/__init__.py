@@ -2,45 +2,48 @@
 app/hotel/domain/__init__.py
 
 酒店领域层 - 所有酒店特定的领域实体、状态机、仓储
-
-这是酒店领域代码的规范位置。当前通过 core.domain 桥接，
-后续将逐步迁移所有领域代码到此处。
 """
-# Re-export all domain types from core.domain (bridge pattern)
-from core.domain.room import RoomState, RoomEntity, RoomRepository
-from core.domain.guest import GuestTier, GuestEntity, GuestRepository
-from core.domain.reservation import (
+# Import from local domain files
+from app.hotel.domain.room import RoomState, RoomEntity, RoomRepository
+from app.hotel.domain.guest import GuestTier, GuestEntity, GuestRepository
+from app.hotel.domain.reservation import (
     ReservationState,
     ReservationEntity,
     ReservationRepository,
 )
-from core.domain.stay_record import (
+from app.hotel.domain.stay_record import (
     StayRecordState,
     StayRecordEntity,
     StayRecordRepository,
 )
-from core.domain.bill import BillEntity, BillRepository
-from core.domain.task import (
+from app.hotel.domain.bill import BillEntity, BillRepository
+from app.hotel.domain.task import (
     TaskState,
     TaskType,
     TaskEntity,
     TaskRepository,
 )
-from core.domain.employee import (
+from app.hotel.domain.employee import (
     EmployeeRole,
     EmployeeEntity,
     EmployeeRepository,
 )
-from core.domain.interfaces import (
+from app.hotel.domain.interfaces import (
     BookableResource,
     Maintainable,
     Billable,
     Trackable,
 )
+# Relationship generic types from core
 from core.domain.relationships import (
     LinkType,
     Cardinality,
     EntityLink,
+    RelationshipRegistry,
+    relationship_registry,
+)
+# Hotel-specific relationship constants
+from app.hotel.domain.relationships import (
     ROOM_RELATIONSHIPS,
     GUEST_RELATIONSHIPS,
     RESERVATION_RELATIONSHIPS,
@@ -48,8 +51,7 @@ from core.domain.relationships import (
     BILL_RELATIONSHIPS,
     TASK_RELATIONSHIPS,
     EMPLOYEE_RELATIONSHIPS,
-    RelationshipRegistry,
-    relationship_registry,
+    register_hotel_relationships,
 )
 
 __all__ = [

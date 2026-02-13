@@ -60,9 +60,18 @@ class TestAttributeACL:
     def setup_method(self):
         """每个测试前重置 ACL 和上下文"""
         acl = AttributeACL()
-        # 清空自定义规则（保留预定义规则）
+        # 清空自定义规则并重新注册酒店域权限
         acl._rules.clear()
-        acl._register_predefined_rules()
+        acl.register_domain_permissions([
+            AttributePermission("Guest", "phone", SecurityLevel.CONFIDENTIAL),
+            AttributePermission("Guest", "id_card", SecurityLevel.RESTRICTED),
+            AttributePermission("Guest", "blacklist_reason", SecurityLevel.RESTRICTED),
+            AttributePermission("Guest", "tier", SecurityLevel.INTERNAL),
+            AttributePermission("Room", "price", SecurityLevel.INTERNAL),
+            AttributePermission("Employee", "salary", SecurityLevel.RESTRICTED, allow_write=False),
+            AttributePermission("Employee", "password_hash", SecurityLevel.RESTRICTED, allow_read=False),
+            AttributePermission("Bill", "total_amount", SecurityLevel.INTERNAL),
+        ])
 
         manager = SecurityContextManager()
         while manager.get_context():
@@ -271,10 +280,19 @@ class TestSecureEntityMixin:
         while manager.get_context():
             manager.clear_context()
 
-        # 清空 ACL 并重新注册预定义规则
+        # 清空 ACL 并重新注册酒店域权限
         acl = attribute_acl
         acl._rules.clear()
-        acl._register_predefined_rules()
+        acl.register_domain_permissions([
+            AttributePermission("Guest", "phone", SecurityLevel.CONFIDENTIAL),
+            AttributePermission("Guest", "id_card", SecurityLevel.RESTRICTED),
+            AttributePermission("Guest", "blacklist_reason", SecurityLevel.RESTRICTED),
+            AttributePermission("Guest", "tier", SecurityLevel.INTERNAL),
+            AttributePermission("Room", "price", SecurityLevel.INTERNAL),
+            AttributePermission("Employee", "salary", SecurityLevel.RESTRICTED, allow_write=False),
+            AttributePermission("Employee", "password_hash", SecurityLevel.RESTRICTED, allow_read=False),
+            AttributePermission("Bill", "total_amount", SecurityLevel.INTERNAL),
+        ])
 
     def test_read_allowed_attribute(self):
         """测试读取允许的属性"""

@@ -309,14 +309,14 @@ class TestHandleOntologyQuery:
 
         assert result["success"] is True
 
-    def test_query_with_limit(self):
+    def test_query_with_limit(self, mock_db, mock_user, mock_entity_metadata):
         """Test query with custom limit"""
         from app.services.actions.query_actions import handle_ontology_query
 
         params = OntologyQueryParams(entity="Guest", limit=50)
 
         mock_registry = MagicMock()
-        mock_registry.get_entity.return_value = Mock()
+        mock_registry.get_entity.return_value = mock_entity_metadata
 
         mock_engine = MagicMock()
         mock_engine.execute.return_value = {"rows": [], "count": 0, "summary": "共 0 条记录"}
@@ -327,12 +327,12 @@ class TestHandleOntologyQuery:
                     params=params,
                     db=mock_db,
                     user=mock_user,
-                    param_parser=mock_param_parser
+                    param_parser=None
                 )
 
         assert result["success"] is True
 
-    def test_query_with_aggregates(self):
+    def test_query_with_aggregates(self, mock_db, mock_user, mock_entity_metadata):
         """Test query with aggregate functions"""
         from app.services.actions.query_actions import handle_ontology_query
 
@@ -343,7 +343,7 @@ class TestHandleOntologyQuery:
         params = OntologyQueryParams(entity="Guest", aggregates=aggregates)
 
         mock_registry = MagicMock()
-        mock_registry.get_entity.return_value = Mock()
+        mock_registry.get_entity.return_value = mock_entity_metadata
 
         mock_engine = MagicMock()
         mock_engine.execute.return_value = {"rows": [], "count": 0, "summary": "统计结果"}
@@ -354,7 +354,7 @@ class TestHandleOntologyQuery:
                     params=params,
                     db=mock_db,
                     user=mock_user,
-                    param_parser=mock_param_parser
+                    param_parser=None
                 )
 
         assert result["success"] is True
@@ -388,8 +388,15 @@ class TestHandleOntologyQuery:
         """Test query with invalid operator defaults to eq"""
         from app.services.actions.query_actions import handle_ontology_query
 
-        filters = [FilterClauseParams(field="status", operator="invalid_op", value="ACTIVE")]
-        params = OntologyQueryParams(entity="Guest", filters=filters)
+        # Use model_construct to bypass Pydantic validation, simulating
+        # a filter with an invalid operator reaching the handler
+        invalid_filter = FilterClauseParams.model_construct(
+            field="status", operator="invalid_op", value="ACTIVE"
+        )
+        params = OntologyQueryParams.model_construct(
+            entity="Guest", filters=[invalid_filter], fields=[], joins=None,
+            order_by=None, limit=100, aggregates=None
+        )
 
         mock_registry = MagicMock()
         mock_registry.get_entity.return_value = mock_entity_metadata
@@ -497,7 +504,7 @@ class TestHandleSemanticQuery:
         """Test successful semantic query with minimal params"""
         from app.services.actions.query_actions import handle_semantic_query
 
-        params = SemanticQueryParams(root_object="Guest")
+        params = SemanticQueryParams(root_object="Guest", fields=["name"])
 
         mock_registry = MagicMock()
 
@@ -558,6 +565,7 @@ class TestHandleSemanticQuery:
         ]
         params = SemanticQueryParams(
             root_object="Guest",
+            fields=["name"],
             filters=filters
         )
 
@@ -578,12 +586,13 @@ class TestHandleSemanticQuery:
 
         assert result["success"] is True
 
-    def test_semantic_query_with_order_by(self):
+    def test_semantic_query_with_order_by(self, mock_db, mock_user):
         """Test semantic query with order_by"""
         from app.services.actions.query_actions import handle_semantic_query
 
         params = SemanticQueryParams(
             root_object="Guest",
+            fields=["name"],
             order_by=["name"]
         )
 
@@ -604,11 +613,11 @@ class TestHandleSemanticQuery:
 
         assert result["success"] is True
 
-    def test_semantic_query_with_limit(self):
+    def test_semantic_query_with_limit(self, mock_db, mock_user):
         """Test semantic query with custom limit"""
         from app.services.actions.query_actions import handle_semantic_query
 
-        params = SemanticQueryParams(root_object="Guest", limit=50)
+        params = SemanticQueryParams(root_object="Guest", fields=["name"], limit=50)
 
         mock_registry = MagicMock()
         mock_resolver = MagicMock()
@@ -627,11 +636,11 @@ class TestHandleSemanticQuery:
 
         assert result["success"] is True
 
-    def test_semantic_query_with_offset(self):
+    def test_semantic_query_with_offset(self, mock_db, mock_user):
         """Test semantic query with offset"""
         from app.services.actions.query_actions import handle_semantic_query
 
-        params = SemanticQueryParams(root_object="Guest", offset=10)
+        params = SemanticQueryParams(root_object="Guest", fields=["name"], offset=10)
 
         mock_registry = MagicMock()
         mock_resolver = MagicMock()
@@ -650,11 +659,11 @@ class TestHandleSemanticQuery:
 
         assert result["success"] is True
 
-    def test_semantic_query_with_distinct(self):
+    def test_semantic_query_with_distinct(self, mock_db, mock_user):
         """Test semantic query with distinct enabled"""
         from app.services.actions.query_actions import handle_semantic_query
 
-        params = SemanticQueryParams(root_object="Guest", distinct=True)
+        params = SemanticQueryParams(root_object="Guest", fields=["name"], distinct=True)
 
         mock_registry = MagicMock()
         mock_resolver = MagicMock()
@@ -690,7 +699,10 @@ class TestHandleSemanticQuery:
         mock_resolver = MagicMock()
         mock_resolver.compile.side_effect = PathResolutionError(
             path="invalid_path",
-            message="Path 'invalid_path' not found on Guest"
+            position=0,
+            token="invalid_path",
+            current_entity="Guest",
+            suggestions=[]
         )
 
         with patch('app.services.actions.query_actions.ontology_registry', mock_registry):
@@ -710,7 +722,7 @@ class TestHandleSemanticQuery:
         """Test semantic query with compilation error"""
         from app.services.actions.query_actions import handle_semantic_query
 
-        params = SemanticQueryParams(root_object="InvalidEntity")
+        params = SemanticQueryParams(root_object="InvalidEntity", fields=["name"])
 
         mock_registry = MagicMock()
 
@@ -734,7 +746,7 @@ class TestHandleSemanticQuery:
         """Test semantic query with execution error"""
         from app.services.actions.query_actions import handle_semantic_query
 
-        params = SemanticQueryParams(root_object="Guest")
+        params = SemanticQueryParams(root_object="Guest", fields=["name"])
 
         mock_registry = MagicMock()
         mock_resolver = MagicMock()
@@ -761,10 +773,11 @@ class TestHandleSemanticQuery:
         """Test semantic query with validation errors from SemanticQuery.validate()"""
         from app.services.actions.query_actions import handle_semantic_query
 
-        # Create a SemanticQuery that will fail validation
+        # SemanticQuery.validate() will return ["fields cannot be empty"]
+        # when fields list is empty
         params = SemanticQueryParams(
             root_object="Guest",
-            limit=2000  # Exceeds max
+            fields=[]
         )
 
         mock_registry = MagicMock()
@@ -781,9 +794,10 @@ class TestHandleSemanticQuery:
                         user=mock_user
                     )
 
-        # Pydantic validation will catch limit > 1000
-        # If it passes, SemanticQuery.validate() would catch it
+        # SemanticQuery.validate() catches empty fields and returns validation_error
         assert isinstance(result, dict)
+        assert result["success"] is False
+        assert result["error"] == "validation_error"
 
     def test_semantic_query_multi_hop_navigation(
         self, mock_db, mock_user

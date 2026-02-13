@@ -14,6 +14,8 @@ from app.services.param_parser_service import ParamParserService
 from app.services.actions.base import (
     CreateReservationParams, CancelReservationParams, ModifyReservationParams,
 )
+from app.services.reservation_service import ReservationService
+from app.services.room_service import RoomService
 
 import logging
 
@@ -67,8 +69,6 @@ def register_reservation_actions(
             Result dict with success status and message
         """
         from app.models.schemas import ReservationCreate
-        from app.services.reservation_service import ReservationService
-        from app.services.room_service import RoomService
 
         # Parse room type (support both ID and name)
         room_type_result = param_parser.parse_room_type(params.room_type_id)
@@ -182,7 +182,6 @@ def register_reservation_actions(
     ) -> Dict[str, Any]:
         """取消预订"""
         from app.models.schemas import ReservationCancel
-        from app.services.reservation_service import ReservationService
         from app.models.ontology import Reservation
 
         try:
@@ -250,7 +249,6 @@ def register_reservation_actions(
     ) -> Dict[str, Any]:
         """修改预订"""
         from app.models.schemas import ReservationUpdate
-        from app.services.reservation_service import ReservationService
         from app.models.ontology import Reservation
 
         try:

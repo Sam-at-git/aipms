@@ -6,7 +6,7 @@ tests/domain/rules/test_room_rules.py
 import pytest
 from datetime import date
 
-from core.domain.rules.room_rules import (
+from app.hotel.domain.rules.room_rules import (
     register_room_rules,
     should_create_cleaning_task_after_checkout,
     should_mark_room_occupied_after_checkin,

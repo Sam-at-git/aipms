@@ -4,6 +4,7 @@ tests/services/actions/test_stay_actions.py
 Tests for stay action handlers in app/services/actions/stay_actions.py
 """
 import pytest
+from datetime import datetime
 from decimal import Decimal
 from unittest.mock import Mock, MagicMock, patch
 
@@ -75,7 +76,7 @@ def sample_stay(sample_guest, sample_room, sample_bill):
     stay.guest = sample_guest
     stay.room = sample_room
     stay.room_id = sample_room.id
-    stay.check_out_time = "2026-02-07T14:00:00"
+    stay.check_out_time = datetime(2026, 2, 7, 14, 0)
     stay.bill = sample_bill
     return stay
 
@@ -242,8 +243,9 @@ class TestHandleCheckout:
         from pydantic import ValidationError
 
         mock_checkout_service = MagicMock()
-        mock_checkout_service.check_out.side_effect = ValidationError(
-            [{"loc": ["stay_record_id"], "msg": "Stay record not found"}]
+        mock_checkout_service.check_out.side_effect = ValidationError.from_exception_data(
+            title="CheckOutRequest",
+            line_errors=[{"type": "value_error", "loc": ("stay_record_id",), "msg": "Stay record not found", "input": 999, "ctx": {"error": ValueError("Stay record not found")}}]
         )
 
         params = CheckoutParams(stay_record_id=999)

@@ -51,7 +51,7 @@ except ImportError:
 
 # 导入业务规则模块 (SPEC-47, 48, 49)
 try:
-    from core.domain.rules import (
+    from app.hotel.domain.rules import (
         register_all_rules,
         calculate_room_price,
         calculate_guest_tier,
@@ -62,7 +62,7 @@ except ImportError:
 
 # 导入元数据配置 (SPEC-21, 53)
 try:
-    from core.domain.metadata import (
+    from app.hotel.domain.metadata import (
         get_security_level,
         get_action_requirements,
         should_skip_confirmation,
@@ -1569,6 +1569,22 @@ class AIService:
                 if stays and "stay_record_id" not in params:
                     params["stay_record_id"] = stays[0].id
                     action["entity_id"] = stays[0].id
+
+            # 如果 LLM 返回了客人姓名但缺少 reservation_id，尝试查找预订
+            if "guest_name" in params and action_type in ["cancel_reservation", "modify_reservation"]:
+                if "reservation_id" not in params and "reservation_no" not in params:
+                    reservations = self.reservation_service.search_reservations(params["guest_name"])
+                    confirmed = [r for r in reservations if r.status.value.upper() == "CONFIRMED"]
+                    if confirmed:
+                        params["reservation_id"] = confirmed[0].id
+                        action["entity_id"] = confirmed[0].id
+
+            # 如果 LLM 返回了房间号但缺少 stay_record_id（用于账单/付款类操作）
+            if "room_number" in params and action_type in ["add_payment", "adjust_bill"]:
+                if "stay_record_id" not in params and "bill_id" not in params:
+                    stays = self.checkin_service.search_active_stays(params["room_number"])
+                    if stays:
+                        params["stay_record_id"] = stays[0].id
 
             # 如果 LLM 返回了预订号但缺少 reservation_id
             if "reservation_no" in params and "reservation_id" not in params:

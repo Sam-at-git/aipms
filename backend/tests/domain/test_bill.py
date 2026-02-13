@@ -2,7 +2,7 @@
 import pytest
 from datetime import datetime, date
 
-from core.domain.bill import BillEntity, BillRepository
+from app.hotel.domain.bill import BillEntity, BillRepository
 from app.models.ontology import Bill, StayRecord, Guest, Room, RoomType
 
 

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 import app.services.actions.reservation_actions as reservation_actions
 from app.services.actions.base import CreateReservationParams
 from app.models.ontology import (
-    Employee, EmployeeRole, Guest, RoomType, Reservation
+    Employee, EmployeeRole, Guest, RoomType, Reservation, ReservationStatus
 )
 from app.services.param_parser_service import ParseResult
 
@@ -71,7 +71,7 @@ def sample_reservation(sample_room_type):
     res.child_count = 1
     res.room_count = 1
     res.total_amount = Decimal("1152.00")
-    res.status = "confirmed"  # Use string status instead of Status enum
+    res.status = ReservationStatus.CONFIRMED
     return res
 
 
@@ -244,13 +244,15 @@ class TestHandleCreateReservation:
         mock_param_parser.parse_room_type.return_value = ParseResult(
             value=1,
             confidence=1.0,
+            matched_by='direct',
             raw_input="1",
             candidates=None
         )
 
         mock_reservation_service = MagicMock()
-        mock_reservation_service.create_reservation.side_effect = ValidationError(
-            [{"loc": ["guest_phone"], "msg": "Invalid phone"}]
+        mock_reservation_service.create_reservation.side_effect = ValidationError.from_exception_data(
+            title="ReservationCreate",
+            line_errors=[{"type": "value_error", "loc": ("guest_phone",), "msg": "Invalid phone", "input": "bad", "ctx": {"error": ValueError("Invalid phone")}}]
         )
 
         params = CreateReservationParams(
@@ -303,6 +305,7 @@ class TestHandleCreateReservation:
         mock_param_parser.parse_room_type.return_value = ParseResult(
             value=1,
             confidence=1.0,
+            matched_by='direct',
             raw_input="1",
             candidates=None
         )
@@ -324,28 +327,19 @@ class TestHandleCreateReservation:
         assert result["success"] is False
         assert result["error"] == "execution_error"
 
-    def test_reservation_date_validation_in_handler(
+    def test_reservation_date_validation_at_pydantic_level(
         self, mock_db, mock_user, mock_param_parser
     ):
-        """Test reservation date validation in handler"""
-        mock_param_parser.parse_room_type.return_value = ParseResult(
-            value=1,
-            confidence=1.0,
-            raw_input="1",
-            candidates=None
-        )
+        """Test reservation date validation is caught at Pydantic model level"""
+        from pydantic import ValidationError
 
-        params = CreateReservationParams(
-            guest_name="郑十",
-            room_type_id=1,
-            check_in_date="2026-06-05",
-            check_out_date="2026-06-01"
-        )
-
-        result = self._execute_with_registry(params, mock_db, mock_user, mock_param_parser)
-
-        assert result["success"] is False
-        assert "退房日期必须晚于入住日期" in result["message"]
+        with pytest.raises(ValidationError, match="退房日期必须晚于入住日期"):
+            CreateReservationParams(
+                guest_name="郑十",
+                room_type_id=1,
+                check_in_date="2026-06-05",
+                check_out_date="2026-06-01"
+            )
 
     def _execute_with_registry(self, params, db, user, param_parser):
         """Helper to execute action via registry"""

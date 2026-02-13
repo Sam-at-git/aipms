@@ -11,7 +11,7 @@ import logging
 from core.ontology.base import BaseEntity
 from core.engine.state_machine import StateMachine, StateMachineConfig, StateTransition
 from core.ontology.interface import implements
-from core.domain.interfaces import BookableResource, Maintainable
+from app.hotel.domain.interfaces import BookableResource, Maintainable
 
 if TYPE_CHECKING:
     from app.models.ontology import Room, RoomType, RoomStatus

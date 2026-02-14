@@ -45,6 +45,44 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _build_descriptive_summary(
+    rows: List[Dict[str, Any]],
+    columns: List[str],
+    column_keys: List[str]
+) -> Optional[str]:
+    """
+    Build a descriptive summary from query result rows.
+
+    For 1-5 rows, returns a human-readable summary of the data.
+    For >5 rows or empty results, returns None (caller should use count message).
+
+    Args:
+        rows: Query result rows (list of dicts)
+        columns: Display column names (e.g., ["房号", "状态"])
+        column_keys: Column keys matching row dict keys (e.g., ["room_number", "status"])
+
+    Returns:
+        Descriptive summary string, or None to fall back to count message.
+    """
+    if not rows or len(rows) > 5:
+        return None
+
+    lines = []
+    for row in rows:
+        parts = []
+        for col_name, col_key in zip(columns, column_keys):
+            value = row.get(col_key, "")
+            if value != "" and value is not None:
+                parts.append(f"{col_name}: {value}")
+        if parts:
+            lines.append(", ".join(parts))
+
+    if len(lines) == 1:
+        return lines[0]
+    else:
+        return "\n".join(f"• {line}" for line in lines)
+
+
 def _convert_filter_params(filters: Optional[List[FilterClauseParams]]) -> List[dict]:
     """Convert FilterClauseParams to dicts for QueryEngine."""
     if not filters:
@@ -162,10 +200,16 @@ def handle_ontology_query(
         engine = QueryEngine(db, ontology_registry)
         result = engine.execute(structured_query, user)
 
-        # Format response
+        # Format response — use descriptive summary for small result sets
+        rows = result.get("rows", [])
+        columns = result.get("columns", [])
+        column_keys = result.get("column_keys", [])
+        descriptive = _build_descriptive_summary(rows, columns, column_keys)
+        message = descriptive or result.get("summary", f"共 {len(rows)} 条记录")
+
         return {
             "success": True,
-            "message": result.get("summary", f"共 {len(result.get('rows', []))} 条记录"),
+            "message": message,
             "query_result": result
         }
 
@@ -188,7 +232,8 @@ def handle_ontology_query(
 def handle_semantic_query(
     params: SemanticQueryParams,
     db: Session,
-    user: Employee
+    user: Employee,
+    **context
 ) -> Dict[str, Any]:
     """
     执行语义查询
@@ -282,10 +327,16 @@ def handle_semantic_query(
         engine = QueryEngine(db, ontology_registry)
         result = engine.execute(structured_query, user)
 
-        # 4. 返回结果
+        # 4. 返回结果 — use descriptive summary for small result sets
+        rows = result.get("rows", [])
+        columns = result.get("columns", [])
+        column_keys = result.get("column_keys", [])
+        descriptive = _build_descriptive_summary(rows, columns, column_keys)
+        message = descriptive or result.get("summary", f"共 {len(rows)} 条记录")
+
         return {
             "success": True,
-            "message": result.get("summary", f"共 {len(result.get('rows', []))} 条记录"),
+            "message": message,
             "query_result": result
         }
 
@@ -345,4 +396,4 @@ def register_query_actions(
     )(handle_semantic_query)
 
 
-__all__ = ["register_query_actions", "handle_ontology_query", "handle_semantic_query"]
+__all__ = ["register_query_actions", "handle_ontology_query", "handle_semantic_query", "_build_descriptive_summary"]

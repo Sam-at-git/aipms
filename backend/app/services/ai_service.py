@@ -34,6 +34,7 @@ from app.services.billing_service import BillingService
 from app.services.report_service import ReportService
 from app.services.llm_service import LLMService, TopicRelevance
 from app.services.param_parser_service import ParamParserService
+from app.services.actions.query_actions import _build_descriptive_summary
 from app.models.schemas import MissingField
 
 # 导入新的 core/ai/ 模块 (SPEC-28, 29, 30)
@@ -82,17 +83,69 @@ except ImportError:
 class SystemCommandHandler:
     """处理以 # 开头的系统指令（仅 sysadmin）"""
 
-    # 已知实体名映射（支持大小写和中文）
-    ENTITY_ALIASES = {
-        'room': 'Room', 'rooms': 'Room', '房间': 'Room',
-        'guest': 'Guest', 'guests': 'Guest', '客人': 'Guest',
-        'reservation': 'Reservation', 'reservations': 'Reservation', '预订': 'Reservation',
-        'stayrecord': 'StayRecord', 'stay': 'StayRecord', '住宿': 'StayRecord',
-        'task': 'Task', 'tasks': 'Task', '任务': 'Task',
-        'bill': 'Bill', 'bills': 'Bill', '账单': 'Bill',
-        'employee': 'Employee', 'employees': 'Employee', '员工': 'Employee',
-        'roomtype': 'RoomType', '房型': 'RoomType',
-    }
+    _entity_aliases_cache: dict = None
+
+    @classmethod
+    def _build_entity_aliases(cls) -> dict:
+        """从 OntologyRegistry 动态构建实体别名映射"""
+        from core.ontology.registry import OntologyRegistry
+        import re as _re
+
+        registry = OntologyRegistry()
+        aliases = {}
+        entity_names = set()
+
+        for entity in registry.get_entities():
+            name = entity.name
+            entity_names.add(name)
+
+            # 1. Exact lowercase name → entity (e.g., 'stayrecord' → 'StayRecord')
+            aliases[name.lower()] = name
+
+            # 2. Lowercase + 's' for English plural (e.g., 'rooms' → 'Room')
+            aliases[name.lower() + 's'] = name
+
+            # 3. Extract Chinese aliases from description (before " - " separator)
+            desc = entity.description or ""
+            if " - " in desc:
+                cn_part = desc.split(" - ")[0].strip()
+            elif "——" in desc:
+                cn_part = desc.split("——")[0].strip()
+            else:
+                cn_part = ""
+
+            if cn_part:
+                aliases[cn_part] = name
+                # For 4+ char Chinese terms, also add first 2 chars as shorter alias
+                # e.g., "酒店房间" → "房间", "预订信息" → "预订", "房型定义" → "房型"
+                if len(cn_part) >= 4:
+                    aliases[cn_part[:2]] = name
+                    # Special case: "酒店房间" → also add "房间"
+                    if cn_part.startswith("酒店"):
+                        aliases[cn_part[2:]] = name
+
+        # 4. CamelCase split: add first word as alias if no name conflict
+        #    e.g., StayRecord → 'stay' → 'StayRecord' (but only if 'Stay' is not an entity)
+        for entity in registry.get_entities():
+            name = entity.name
+            parts = _re.findall(r'[A-Z][a-z]*', name)
+            if len(parts) > 1:
+                first_part = parts[0].lower()
+                if first_part not in aliases or aliases[first_part] == name:
+                    aliases[first_part] = name
+
+        return aliases
+
+    @classmethod
+    def get_entity_aliases(cls) -> dict:
+        """获取实体别名映射（带缓存）"""
+        if cls._entity_aliases_cache is None:
+            cls._entity_aliases_cache = cls._build_entity_aliases()
+        return cls._entity_aliases_cache
+
+    @property
+    def ENTITY_ALIASES(self) -> dict:
+        return self.get_entity_aliases()
 
     def is_system_command(self, message: str) -> bool:
         """判断是否为系统指令（# 后跟字母或中文，不跟数字）"""
@@ -711,8 +764,10 @@ class AIService:
 
         return None
 
-    # 各操作类型必需的参数定义
-    ACTION_REQUIRED_PARAMS = {
+    # Workflow-specific overrides: fields required by the UI form that may differ
+    # from the Pydantic schema (e.g., room_number for UI vs room_id in schema,
+    # or optional schema fields made required for the workflow).
+    _WORKFLOW_REQUIRED_OVERRIDES = {
         'walkin_checkin': ['room_number', 'guest_name', 'guest_phone', 'expected_check_out'],
         'create_reservation': ['guest_name', 'guest_phone', 'room_type_id', 'check_in_date', 'check_out_date'],
         'checkin': ['reservation_id', 'room_number'],
@@ -721,6 +776,38 @@ class AIService:
         'change_room': ['stay_record_id', 'new_room_number'],
         'create_task': ['room_number', 'task_type'],
     }
+
+    @property
+    def ACTION_REQUIRED_PARAMS(self) -> dict:
+        """Backward-compatible access to required params (overrides + schema)."""
+        return self._WORKFLOW_REQUIRED_OVERRIDES
+
+    def _get_required_params(self, action_name: str) -> list[str]:
+        """
+        获取操作必需参数列表。
+
+        优先使用 workflow 覆盖（UI 表单特定字段名），
+        否则从 ActionRegistry 的 Pydantic schema 中内省必填字段。
+        """
+        # 1. Check workflow overrides first
+        if action_name in self._WORKFLOW_REQUIRED_OVERRIDES:
+            return self._WORKFLOW_REQUIRED_OVERRIDES[action_name]
+
+        # 2. Introspect ActionRegistry Pydantic schema
+        try:
+            action_registry = self.get_action_registry()
+            action_def = action_registry.get_action(action_name)
+            if action_def and action_def.parameters_schema:
+                schema = action_def.parameters_schema
+                required = []
+                for field_name, field_info in schema.model_fields.items():
+                    if field_info.is_required():
+                        required.append(field_name)
+                return required
+        except Exception:
+            pass
+
+        return []
 
     def _validate_action_params(
         self,
@@ -734,11 +821,10 @@ class AIService:
         Returns:
             (is_valid, missing_fields, error_message)
         """
-        if action_type not in self.ACTION_REQUIRED_PARAMS:
-            # 不需要校验的操作类型
+        required = self._get_required_params(action_type)
+        if not required:
             return True, [], ""
 
-        required = self.ACTION_REQUIRED_PARAMS.get(action_type, [])
         missing = []
         collected = {}
 
@@ -769,118 +855,15 @@ class AIService:
         param_name: str,
         current_params: dict
     ) -> Optional[MissingField]:
-        """获取字段定义（用于生成追问表单）"""
-        field_definitions = {
-            'room_number': MissingField(
-                field_name='room_number',
-                display_name='房间号',
-                field_type='text',
-                placeholder='如：201',
-                required=True
-            ),
-            'guest_name': MissingField(
-                field_name='guest_name',
-                display_name='客人姓名',
-                field_type='text',
-                placeholder='请输入客人姓名',
-                required=True
-            ),
-            'guest_phone': MissingField(
-                field_name='guest_phone',
-                display_name='联系电话',
-                field_type='text',
-                placeholder='请输入手机号',
-                required=True
-            ),
-            'room_type_id': MissingField(
-                field_name='room_type_id',
-                display_name='房型',
-                field_type='select',
-                options=self._get_room_type_options(),
-                placeholder='请选择房型',
-                required=True
-            ),
-            'check_in_date': MissingField(
-                field_name='check_in_date',
-                display_name='入住日期',
-                field_type='date',
-                placeholder='如：今天、明天、2025-02-05',
-                required=True
-            ),
-            'check_out_date': MissingField(
-                field_name='check_out_date',
-                display_name='离店日期',
-                field_type='date',
-                placeholder='如：明天、后天、2025-02-06',
-                required=True
-            ),
-            'expected_check_out': MissingField(
-                field_name='expected_check_out',
-                display_name='预计离店日期',
-                field_type='date',
-                placeholder='如：明天、后天',
-                required=True
-            ),
-            'new_room_number': MissingField(
-                field_name='new_room_number',
-                display_name='新房间号',
-                field_type='text',
-                placeholder='请输入目标房间号',
-                required=True
-            ),
-            'stay_record_id': MissingField(
-                field_name='stay_record_id',
-                display_name='住宿记录',
-                field_type='select',
-                options=self._get_active_stay_options(),
-                placeholder='请选择客人',
-                required=True
-            ),
-            'reservation_id': MissingField(
-                field_name='reservation_id',
-                display_name='预订记录',
-                field_type='select',
-                options=self._get_reservation_options(),
-                placeholder='请选择预订',
-                required=True
-            ),
-            'task_type': MissingField(
-                field_name='task_type',
-                display_name='任务类型',
-                field_type='select',
-                options=[
-                    {'value': 'cleaning', 'label': '清洁'},
-                    {'value': 'maintenance', 'label': '维修'}
-                ],
-                placeholder='请选择任务类型',
-                required=True
-            ),
-        }
-        return field_definitions.get(param_name)
-
-    def _get_room_type_options(self) -> list[dict]:
-        """获取房型选项列表"""
-        room_types = self.room_service.get_room_types()
-        return [
-            {'value': str(rt.id), 'label': f'{rt.name} ¥{rt.base_price}/晚'}
-            for rt in room_types
-        ]
-
-    def _get_active_stay_options(self) -> list[dict]:
-        """获取在住客人选项列表"""
-        stays = self.checkin_service.get_active_stays()
-        return [
-            {'value': str(s.id), 'label': f'{s.room.room_number}号房 - {s.guest.name}'}
-            for s in stays
-        ]
-
-    def _get_reservation_options(self) -> list[dict]:
-        """获取今日预订选项列表"""
-        reservations = self.reservation_service.get_today_arrivals()
-        return [
-            {'value': str(r.id), 'label': f'{r.reservation_no} - {r.guest.name} ({r.room_type.name})'}
-            for r in reservations
-        ]
+        """获取字段定义（委托给 HotelFieldDefinitionProvider）"""
+        from app.hotel.field_definitions import HotelFieldDefinitionProvider
+        provider = HotelFieldDefinitionProvider(
+            db=self.db,
+            room_service=self.room_service,
+            checkin_service=self.checkin_service,
+            reservation_service=self.reservation_service,
+        )
+        return provider.get_field_definition(param_name, action_type, current_params)
 
     def _generate_followup_response(
         self,
@@ -2339,15 +2322,14 @@ class AIService:
                        f"aggregate: {query.aggregate}, group_by: {query.group_by}, "
                        f"filters: {len(query.filters)}, limit: {query.limit}")
 
-            # 判断是否为简单查询（可用 Service 优化）
-            # 聚合查询不视为简单查询
-            if query.is_simple() and not query.aggregate:
-                simple_result = self._execute_simple_query(query, user)
-                # 记录简单查询结果
-                logger.info(f"Simple query result: {len(simple_result.get('query_result', {}).get('rows', []))} rows")
-                return simple_result
+            # Ensure entity model is registered (lazy fallback for non-bootstrapped contexts)
+            if registry.get_model(query.entity) is None:
+                from app.models import ontology as _models
+                model_cls = getattr(_models, query.entity, None)
+                if model_cls is not None:
+                    registry.register_model(query.entity, model_cls)
 
-            # 复杂查询使用 QueryEngine
+            # 所有查询统一使用 QueryEngine（不再区分简单/复杂）
             engine = QueryEngine(self.db, registry)
             result = engine.execute(query, user)
 
@@ -2365,8 +2347,15 @@ class AIService:
                 if has_date_filter:
                     result["message"] = f"指定时间范围内没有找到记录。当前数据范围：2025年2月 - 2026年2月"
 
+            # Use descriptive summary for small result sets
+            rows = result.get("rows", [])
+            columns = result.get("columns", [])
+            column_keys = result.get("column_keys", [])
+            descriptive = _build_descriptive_summary(rows, columns, column_keys)
+            message = descriptive or result.get("summary", result.get("message", "查询完成"))
+
             return {
-                "message": result.get("summary", result.get("message", "查询完成")),
+                "message": message,
                 "suggested_actions": [],
                 "query_result": result
             }
@@ -2529,204 +2518,6 @@ class AIService:
                 return valid
 
         return ""
-
-    def _execute_simple_query(self, query: 'StructuredQuery', user: Employee) -> dict:
-        """
-        执行简单查询（使用 Service 优化性能）
-
-        简单查询定义：无 JOIN，过滤器 <= 1，字段数 <= 3
-        """
-        from core.ontology.query import FilterOperator
-
-        entity = query.entity
-        fields = query.fields
-
-        # 根据 entity 和 fields 使用对应的 Service
-        if entity == "Guest":
-            if "name" in fields:
-                # 获取客人姓名列表
-                active_stays = self.db.query(StayRecord).filter(
-                    StayRecord.status == StayRecordStatus.ACTIVE
-                ).all()
-
-                rows = []
-                for stay in active_stays:
-                    row = {}
-                    if "name" in fields:
-                        row["name"] = stay.guest.name if stay.guest else ""
-                    if "phone" in fields:
-                        row["phone"] = stay.guest.phone if stay.guest else ""
-                    rows.append(row)
-
-                return {
-                    "message": f"共 {len(rows)} 条记录",
-                    "suggested_actions": [],
-                    "query_result": {
-                        "display_type": "table",
-                        "columns": [self._get_display_name(f) for f in fields],
-                        "column_keys": fields,
-                        "rows": rows,
-                        "summary": f"共 {len(rows)} 条记录"
-                    }
-                }
-
-        elif entity == "Room":
-            # Room 查询需要考虑过滤器
-            # 如果有 status 过滤器，应用它
-            from app.models.ontology import RoomStatus
-
-            filtered_rooms = []
-
-            # 字段映射：支持中英文字段名
-            field_mapping = {
-                "room_number": "room_number",
-                "房号": "room_number",
-                "floor": "floor",
-                "楼层": "floor",
-                "room_type": "room_type",
-                "房型": "room_type",
-                "status": "status",
-                "状态": "status",
-                "room_type_id": "room_type_id",
-                "id": "id",
-                "price": "price",
-                "价格": "price",
-                # 常见的错误字段映射
-                "name": "room_number",  # Room 的 "name" 通常指房号
-                "features": "features",  # 房间设施
-                "guest_name": None,  # Room 没有客人姓名
-                "姓名": None,
-            }
-
-            # 检查是否有状态过滤器
-            status_filter = None
-            if query.filters:
-                for f in query.filters:
-                    if f.field == "status" or f.field == "状态":
-                        status_filter = f.value
-                        break
-
-            # 获取房间
-            rooms = self.room_service.get_rooms()
-
-            # 应用状态过滤
-            if status_filter:
-                if isinstance(status_filter, list):
-                    # IN 操作符
-                    for room in rooms:
-                        if room.status.value in status_filter:
-                            filtered_rooms.append(room)
-                else:
-                    # EQ 操作符
-                    target_status = status_filter if isinstance(status_filter, str) else status_filter.value if hasattr(status_filter, 'value') else str(status_filter)
-                    for room in rooms:
-                        if room.status.value == target_status:
-                            filtered_rooms.append(room)
-            else:
-                filtered_rooms = rooms
-
-            rows = []
-            for room in filtered_rooms:
-                row = {}
-                has_valid_field = False
-                for field in fields:
-                    # 使用字段映射
-                    mapped_field = field_mapping.get(field, field)
-
-                    # 如果映射为 None，表示这个字段不存在，使用空字符串
-                    if mapped_field is None and field in field_mapping:
-                        row[field] = ""
-                        continue
-
-                    # 获取字段值
-                    value = ""
-
-                    if mapped_field == "room_number" or field == "room_number" or field == "name":
-                        value = str(room.room_number)
-                        has_valid_field = True
-                    elif mapped_field == "status" or field == "status":
-                        value = room.status.value if hasattr(room.status, 'value') else str(room.status)
-                        has_valid_field = True
-                    elif mapped_field == "floor" or field == "floor":
-                        value = str(room.floor)
-                        has_valid_field = True
-                    elif mapped_field == "room_type" or field == "room_type":
-                        value = room.room_type.name if room.room_type else ""
-                        has_valid_field = True
-                    elif (mapped_field == "room_type_id" or field == "room_type_id") and room.room_type_id:
-                        value = str(room.room_type_id)
-                        has_valid_field = True
-                    elif (mapped_field == "id" or field == "id") and room.id:
-                        value = str(room.id)
-                        has_valid_field = True
-                    elif (mapped_field == "price" or field == "price") and room.room_type:
-                        value = str(room.room_type.base_price)
-                        has_valid_field = True
-                    elif mapped_field == "features" or field == "features":
-                        value = room.features if room.features else ""
-                        has_valid_field = True
-                    else:
-                        # 未知字段，使用空字符串
-                        value = ""
-
-                    row[field] = value
-
-                # 只要有一个有效字段就添加行
-                if has_valid_field or row:
-                    rows.append(row)
-
-            return {
-                "message": f"共 {len(rows)} 条记录",
-                "suggested_actions": [],
-                "query_result": {
-                    "display_type": "table",
-                    "columns": [self._get_display_name(f) for f in fields],
-                    "column_keys": fields,
-                    "rows": rows,
-                    "summary": f"共 {len(rows)} 条记录"
-                }
-            }
-
-        # 默认使用 QueryEngine
-        from core.ontology.query_engine import QueryEngine
-        from core.ontology.registry import registry
-        engine = QueryEngine(self.db, registry)
-        result = engine.execute(query, user)
-
-        return {
-            "message": result["summary"],
-            "suggested_actions": [],
-            "query_result": result
-        }
-
-    def _get_display_name(self, field: str) -> str:
-        """获取字段的显示名称"""
-        DISPLAY_NAMES = {
-            # 英文字段名
-            "name": "姓名",
-            "phone": "电话",
-            "room_number": "房号",
-            "room_type": "房型",
-            "status": "状态",
-            "floor": "楼层",
-            "check_in_date": "入住日期",
-            "check_out_date": "退房日期",
-            "task_type": "任务类型",
-            "reservation_no": "预订号",
-            "total_amount": "总金额",
-            "is_settled": "已结清",
-            "price": "价格",
-            "id": "ID",
-            # 中文字段名直接返回
-            "房号": "房号",
-            "楼层": "楼层",
-            "房型": "房型",
-            "状态": "状态",
-            "姓名": "姓名",
-            "电话": "电话",
-            "价格": "价格",
-        }
-        return DISPLAY_NAMES.get(field, field)
 
     def _checkin_response(self, entities: dict, user: Employee, original_message: str = "") -> dict:
         """

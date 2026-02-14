@@ -49,6 +49,7 @@ class AIResponseWithHistory(BaseModel):
     requires_confirmation: Optional[bool] = None
     candidates: Optional[List[dict]] = None
     follow_up: Optional[dict] = None
+    query_result: Optional[dict] = None
 
 
 # ============== 路由 ==============
@@ -146,7 +147,8 @@ def chat(
         topic_id=topic_id,
         requires_confirmation=result.get('requires_confirmation'),
         candidates=result.get('candidates'),
-        follow_up=result.get('follow_up')
+        follow_up=result.get('follow_up'),
+        query_result=result.get('query_result')
     )
 
 

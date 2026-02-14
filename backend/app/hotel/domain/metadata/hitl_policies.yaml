@@ -118,6 +118,10 @@ low_risk_actions:
 
 # 查询类操作 - 无需确认
 query_actions:
+  - action_type: ontology_query
+    level: NONE
+    require_confirmation: false
+
   - action_type: view
     level: NONE
     require_confirmation: false

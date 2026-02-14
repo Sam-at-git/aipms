@@ -30,7 +30,8 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 # 查询类 action，跳过 execute_action
-QUERY_ACTIONS = {"ontology_query", "query_smart", "view", "semantic_query"}
+# Note: 'view' and 'query_smart' are deprecated; the LLM should now generate 'ontology_query'
+QUERY_ACTIONS = {"ontology_query", "query_smart", "view", "semantic_query", "query_reports"}
 
 BENCHMARK_DATA_PATH = Path(__file__).parent / "benchmark_data.yaml"
 

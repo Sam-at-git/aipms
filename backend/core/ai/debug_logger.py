@@ -68,6 +68,9 @@ class DebugSession:
     llm_response: Optional[str] = None
     llm_tokens_used: Optional[int] = None
     llm_model: Optional[str] = None
+    llm_prompt_parts: Optional[str] = None  # JSON: structured prompt breakdown
+    llm_response_parsed: Optional[str] = None  # JSON: parsed action/params
+    llm_latency_ms: Optional[int] = None  # LLM call latency (excl. post-processing)
 
     # Execution
     actions_executed: Optional[str] = None  # JSON list
@@ -95,6 +98,9 @@ class DebugSession:
             "llm_response": self.llm_response,
             "llm_tokens_used": self.llm_tokens_used,
             "llm_model": self.llm_model,
+            "llm_prompt_parts": self._parse_json(self.llm_prompt_parts),
+            "llm_response_parsed": self._parse_json(self.llm_response_parsed),
+            "llm_latency_ms": self.llm_latency_ms,
             "actions_executed": self._parse_json(self.actions_executed),
             "execution_time_ms": self.execution_time_ms,
             "final_result": self._parse_json(self.final_result),
@@ -129,6 +135,9 @@ class DebugSession:
             llm_response=row["llm_response"],
             llm_tokens_used=row["llm_tokens_used"],
             llm_model=row["llm_model"],
+            llm_prompt_parts=row["llm_prompt_parts"] if "llm_prompt_parts" in row.keys() else None,
+            llm_response_parsed=row["llm_response_parsed"] if "llm_response_parsed" in row.keys() else None,
+            llm_latency_ms=row["llm_latency_ms"] if "llm_latency_ms" in row.keys() else None,
             actions_executed=row["actions_executed"],
             execution_time_ms=row["execution_time_ms"],
             final_result=row["final_result"],
@@ -306,6 +315,9 @@ class DebugLogger:
                     llm_response TEXT,
                     llm_tokens_used INTEGER,
                     llm_model TEXT,
+                    llm_prompt_parts TEXT,
+                    llm_response_parsed TEXT,
+                    llm_latency_ms INTEGER,
 
                     -- Execution
                     actions_executed TEXT,
@@ -357,6 +369,20 @@ class DebugLogger:
                 CREATE INDEX IF NOT EXISTS idx_attempt_logs_session
                 ON attempt_logs(session_id, attempt_number)
             """)
+
+            # Migrate existing databases: add new columns if missing
+            try:
+                conn.execute("ALTER TABLE debug_sessions ADD COLUMN llm_prompt_parts TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                conn.execute("ALTER TABLE debug_sessions ADD COLUMN llm_response_parsed TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE debug_sessions ADD COLUMN llm_latency_ms INTEGER")
+            except sqlite3.OperationalError:
+                pass
 
             conn.commit()
             logger.debug(f"DebugLogger: Database initialized at {self.db_path}")
@@ -456,28 +482,40 @@ class DebugLogger:
         prompt: str,
         response: str,
         tokens_used: int,
-        model: str
+        model: str,
+        prompt_parts: Optional[Dict[str, Any]] = None,
+        response_parsed: Optional[Dict[str, Any]] = None,
+        latency_ms: Optional[int] = None,
     ) -> bool:
         """
         Update session with LLM interaction data.
 
         Args:
             session_id: Session ID
-            prompt: LLM prompt
-            response: LLM response
+            prompt: LLM prompt (full text)
+            response: LLM response (raw text)
             tokens_used: Number of tokens used
             model: Model name
+            prompt_parts: Structured prompt breakdown (system_prompt, entity_context, etc.)
+            response_parsed: Parsed LLM response (action_type, params, etc.)
+            latency_ms: LLM call latency in milliseconds
 
         Returns:
             True if update successful, False if session not found
         """
+        prompt_parts_json = json.dumps(prompt_parts, cls=SafeJSONEncoder) if prompt_parts else None
+        response_parsed_json = json.dumps(response_parsed, cls=SafeJSONEncoder) if response_parsed else None
+
         conn = self._get_conn()
         try:
             cursor = conn.execute("""
                 UPDATE debug_sessions
-                SET llm_prompt = ?, llm_response = ?, llm_tokens_used = ?, llm_model = ?
+                SET llm_prompt = ?, llm_response = ?, llm_tokens_used = ?, llm_model = ?,
+                    llm_prompt_parts = ?, llm_response_parsed = ?, llm_latency_ms = ?
                 WHERE id = ?
-            """, (prompt, response, tokens_used, model, session_id))
+            """, (prompt, response, tokens_used, model,
+                  prompt_parts_json, response_parsed_json, latency_ms,
+                  session_id))
             conn.commit()
             return cursor.rowcount > 0
 
@@ -491,7 +529,8 @@ class DebugLogger:
         status: str = "success",
         execution_time_ms: Optional[int] = None,
         actions_executed: Optional[List[Dict[str, Any]]] = None,
-        errors: Optional[List[Dict[str, Any]]] = None
+        errors: Optional[List[Dict[str, Any]]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Mark session as complete with final result.
@@ -503,6 +542,7 @@ class DebugLogger:
             execution_time_ms: Execution time in milliseconds
             actions_executed: List of executed actions
             errors: List of errors that occurred
+            metadata: Additional metadata (e.g., OODA phase timing)
 
         Returns:
             True if update successful, False if session not found
@@ -512,7 +552,7 @@ class DebugLogger:
             cursor = conn.execute("""
                 UPDATE debug_sessions
                 SET final_result = ?, status = ?, execution_time_ms = ?,
-                    actions_executed = ?, errors = ?
+                    actions_executed = ?, errors = ?, metadata = ?
                 WHERE id = ?
             """, (
                 self._safe_json(result),
@@ -520,10 +560,55 @@ class DebugLogger:
                 execution_time_ms,
                 self._safe_json(actions_executed),
                 self._safe_json(errors),
+                self._safe_json(metadata),
                 session_id
             ))
             conn.commit()
             logger.debug(f"DebugLogger: Completed session {session_id} with status {status}")
+            return cursor.rowcount > 0
+
+        finally:
+            conn.close()
+
+    def update_metadata(self, session_id: str, extra: dict) -> bool:
+        """
+        Merge extra keys into session metadata.
+
+        Args:
+            session_id: Session ID
+            extra: Dict of keys to merge into existing metadata
+
+        Returns:
+            True if update successful, False if session not found
+        """
+        if not session_id:
+            return False
+
+        conn = self._get_conn()
+        try:
+            # Read existing metadata
+            cursor = conn.execute(
+                "SELECT metadata FROM debug_sessions WHERE id = ?",
+                (session_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False
+
+            existing = {}
+            if row["metadata"]:
+                try:
+                    existing = json.loads(row["metadata"])
+                except (json.JSONDecodeError, TypeError):
+                    existing = {}
+
+            existing.update(extra)
+
+            cursor = conn.execute(
+                "UPDATE debug_sessions SET metadata = ? WHERE id = ?",
+                (self._safe_json(existing), session_id)
+            )
+            conn.commit()
             return cursor.rowcount > 0
 
         finally:

@@ -119,6 +119,7 @@ class TestHITLPoliciesConfig:
         query_actions = config["query_actions"]
 
         assert len(query_actions) > 0
+        assert any(a["action_type"] == "ontology_query" for a in query_actions)
         assert any(a["action_type"] == "view" for a in query_actions)
         assert any(a["action_type"] == "query_rooms" for a in query_actions)
 
@@ -150,6 +151,7 @@ class TestConfirmationLevel:
 
     def test_query_confirmation_level(self):
         """测试查询操作确认级别"""
+        assert get_action_confirmation_level("ontology_query") == "NONE"
         assert get_action_confirmation_level("view") == "NONE"
         assert get_action_confirmation_level("query_rooms") == "NONE"
         assert get_action_confirmation_level("query_reservations") == "NONE"

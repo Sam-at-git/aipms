@@ -1,0 +1,324 @@
+# Query Pipeline Benchmark 测试数据
+#
+# 验证统一查询管道 (ontology_query) 的端到端行为：
+#   自然语言 → AIService.process_message() → ontology_query/query_reports → 结构化数据 + LLM 格式化
+#
+# 每个 group 在独立内存数据库中执行，使用 init_data 种子数据
+# 组内用例按序执行，共享对话历史（模拟 Chat UI 多轮对话）
+#
+# 断言策略（LLM 输出有随机性，断言需要包容性）：
+#   - message_contains: 回复中必须包含的关键词列表（任一匹配即可）
+#   - message_not_contains: 回复中不应包含的词（如错误提示）
+#   - has_query_result: 是否返回了 query_result 结构化数据
+#   - min_rows: query_result.rows 最少行数
+#   - action_type_in: LLM 返回的 action_type 应在此列表中
+#   - columns_contain: query_result.columns 或 column_keys 中应包含的字段
+
+groups:
+  # ============================================================
+  # 1. 房间状态查询
+  # ============================================================
+  - name: "房间状态查询"
+    description: "测试各种房间查询表达，验证走 ontology_query 管道"
+    tests:
+      - name: "查看全部房态"
+        input: "查看房态"
+        expect:
+          action_type_in: ["ontology_query", "query_reports"]
+          message_contains: ["房间", "房"]
+          message_not_contains: ["错误", "失败", "抱歉"]
+          has_query_result: true
+
+      - name: "空房查询"
+        input: "现在有哪些空房间"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_contains: ["房"]
+          has_query_result: true
+          min_rows: 1
+
+      - name: "查指定房间状态"
+        input: "201房间现在是什么状态"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_contains: ["201"]
+          has_query_result: true
+
+      - name: "查标间空房"
+        input: "还有标间空着吗"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+          has_query_result: true
+
+      - name: "查大床房剩余"
+        input: "大床房还剩几间"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+          has_query_result: true
+
+      - name: "查某楼层空房"
+        input: "三楼有空房没"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "已入住房间列表"
+        input: "已入住的房间有哪些"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+          has_query_result: true
+
+      - name: "脏房查询"
+        input: "哪些房间需要打扫"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+  # ============================================================
+  # 2. 在住客人查询
+  # ============================================================
+  - name: "在住客人查询"
+    description: "先入住再查询客人信息，验证数据一致性"
+    setup:
+      - input: "汪先生要入住201房间，电话13912345678，明天退房"
+        expect_action: "walkin_checkin"
+      - input: "李小姐入住302房间，电话18866665555，后天退房"
+        expect_action: "walkin_checkin"
+    tests:
+      - name: "查在住客人列表"
+        input: "现在有哪些客人在住"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+          has_query_result: true
+
+      - name: "查指定客人信息"
+        input: "查一下汪先生的信息"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_contains: ["汪"]
+          has_query_result: true
+
+      - name: "按手机号查客人"
+        input: "手机号13912345678是哪位客人"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "今天入住人数"
+        input: "今天有几位办理入住的"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "客人住在哪个房间"
+        input: "李小姐住在哪个房间"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+  # ============================================================
+  # 3. 预订查询
+  # ============================================================
+  - name: "预订查询"
+    description: "创建预订后查询预订信息"
+    setup:
+      - input: "帮赵女士预订一间标间，电话13611112222，今天入住，明天退房"
+        expect_action: "create_reservation"
+        follow_up_fields:
+          room_type: "标间"
+          room_type_id: "标间"
+    tests:
+      - name: "查今日预抵"
+        input: "今天有没有预订到店的客人"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+          has_query_result: true
+
+      - name: "查指定客人预订"
+        input: "赵女士有预订吗"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_contains: ["赵"]
+
+      - name: "查所有预订"
+        input: "查看所有预订信息"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+          has_query_result: true
+
+  # ============================================================
+  # 4. 任务查询
+  # ============================================================
+  - name: "任务查询"
+    description: "创建任务后查询任务状态"
+    setup:
+      - input: "给301房间创建一个清洁任务"
+        expect_action: "create_task"
+        follow_up_fields:
+          task_type: "cleaning"
+      - input: "给509房间报个修"
+        expect_action: "create_task"
+        follow_up_fields:
+          task_type: "maintenance"
+    tests:
+      - name: "查待处理任务"
+        input: "现在有哪些待处理的任务"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+          has_query_result: true
+          min_rows: 1
+
+      - name: "查指定房间任务"
+        input: "看看509有没有维修任务"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "查清洁任务列表"
+        input: "有哪些清洁任务"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+  # ============================================================
+  # 5. 运营报表查询
+  # ============================================================
+  - name: "运营报表"
+    description: "测试跨实体报表走 query_reports 路径"
+    tests:
+      - name: "今日运营概览"
+        input: "今日运营概览"
+        expect:
+          action_type_in: ["query_reports", "ontology_query"]
+          message_contains: ["入住率", "营收", "今日", "退房", "入住"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "入住率查询"
+        input: "今天入住率多少"
+        expect:
+          action_type_in: ["query_reports", "ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "今日营收"
+        input: "今天营收多少"
+        expect:
+          action_type_in: ["query_reports", "ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+  # ============================================================
+  # 6. 员工查询
+  # ============================================================
+  - name: "员工查询"
+    description: "测试员工信息查询"
+    tests:
+      - name: "查所有员工"
+        input: "系统有哪些员工"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+          has_query_result: true
+          min_rows: 1
+
+      - name: "查前台员工"
+        input: "前台有哪些员工"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+  # ============================================================
+  # 7. 账单查询（需要先入住产生账单）
+  # ============================================================
+  - name: "账单查询"
+    description: "入住后查询账单信息"
+    setup:
+      - input: "钱先生入住401房间，电话13500005555，后天退房"
+        expect_action: "walkin_checkin"
+    tests:
+      - name: "查指定房间账单"
+        input: "查看401房间的账单"
+        expect:
+          action_type_in: ["ontology_query"]
+          # LLM may generate imperfect semantic paths; accept any response
+
+      - name: "查账单金额"
+        input: "401房间消费了多少钱"
+        expect:
+          action_type_in: ["ontology_query"]
+          # LLM may generate imperfect cross-entity paths; accept any response
+
+  # ============================================================
+  # 8. 多轮对话查询（组内有状态依赖）
+  # ============================================================
+  - name: "多轮对话查询"
+    description: "模拟前台连续多轮查询对话"
+    setup:
+      - input: "许明入住409豪华间，电话13111113333，后天退"
+        expect_action: "walkin_checkin"
+    tests:
+      - name: "第一轮-查空房"
+        input: "有客人问还有没有空房间"
+        expect:
+          action_type_in: ["ontology_query"]
+          has_query_result: true
+
+      - name: "第二轮-查住客"
+        input: "409住的是谁来着"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "第三轮-查豪华间"
+        input: "豪华间还有几间空的"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "第四轮-查房间总数"
+        input: "酒店一共多少间房"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+          has_query_result: true
+
+  # ============================================================
+  # 9. 边界场景
+  # ============================================================
+  - name: "查询边界场景"
+    description: "测试极简查询、模糊表达等边界情况"
+    tests:
+      - name: "极简-房态"
+        input: "房态"
+        expect:
+          action_type_in: ["ontology_query", "query_reports"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "极简-空房"
+        input: "空房"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "极简-任务"
+        input: "任务列表"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "带数量的查询"
+        input: "显示前5间空房"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误", "失败"]
+
+      - name: "不存在的房间"
+        input: "999号房间什么状态"
+        expect:
+          action_type_in: ["ontology_query"]
+          message_not_contains: ["错误"]

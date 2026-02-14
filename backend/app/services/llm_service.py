@@ -278,7 +278,7 @@ def _validate_action(action: Any) -> Dict[str, Any]:
     """验证并标准化单个 action"""
     if not isinstance(action, dict):
         return {
-            "action_type": "view",
+            "action_type": "ontology_query",
             "entity_type": "unknown",
             "description": "无效的操作",
             "requires_confirmation": False,
@@ -286,7 +286,7 @@ def _validate_action(action: Any) -> Dict[str, Any]:
         }
 
     validated = {
-        "action_type": action.get("action_type", "view"),
+        "action_type": action.get("action_type", "ontology_query"),
         "entity_type": action.get("entity_type", "unknown"),
         "description": action.get("description", action.get("action_type", "")),
         "requires_confirmation": action.get("requires_confirmation", True),
@@ -440,10 +440,33 @@ ontology_query 用于动态字段级查询，params 结构如下：
   "context": {{"room_number": "201"}}
 }}
 
+**重要：对于所有数据查询请求，必须使用 `ontology_query` action_type 并提供结构化的 params。不要使用 `view` action_type。对于跨实体的运营报表/统计，使用 `query_reports`。**
+
 用户: "查看房态"
 回复: {{
   "message": "正在为您查询当前房态...",
-  "suggested_actions": [{{"action_type": "view", "entity_type": "room_status", "requires_confirmation": false, "params": {{}}}}],
+  "suggested_actions": [{{"action_type": "ontology_query", "entity_type": "Room", "requires_confirmation": false, "params": {{"entity": "Room", "fields": ["room_number", "floor", "status"]}}}}],
+  "context": {{}}
+}}
+
+用户: "当前有多少在住客人？"
+回复: {{
+  "message": "正在为您查询在住客人...",
+  "suggested_actions": [{{"action_type": "ontology_query", "entity_type": "Guest", "requires_confirmation": false, "params": {{"entity": "Guest", "joins": [{{"entity": "StayRecord", "filters": {{"status": "ACTIVE"}}}}]}}}}],
+  "context": {{}}
+}}
+
+用户: "系统有哪些员工？"
+回复: {{
+  "message": "正在为您查询员工信息...",
+  "suggested_actions": [{{"action_type": "ontology_query", "entity_type": "Employee", "requires_confirmation": false, "params": {{"entity": "Employee", "fields": ["username", "name", "role"]}}}}],
+  "context": {{}}
+}}
+
+用户: "今日运营概览"
+回复: {{
+  "message": "正在为您生成今日运营报告...",
+  "suggested_actions": [{{"action_type": "query_reports", "entity_type": "report", "requires_confirmation": false, "params": {{}}}}],
   "context": {{}}
 }}
 """
@@ -526,7 +549,9 @@ ontology_query 用于动态字段级查询，params 结构如下：
         language: Optional[str] = None,
         include_schema: bool = False,
         include_actions: bool = True,
-        include_glossary: bool = True
+        include_glossary: bool = True,
+        user_role: str = "",
+        message_hint: str = "",
     ) -> str:
         """
         构建包含 Schema 的系统提示词
@@ -540,6 +565,8 @@ ontology_query 用于动态字段级查询，params 结构如下：
             include_schema: 是否包含查询 Schema
             include_actions: 是否包含操作描述（默认 True）
             include_glossary: 是否包含领域关键词表（默认 True）
+            user_role: 用户角色（用于按需注入系统实体）
+            message_hint: 用户消息（用于关键词匹配按需注入系统实体）
 
         Returns:
             完整的系统提示词
@@ -547,11 +574,13 @@ ontology_query 用于动态字段级查询，params 结构如下：
         if self._prompt_builder:
             from core.ai.prompt_builder import PromptContext
             context = PromptContext(
+                user_role=user_role,
                 domain_prompt=self.SYSTEM_PROMPT,
                 include_entities=True,
                 include_actions=include_actions,
                 include_rules=True,
                 include_state_machines=True,
+                message_hint=message_hint,
             )
             system_prompt = self._prompt_builder.build_system_prompt(context)
 
@@ -619,10 +648,13 @@ ontology_query 用于动态字段级查询，params 结构如下：
 
         # 使用 build_system_prompt_with_schema 动态注入操作描述（OAG 机制）
         include_schema = context and context.get('include_query_schema', False)
+        user_role = context.get('user_role', '') if context else ''
         system_prompt = self.build_system_prompt_with_schema(
             language=lang,
             include_schema=include_schema,
-            include_actions=True  # 动态注入所有注册的操作
+            include_actions=True,  # 动态注入所有注册的操作
+            user_role=user_role,
+            message_hint=message,
         )
 
         # 日期上下文已由 PromptBuilder._build_date_context() 注入到 system_prompt
@@ -762,7 +794,7 @@ ontology_query 用于动态字段级查询，params 结构如下：
         # 验证每个 action 的必要字段
         for action in result.get("suggested_actions", []):
             if "action_type" not in action:
-                action["action_type"] = "view"
+                action["action_type"] = "ontology_query"
             if "entity_type" not in action:
                 action["entity_type"] = "unknown"
             if "description" not in action:
@@ -1123,6 +1155,22 @@ ontology_query 用于动态字段级查询，params 结构如下：
                 "message": f"处理出错: {str(e)}"
             }
 
+    # 系统实体修改意图 — 检测到时返回拒绝提示（SPEC-24）
+    _SYSTEM_DENIED_INTENTS: Dict[str, List[str]] = {
+        "modify_role": ["修改角色", "添加角色", "删除角色", "创建角色", "编辑角色"],
+        "modify_permission": ["修改权限", "分配权限", "回收权限", "删除权限", "添加权限"],
+        "modify_menu": ["修改菜单", "添加菜单", "删除菜单", "编辑菜单"],
+        "modify_security": ["修改安全配置", "修改密码策略", "修改锁定策略"],
+    }
+
+    # 拒绝意图到管理页面的映射
+    _DENIED_INTENT_REDIRECTS: Dict[str, str] = {
+        "modify_role": "系统管理 > 权限管理",
+        "modify_permission": "系统管理 > 权限管理",
+        "modify_menu": "系统管理 > 菜单管理",
+        "modify_security": "系统管理 > 系统配置",
+    }
+
     def extract_intent(self, message: str) -> Dict[str, Any]:
         """
         Rule-based intent extraction from user message
@@ -1132,12 +1180,14 @@ ontology_query 用于动态字段级查询，params 结构如下：
         - action_hints: List of potential actions (checkin, checkout, query, etc.)
         - extracted_values: Dict of extracted values (room_number, etc.)
         - time_references: List of time-related terms
+        - denied_intents: List of denied system mutation intents (SPEC-24)
         """
         result = {
             "entity_mentions": [],
             "action_hints": [],
             "extracted_values": {},
-            "time_references": []
+            "time_references": [],
+            "denied_intents": [],
         }
 
         if not message:
@@ -1145,7 +1195,7 @@ ontology_query 用于动态字段级查询，params 结构如下：
 
         message_lower = message.lower()
 
-        # Entity detection - Chinese and English
+        # Entity detection - Chinese and English (business + system)
         entity_keywords = {
             "Guest": ["客人", "旅客", "住客", "访客", "guest", "customer"],
             "Room": ["房间", "客房", "房", "号房", "room", "客房"],
@@ -1154,6 +1204,13 @@ ontology_query 用于动态字段级查询，params 结构如下：
             "Task": ["任务", "清洁", "打扫", "维修", "task", "cleaning", "maintenance"],
             "Bill": ["账单", "费用", "账", "付款", "bill", "payment", "charge"],
             "Employee": ["员工", "服务员", "清洁工", "employee", "staff"],
+            # System entities (SPEC-24)
+            "SysRole": ["角色", "role"],
+            "SysPermission": ["权限", "permission"],
+            "SysMenu": ["菜单", "menu"],
+            "SysDictType": ["字典类型", "数据字典", "dict type"],
+            "SysDictItem": ["字典项", "dict item"],
+            "SysConfig": ["系统配置", "配置项", "system config"],
         }
 
         for entity, keywords in entity_keywords.items():
@@ -1172,11 +1229,19 @@ ontology_query 用于动态字段级查询，params 结构如下：
             "start": ["开始", "启动", "start", "begin"],
             "update": ["更新", "修改", "改变", "update", "modify", "change"],
             "extend": ["续住", "延长", "extend"],
+            # System query action (SPEC-24)
+            "query_system": ["查角色", "查权限", "查字典", "查配置", "查菜单",
+                            "有哪些角色", "有哪些权限", "有哪些字典", "有哪些配置"],
         }
 
         for action, keywords in action_keywords.items():
             if any(kw in message for kw in keywords):
                 result["action_hints"].append(action)
+
+        # Denied intent detection — system mutation via chat (SPEC-24)
+        for intent_name, keywords in self._SYSTEM_DENIED_INTENTS.items():
+            if any(kw in message for kw in keywords):
+                result["denied_intents"].append(intent_name)
 
         # Extract room number
         import re

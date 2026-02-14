@@ -21,7 +21,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 from app.models.ontology import (
     Room, RoomStatus, RoomType, Guest, Reservation, ReservationStatus,
-    StayRecord, StayRecordStatus, Task, TaskType, TaskStatus, Employee
+    StayRecord, StayRecordStatus, Task, TaskType, TaskStatus, Employee, EmployeeRole
 )
 
 logger = logging.getLogger(__name__)
@@ -418,6 +418,17 @@ class AIService:
 
         # Step 1: Extract intent
         intent_data = self.llm_service.extract_intent(message)
+
+        # Step 1.5: Check for denied system intents (SPEC-24)
+        denied = intent_data.get("denied_intents", [])
+        if denied:
+            redirects = getattr(self.llm_service, '_DENIED_INTENT_REDIRECTS', {})
+            admin_path = redirects.get(denied[0], "系统管理界面")
+            return {
+                "message": f"该操作不支持通过对话完成，请前往「{admin_path}」进行操作。",
+                "suggested_actions": [],
+                "context": {"denied_intent": denied[0]},
+            }
 
         # Step 2: Route intent
         try:
@@ -1144,6 +1155,10 @@ class AIService:
         include_context = False
         start_time = datetime.now()
 
+        # ========== OODA Phase Timing (SPEC-25) ==========
+        ooda_phases = {}
+        t_observe_start = start_time
+
         # ========== DebugLogger: 创建会话 ==========
         debug_session_id = None
         if self.debug_logger:
@@ -1173,6 +1188,17 @@ class AIService:
             result['topic_id'] = new_topic_id
             return self._complete_debug_session(debug_session_id, result, start_time, "success")
 
+        # ========== OODA Observe Phase ==========
+        t_observe_end = datetime.now()
+        ooda_phases["observe"] = {
+            "duration_ms": int((t_observe_end - t_observe_start).total_seconds() * 1000),
+            "output": {"message": message[:200]},
+        }
+
+        # ========== OODA Orient Phase ==========
+        t_orient_start = t_observe_end
+        orient_output = {}
+
         # 检查话题相关性并决定是否携带上下文
         if conversation_history and self.llm_service.is_enabled():
             try:
@@ -1185,27 +1211,47 @@ class AIService:
                 relevance = self.llm_service.check_topic_relevance(message, history_for_check)
 
                 if relevance == TopicRelevance.CONTINUATION:
-                    # 继续话题，携带上下文
                     include_context = True
+                    orient_output["topic_relevance"] = "continuation"
                 elif relevance == TopicRelevance.FOLLOWUP_ANSWER:
-                    # 回答追问，必须携带完整上下文
                     include_context = True
+                    orient_output["topic_relevance"] = "followup_answer"
                 else:
-                    # 新话题，不携带上下文，生成新 topic_id
                     include_context = False
-                    new_topic_id = None  # 将在返回时生成新的
+                    new_topic_id = None
+                    orient_output["topic_relevance"] = "new_topic"
             except Exception as e:
                 print(f"Topic relevance check failed: {e}")
-                # 默认携带上下文
                 include_context = bool(conversation_history)
+
+        t_orient_end = datetime.now()
+        ooda_phases["orient"] = {
+            "duration_ms": int((t_orient_end - t_orient_start).total_seconds() * 1000),
+            "output": orient_output,
+        }
+
+        # ========== OODA Decide Phase (OAG or LLM) ==========
+        t_decide_start = t_orient_end
 
         # ========== SPEC-19: OAG Fast Path ==========
         # Try OAG routing before LLM chat (lower latency, zero/fewer LLM calls)
         try:
             oag_result = self._try_oag_path(message, user)
             if oag_result:
+                t_decide_end = datetime.now()
+                ooda_phases["decide"] = {
+                    "duration_ms": int((t_decide_end - t_decide_start).total_seconds() * 1000),
+                    "output": {"path": "oag", "action": oag_result.get("suggested_actions", [{}])[0].get("action_type", "")},
+                }
+                ooda_phases["act"] = {
+                    "duration_ms": 0,
+                    "output": {"result": "oag_direct"},
+                }
                 oag_result['topic_id'] = new_topic_id
-                return self._complete_debug_session(debug_session_id, oag_result, start_time, "success")
+                return self._complete_debug_session(
+                    debug_session_id, oag_result, start_time, "success",
+                    metadata={"ooda_phases": ooda_phases}
+                )
         except Exception as e:
             logger.debug(f"OAG fast path failed, falling through to LLM: {e}")
 
@@ -1242,6 +1288,14 @@ class AIService:
 
                 result = self.llm_service.chat(message, context, language=language)
 
+                # ========== OODA Decide Phase End (SPEC-25) ==========
+                t_decide_end = datetime.now()
+                ooda_phases["decide"] = {
+                    "duration_ms": int((t_decide_end - t_decide_start).total_seconds() * 1000),
+                    "output": {"path": "llm", "action": result.get("suggested_actions", [{}])[0].get("action_type", "") if result.get("suggested_actions") else ""},
+                }
+                t_act_start = t_decide_end
+
                 # ========== DebugLogger: 记录 LLM 调用 ==========
                 if debug_session_id and self.debug_logger:
                     # 尝试从 llm_service 获取 prompt 和 token 信息
@@ -1259,11 +1313,11 @@ class AIService:
                 if result.get("suggested_actions") and not result.get("context", {}).get("error"):
                     # 先检查是否是查询类操作，需要获取实际数据
                     action_type = result["suggested_actions"][0].get("action_type", "")
-                    # 查询类操作：包括 query_*, view, ontology_query, query_smart
+                    # 查询类操作：ontology_query, query_*, view (deprecated, will be retried)
                     is_query_action = (
                         action_type.startswith("query_") or
                         action_type == "view" or
-                        action_type in ["ontology_query", "query_smart"]
+                        action_type == "ontology_query"
                     )
                     if is_query_action:
                         response = self._handle_query_action(result, user)
@@ -1314,8 +1368,18 @@ class AIService:
                                     act["params"] = action_params
                             print(f"DEBUG: Complete action set, actions count: {len(result['suggested_actions'])}")
 
+                    # ========== OODA Act Phase End (SPEC-25) ==========
+                    t_act_end = datetime.now()
+                    ooda_phases["act"] = {
+                        "duration_ms": int((t_act_end - t_act_start).total_seconds() * 1000),
+                        "output": {"result": "action_proposed"},
+                    }
+
                     result['topic_id'] = new_topic_id
-                    return self._complete_debug_session(debug_session_id, result, start_time, "success")
+                    return self._complete_debug_session(
+                        debug_session_id, result, start_time, "success",
+                        metadata={"ooda_phases": ooda_phases}
+                    )
 
                 # 其他情况回退到规则模式
             except Exception as e:
@@ -1325,9 +1389,20 @@ class AIService:
         # 规则模式（后备）
         result = self._process_with_rules(message, user)
         result['topic_id'] = new_topic_id
-        return self._complete_debug_session(debug_session_id, result, start_time, "success")
+        ooda_phases["decide"] = {
+            "duration_ms": int((datetime.now() - t_decide_start).total_seconds() * 1000),
+            "output": {"path": "rule_based"},
+        }
+        ooda_phases["act"] = {"duration_ms": 0, "output": {"result": "rule_based"}}
+        return self._complete_debug_session(
+            debug_session_id, result, start_time, "success",
+            metadata={"ooda_phases": ooda_phases}
+        )
 
-    def _complete_debug_session(self, session_id: str, result: dict, start_time: datetime, status: str) -> dict:
+    def _complete_debug_session(
+        self, session_id: str, result: dict, start_time: datetime,
+        status: str, metadata: dict = None
+    ) -> dict:
         """完成 DebugLogger 会话并返回结果"""
         if session_id and self.debug_logger:
             execution_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
@@ -1338,7 +1413,8 @@ class AIService:
                 result=result,
                 status=status,
                 execution_time_ms=execution_time_ms,
-                actions_executed=actions_executed
+                actions_executed=actions_executed,
+                metadata=metadata,
             )
         return result
 
@@ -1595,7 +1671,15 @@ class AIService:
         return result
 
     def _handle_query_action(self, result: Dict, user: Employee) -> Dict:
-        """处理查询类操作，获取实际数据替换 LLM 的占位响应"""
+        """
+        Unified query pipeline: route all queries through ontology_query or query_reports.
+
+        Paths:
+        1. ontology_query → _execute_ontology_query → _format_query_result_with_llm
+        2. query_reports  → _query_reports_response (cross-entity dashboard)
+        3. view           → _retry_as_ontology_query (Reflexion-lite rejection)
+        4. query_smart / query_* → convert to ontology_query
+        """
         actions = result.get("suggested_actions", [])
         if not actions:
             return result
@@ -1603,61 +1687,119 @@ class AIService:
         action = actions[0]
         action_type = action.get("action_type", "")
         entity_type = action.get("entity_type", "")
+        params = action.get("params", {})
 
-        # 根据查询类型获取实际数据
-        # query_rooms 或 (view + entity_type 包含 room)
-        if action_type == "query_rooms" or (action_type == "view" and "room" in entity_type.lower()):
-            return self._query_rooms_response({})
+        # Path 1: ontology_query (primary path)
+        if action_type == "ontology_query":
+            return self._execute_and_format_query(params, result, user, pipeline="ontology_query")
 
-        if action_type == "query_reservations" or (action_type == "view" and "reservation" in entity_type.lower()):
-            return self._query_reservations_response({})
-
-        if action_type == "query_guests" or (action_type == "view" and "guest" in entity_type.lower()):
-            return self._query_guests_response({})
-
-        if action_type == "query_tasks" or (action_type == "view" and "task" in entity_type.lower()):
-            return self._query_tasks_response({})
-
-        if action_type == "query_reports" or (action_type == "view" and "report" in entity_type.lower()):
+        # Path 2: query_reports (cross-entity dashboard)
+        if action_type == "query_reports":
             return self._query_reports_response()
 
-        # query_smart: 结构化查询，返回表格/图表数据
-        if action_type == "query_smart":
-            params = action.get("params", {})
-            query_result = self._execute_smart_query(
-                entity=params.get("entity", entity_type),
-                query_type=params.get("query_type", "list"),
-                filters=params.get("filters", {}),
-                user=user
-            )
-            # 让 LLM 格式化查询结果
-            return self._format_query_result_with_llm(result, query_result, user)
-
-        # ontology_query: NL2OntologyQuery - 动态字段选择查询
-        if action_type == "ontology_query":
-            params = action.get("params", {})
-            query_result = self._execute_ontology_query(
-                structured_query_dict=params,
-                user=user
-            )
-            # 让 LLM 格式化查询结果
-            return self._format_query_result_with_llm(result, query_result, user)
-
-        # 如果是通用的 view 类型，检查 LLM 返回的 message 来推断查询类型
+        # Path 3: view → Reflexion-lite retry
         if action_type == "view":
-            llm_message = result.get("message", "").lower()
-            if any(kw in llm_message for kw in ["房态", "房间", "空房"]):
-                return self._query_rooms_response({})
-            if any(kw in llm_message for kw in ["预订", "预约"]):
-                return self._query_reservations_response({})
-            if any(kw in llm_message for kw in ["在住", "住客", "客人"]):
-                return self._query_guests_response({})
-            if any(kw in llm_message for kw in ["任务", "清洁"]):
-                return self._query_tasks_response({})
-            if any(kw in llm_message for kw in ["入住率", "营收", "报表"]):
-                return self._query_reports_response()
+            return self._retry_as_ontology_query(result, user)
+
+        # Path 4: query_smart or query_* → convert to ontology_query
+        if action_type == "query_smart" or action_type.startswith("query_"):
+            entity = params.get("entity") or entity_type or ""
+            if entity:
+                params["entity"] = entity
+            return self._execute_and_format_query(params, result, user, pipeline="converted_from_" + action_type)
 
         return result
+
+    def _execute_and_format_query(self, params: Dict, original_result: Dict, user: Employee, pipeline: str = "ontology_query") -> Dict:
+        """Execute ontology_query and format result with LLM."""
+        query_result = self._execute_ontology_query(
+            structured_query_dict=params,
+            user=user
+        )
+        formatted = self._format_query_result_with_llm(original_result, query_result, user)
+
+        # Log pipeline observability
+        if DEBUG_LOGGER_AVAILABLE and hasattr(self, 'debug_logger') and self.debug_logger:
+            action = original_result.get("suggested_actions", [{}])[0]
+            try:
+                self.debug_logger.update_metadata(
+                    getattr(self, '_current_debug_session_id', ''),
+                    {
+                        "query_pipeline": pipeline,
+                        "original_action_type": action.get("action_type", ""),
+                        "final_action_type": "ontology_query",
+                        "entity": params.get("entity", ""),
+                    }
+                )
+            except Exception:
+                pass  # observability is best-effort
+
+        return formatted
+
+    def _retry_as_ontology_query(self, view_result: Dict, user: Employee) -> Dict:
+        """
+        Reflexion-lite: reject deprecated 'view' action, construct ontology_query from context.
+
+        Instead of calling LLM again (which costs latency), we convert the view result
+        into an ontology_query based on entity_type and message keywords.
+        """
+        action = view_result.get("suggested_actions", [{}])[0]
+        entity_type = action.get("entity_type", "")
+        params = action.get("params", {})
+
+        logger.warning(f"LLM returned deprecated 'view' action (entity_type={entity_type}), converting to ontology_query")
+
+        # Infer entity from entity_type or message keywords
+        entity = self._infer_entity_from_view(entity_type, view_result.get("message", ""))
+
+        if entity:
+            params["entity"] = entity
+            return self._execute_and_format_query(params, view_result, user, pipeline="view_converted")
+
+        # Last resort: if we can't infer entity, return the original result
+        logger.warning(f"Could not infer entity from view action, returning original result")
+        return view_result
+
+    def _infer_entity_from_view(self, entity_type: str, message: str) -> str:
+        """Infer ontology entity name from view entity_type or message keywords.
+
+        Resolution strategy:
+        1. Match entity_type against registered models in OntologyRegistry
+        2. Normalize entity_type to PascalCase via model module introspection
+        3. Use registry.find_entities_by_keywords() for message-based inference
+        """
+        from core.ontology.registry import registry
+
+        # Step 1: Try registry model map (populated at bootstrap or lazily)
+        if entity_type:
+            model_map = registry.get_model_map()
+            # Direct match (e.g., "Room" → "Room")
+            if entity_type in model_map:
+                return entity_type
+
+            # Case-insensitive + base-word match against registered models
+            entity_lower = entity_type.lower().split("_")[0]  # "room_status" → "room"
+            for name in model_map:
+                if entity_lower == name.lower():
+                    return name
+
+            # Fallback: try resolving from app.models.ontology module
+            try:
+                from app.models import ontology as _models
+                for candidate in [entity_type, entity_type.title(), entity_type.split("_")[0].title()]:
+                    cls = getattr(_models, candidate, None)
+                    if cls is not None and hasattr(cls, '__tablename__'):
+                        return candidate
+            except Exception:
+                pass
+
+        # Step 2: Use registry keyword matching from message
+        if message:
+            matched = registry.find_entities_by_keywords(message)
+            if matched:
+                return matched[0]
+
+        return ""
 
     def _format_query_result_with_llm(self, original_result: Dict, query_result: Dict, user: Employee) -> Dict:
         """
@@ -1893,17 +2035,29 @@ class AIService:
         if intent == 'help':
             return self._help_response()
 
-        if intent == 'query_rooms':
-            return self._query_rooms_response(entities)
-
-        if intent == 'query_reservations':
-            return self._query_reservations_response(entities)
-
-        if intent == 'query_guests':
-            return self._query_guests_response(entities)
-
-        if intent == 'query_tasks':
-            return self._query_tasks_response(entities)
+        # All query intents route through ontology_query pipeline
+        intent_entity_map = {
+            'query_rooms': 'Room',
+            'query_reservations': 'Reservation',
+            'query_guests': 'Guest',
+            'query_tasks': 'Task',
+        }
+        if intent in intent_entity_map:
+            entity_name = intent_entity_map[intent]
+            params = {"entity": entity_name}
+            try:
+                query_result = self._execute_ontology_query(
+                    structured_query_dict=params,
+                    user=user
+                )
+                return query_result
+            except Exception as e:
+                logger.warning(f"Rule-based ontology_query failed for {entity_name}: {e}")
+                return {
+                    'message': f'查询{entity_name}失败: {str(e)}',
+                    'suggested_actions': [],
+                    'context': {'intent': intent}
+                }
 
         if intent == 'query_reports':
             return self._query_reports_response()
@@ -1948,147 +2102,6 @@ class AIService:
             'context': {}
         }
 
-    def _query_rooms_response(self, entities: dict) -> dict:
-        # 如果指定了房型，返回该房型的统计
-        if 'room_type' in entities:
-            room_type_name = entities['room_type']
-            room_type = self.db.query(RoomType).filter(RoomType.name == room_type_name).first()
-
-            if room_type:
-                rooms = self.db.query(Room).filter(Room.room_type_id == room_type.id).all()
-                total = len(rooms)
-                vacant_clean = sum(1 for r in rooms if r.status == RoomStatus.VACANT_CLEAN)
-                occupied = sum(1 for r in rooms if r.status == RoomStatus.OCCUPIED)
-                vacant_dirty = sum(1 for r in rooms if r.status == RoomStatus.VACANT_DIRTY)
-                out_of_order = sum(1 for r in rooms if r.status == RoomStatus.OUT_OF_ORDER)
-
-                message = f"**{room_type_name}统计：**\n\n"
-                message += f"- 总数：{total} 间\n"
-                message += f"- 空闲可住：{vacant_clean} 间 ✅\n"
-                message += f"- 已入住：{occupied} 间 🔴\n"
-                message += f"- 待清洁：{vacant_dirty} 间 🟡\n"
-                message += f"- 维修中：{out_of_order} 间 ⚫\n"
-
-                return {
-                    'message': message,
-                    'suggested_actions': [],
-                    'context': {
-                        'room_type': room_type_name,
-                        'room_type_id': room_type.id,
-                        'count': total
-                    }
-                }
-
-        # 默认返回全部房态统计
-        summary = self.room_service.get_room_status_summary()
-
-        message = f"**当前房态统计：**\n\n"
-        message += f"- 总房间数：{summary['total']} 间\n"
-        message += f"- 空闲可住：{summary['vacant_clean']} 间 ✅\n"
-        message += f"- 已入住：{summary['occupied']} 间 🔴\n"
-        message += f"- 待清洁：{summary['vacant_dirty']} 间 🟡\n"
-        message += f"- 维修中：{summary['out_of_order']} 间 ⚫\n"
-
-        # 入住率
-        sellable = summary['total'] - summary['out_of_order']
-        rate = (summary['occupied'] / sellable * 100) if sellable > 0 else 0
-        message += f"\n当前入住率：**{rate:.1f}%**"
-
-        actions = []
-        if summary['vacant_dirty'] > 0:
-            actions.append({
-                'action_type': 'view',
-                'entity_type': 'task',
-                'description': f'查看 {summary["vacant_dirty"]} 间待清洁房间',
-                'requires_confirmation': False,
-                'params': {'status': 'vacant_dirty'}
-            })
-
-        return {
-            'message': message,
-            'suggested_actions': actions,
-            'context': {'room_summary': summary}
-        }
-
-    def _query_reservations_response(self, entities: dict) -> dict:
-        arrivals = self.reservation_service.get_today_arrivals()
-
-        if not arrivals:
-            return {
-                'message': '今日暂无预抵客人。',
-                'suggested_actions': [],
-                'context': {}
-            }
-
-        message = f"**今日预抵 ({len(arrivals)} 位客人)：**\n\n"
-        actions = []
-
-        for r in arrivals[:5]:  # 最多显示5条
-            message += f"- {r.guest.name}，{r.room_type.name}，"
-            message += f"预订号 {r.reservation_no}\n"
-            actions.append({
-                'action_type': 'checkin',
-                'entity_type': 'reservation',
-                'entity_id': r.id,
-                'description': f'为 {r.guest.name} 办理入住',
-                'requires_confirmation': True,
-                'params': {'reservation_id': r.id, 'guest_name': r.guest.name}
-            })
-
-        if len(arrivals) > 5:
-            message += f"\n... 还有 {len(arrivals) - 5} 位客人"
-
-        return {
-            'message': message,
-            'suggested_actions': actions,
-            'context': {'arrivals_count': len(arrivals)}
-        }
-
-    def _query_guests_response(self, entities: dict) -> dict:
-        stays = self.checkin_service.get_active_stays()
-
-        if not stays:
-            return {
-                'message': '当前没有在住客人。',
-                'suggested_actions': [],
-                'context': {}
-            }
-
-        message = f"**当前在住客人 ({len(stays)} 位)：**\n\n"
-
-        for s in stays[:10]:
-            message += f"- {s.room.room_number}号房：{s.guest.name}，"
-            message += f"预计 {s.expected_check_out} 离店\n"
-
-        if len(stays) > 10:
-            message += f"\n... 还有 {len(stays) - 10} 位客人"
-
-        return {
-            'message': message,
-            'suggested_actions': [],
-            'context': {'guest_count': len(stays)}
-        }
-
-    def _query_tasks_response(self, entities: dict) -> dict:
-        summary = self.task_service.get_task_summary()
-        pending = self.task_service.get_pending_tasks()
-
-        message = f"**任务统计：**\n\n"
-        message += f"- 待分配：{summary['pending']} 个\n"
-        message += f"- 待执行：{summary['assigned']} 个\n"
-        message += f"- 进行中：{summary['in_progress']} 个\n"
-
-        if pending:
-            message += f"\n**待分配任务：**\n"
-            for t in pending[:5]:
-                message += f"- {t.room.room_number}号房 - {t.task_type.value}\n"
-
-        return {
-            'message': message,
-            'suggested_actions': [],
-            'context': {'task_summary': summary}
-        }
-
     def _query_reports_response(self) -> dict:
         stats = self.report_service.get_dashboard_stats()
 
@@ -2102,160 +2115,6 @@ class AIService:
             'message': message,
             'suggested_actions': [],
             'context': {'stats': stats}
-        }
-
-    def _execute_smart_query(self, entity: str, query_type: str, filters: dict, user: Employee) -> dict:
-        """
-        执行智能查询，返回结构化结果
-
-        Args:
-            entity: 查询实体 (room, reservation, guest, task, report)
-            query_type: 查询类型 (status, list, count, summary)
-            filters: 过滤条件
-            user: 当前用户
-
-        Returns:
-            包含 message, query_result 的字典
-            query_result: {display_type, columns, rows, summary}
-        """
-        entity_lower = entity.lower()
-
-        if entity_lower in ('room', 'rooms', '房间'):
-            return self._smart_query_rooms(filters)
-        elif entity_lower in ('reservation', 'reservations', '预订'):
-            return self._smart_query_reservations(filters)
-        elif entity_lower in ('guest', 'guests', '客人', '在住客人'):
-            return self._smart_query_guests(filters)
-        elif entity_lower in ('task', 'tasks', '任务'):
-            return self._smart_query_tasks(filters)
-        elif entity_lower in ('report', 'reports', '报表', '统计'):
-            return self._smart_query_reports()
-        else:
-            return {
-                'message': f'不支持的查询实体: {entity}',
-                'suggested_actions': [],
-                'query_result': {'display_type': 'text', 'data': None}
-            }
-
-    def _smart_query_rooms(self, filters: dict) -> dict:
-        """房间智能查询 - 返回结构化表格"""
-        summary = self.room_service.get_room_status_summary()
-        rooms = self.db.query(Room).all()
-
-        # 文本摘要
-        message = f"共 {summary['total']} 间房间"
-
-        # 结构化数据
-        rows = []
-        for r in rooms:
-            rows.append({
-                'room_number': r.room_number,
-                'floor': r.floor,
-                'type': r.room_type.name if r.room_type else '',
-                'status': r.status.value,
-            })
-
-        return {
-            'message': message,
-            'suggested_actions': [],
-            'query_result': {
-                'display_type': 'table',
-                'columns': ['房号', '楼层', '房型', '状态'],
-                'column_keys': ['room_number', 'floor', 'type', 'status'],
-                'rows': rows,
-                'summary': summary
-            }
-        }
-
-    def _smart_query_reservations(self, filters: dict) -> dict:
-        """预订智能查询"""
-        arrivals = self.reservation_service.get_today_arrivals()
-        rows = []
-        for r in arrivals:
-            rows.append({
-                'reservation_no': r.reservation_no,
-                'guest_name': r.guest.name if r.guest else '',
-                'room_type': r.room_type.name if r.room_type else '',
-                'check_in_date': str(r.check_in_date),
-                'check_out_date': str(r.check_out_date),
-                'status': r.status.value,
-            })
-
-        return {
-            'message': f"今日预抵 {len(arrivals)} 位客人",
-            'suggested_actions': [],
-            'query_result': {
-                'display_type': 'table',
-                'columns': ['预订号', '客人', '房型', '入住', '离店', '状态'],
-                'column_keys': ['reservation_no', 'guest_name', 'room_type', 'check_in_date', 'check_out_date', 'status'],
-                'rows': rows,
-            }
-        }
-
-    def _smart_query_guests(self, filters: dict) -> dict:
-        """在住客人智能查询"""
-        active_stays = self.db.query(StayRecord).filter(
-            StayRecord.status == StayRecordStatus.ACTIVE
-        ).all()
-
-        rows = []
-        for s in active_stays:
-            rows.append({
-                'guest_name': s.guest.name if s.guest else '',
-                'room_number': s.room.room_number if s.room else '',
-                'check_in': str(s.check_in_time.date()) if s.check_in_time else '',
-                'expected_out': str(s.expected_check_out),
-            })
-
-        return {
-            'message': f"当前在住 {len(active_stays)} 位客人",
-            'suggested_actions': [],
-            'query_result': {
-                'display_type': 'table',
-                'columns': ['客人', '房间', '入住日期', '预计退房'],
-                'column_keys': ['guest_name', 'room_number', 'check_in', 'expected_out'],
-                'rows': rows,
-            }
-        }
-
-    def _smart_query_tasks(self, filters: dict) -> dict:
-        """任务智能查询"""
-        tasks = self.db.query(Task).filter(
-            Task.status.in_([TaskStatus.PENDING, TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS])
-        ).all()
-
-        rows = []
-        for t in tasks:
-            rows.append({
-                'room_number': t.room.room_number if t.room else '',
-                'task_type': t.task_type.value if t.task_type else '',
-                'status': t.status.value,
-                'assignee': t.assignee.name if t.assignee else '未分配',
-            })
-
-        return {
-            'message': f"当前有 {len(tasks)} 个待处理任务",
-            'suggested_actions': [],
-            'query_result': {
-                'display_type': 'table',
-                'columns': ['房间', '类型', '状态', '负责人'],
-                'column_keys': ['room_number', 'task_type', 'status', 'assignee'],
-                'rows': rows,
-            }
-        }
-
-    def _smart_query_reports(self) -> dict:
-        """报表智能查询"""
-        stats = self.report_service.get_dashboard_stats()
-
-        return {
-            'message': f"入住率 {stats['occupancy_rate']}%，今日营收 ¥{stats['today_revenue']}",
-            'suggested_actions': [],
-            'query_result': {
-                'display_type': 'chart',
-                'data': stats,
-                'summary': stats
-            }
         }
 
     def _execute_ontology_query(

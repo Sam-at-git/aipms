@@ -249,6 +249,15 @@ class AIService(OodaOrchestrator):
 
         from app.services.actions import get_action_registry
 
+        # Hotel-specific action keywords for intent classification fallback
+        hotel_action_keywords = [
+            '入住', '办理入住', 'checkin', 'check in',
+            '退房', '结账', 'checkout', 'check out',
+            '预订', '预约', '订房', 'reserve', 'booking',
+            '换房', '转房', '续住', '延期',
+            '清洁', '打扫', 'cleaning',
+        ]
+
         super().__init__(
             db=db,
             adapter=adapter,
@@ -261,6 +270,7 @@ class AIService(OodaOrchestrator):
             topic_followup_answer=TopicRelevance.FOLLOWUP_ANSWER,
             model_resolver=_resolve_ontology_model,
             domain_rules_init=_init_domain_rules if CORE_RULES_AVAILABLE else None,
+            domain_action_keywords=hotel_action_keywords,
         )
 
         # Set domain metadata availability

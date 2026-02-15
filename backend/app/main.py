@@ -73,6 +73,11 @@ async def lifespan(app: FastAPI):
             enabled=settings.ENABLE_LLM and settings.EMBEDDING_ENABLED and bool(embed_api_key),
         )
 
+        # ========== Register hotel role permissions (SPEC-1) ==========
+        from app.hotel.security import register_hotel_role_permissions
+        register_hotel_role_permissions()
+        print("✓ 酒店角色权限已注册")
+
         # ========== Register hotel domain ACL permissions ==========
         from core.security.attribute_acl import AttributeACL, AttributePermission, SecurityLevel
         acl = AttributeACL()

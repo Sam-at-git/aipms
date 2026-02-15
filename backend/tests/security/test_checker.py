@@ -16,6 +16,31 @@ from core.security.checker import (
 )
 
 
+def _register_hotel_permissions(rule: RolePermissionRule) -> None:
+    """Register hotel permissions for testing (mirrors app/hotel/security)."""
+    rule.register_role_permissions("manager", [Permission("*", "*")])
+    rule.register_role_permissions("receptionist", [
+        Permission("room", "read"),
+        Permission("room", "update_status"),
+        Permission("guest", "read"),
+        Permission("guest", "write"),
+        Permission("reservation", "read"),
+        Permission("reservation", "write"),
+        Permission("reservation", "create"),
+        Permission("checkin", "*"),
+        Permission("checkout", "read"),
+        Permission("bill", "read"),
+        Permission("task", "read"),
+        Permission("task", "assign"),
+    ])
+    rule.register_role_permissions("cleaner", [
+        Permission("room", "read"),
+        Permission("task", "read"),
+        Permission("task", "update"),
+        Permission("task", "complete"),
+    ])
+
+
 class TestPermission:
     def test_creation(self):
         """测试创建权限"""
@@ -99,6 +124,7 @@ class TestRolePermissionRule:
     def test_check_manager_has_all(self):
         """测试管理员拥有所有权限"""
         rule = RolePermissionRule()
+        _register_hotel_permissions(rule)
         ctx = SecurityContext(
             user_id=1,
             username="admin",
@@ -110,6 +136,7 @@ class TestRolePermissionRule:
     def test_check_receptionist_permissions(self):
         """测试接待员权限"""
         rule = RolePermissionRule()
+        _register_hotel_permissions(rule)
         ctx = SecurityContext(
             user_id=1,
             username="front",
@@ -123,6 +150,7 @@ class TestRolePermissionRule:
     def test_check_cleaner_permissions(self):
         """测试清洁工权限"""
         rule = RolePermissionRule()
+        _register_hotel_permissions(rule)
         ctx = SecurityContext(
             user_id=1,
             username="cleaner",
@@ -167,6 +195,7 @@ class TestRolePermissionRule:
     def test_get_role_permissions(self):
         """测试获取角色权限"""
         rule = RolePermissionRule()
+        _register_hotel_permissions(rule)
         perms = rule.get_role_permissions("manager")
         assert Permission("*", "*") in perms
 
@@ -229,6 +258,8 @@ class TestPermissionChecker:
         """每个测试前重置检查器"""
         checker = PermissionChecker()
         checker.clear_cache()
+        # Register hotel permissions on the singleton's role rule
+        _register_hotel_permissions(checker._role_rule)
         # 清空上下文
         manager = SecurityContextManager()
         while manager.get_context():

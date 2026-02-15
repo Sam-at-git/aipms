@@ -120,37 +120,8 @@ class RolePermissionRule(PermissionRule):
     使用角色到权限集合的映射进行检查
     """
 
-    # 预定义的权限集合
-    MANAGER_PERMISSIONS: Set[Permission] = {Permission("*", "*")}
-
-    RECEPTIONIST_PERMISSIONS: Set[Permission] = {
-        Permission("room", "read"),
-        Permission("room", "update_status"),
-        Permission("guest", "read"),
-        Permission("guest", "write"),
-        Permission("reservation", "read"),
-        Permission("reservation", "write"),
-        Permission("reservation", "create"),
-        Permission("checkin", "*"),
-        Permission("checkout", "read"),
-        Permission("bill", "read"),
-        Permission("task", "read"),
-        Permission("task", "assign"),
-    }
-
-    CLEANER_PERMISSIONS: Set[Permission] = {
-        Permission("room", "read"),
-        Permission("task", "read"),
-        Permission("task", "update"),
-        Permission("task", "complete"),
-    }
-
     def __init__(self):
-        self._role_permissions: Dict[str, Set[Permission]] = {
-            "manager": self.MANAGER_PERMISSIONS,
-            "receptionist": self.RECEPTIONIST_PERMISSIONS,
-            "cleaner": self.CLEANER_PERMISSIONS,
-        }
+        self._role_permissions: Dict[str, Set[Permission]] = {}
 
     def register_role_permissions(
         self, role: str, permissions: List[Permission]

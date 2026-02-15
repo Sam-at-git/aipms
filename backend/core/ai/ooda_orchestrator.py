@@ -77,6 +77,7 @@ class OodaOrchestrator:
         topic_followup_answer=None,
         model_resolver=None,
         domain_rules_init=None,
+        domain_action_keywords=None,
     ):
         self.db = db
         self.adapter = adapter
@@ -87,6 +88,7 @@ class OodaOrchestrator:
         self._descriptive_summary_fn = descriptive_summary_fn
         self._model_resolver = model_resolver
         self._domain_rules_init = domain_rules_init
+        self._domain_action_keywords = domain_action_keywords or []
         if topic_continuation is not None:
             self._TOPIC_CONTINUATION = topic_continuation
         if topic_followup_answer is not None:
@@ -1165,14 +1167,30 @@ class OodaOrchestrator:
         return "\n".join(lines)
 
     def _enhance_actions_with_db_data(self, result: Dict) -> Dict:
-        """使用数据库数据增强 LLM 返回的操作 — delegates to adapter"""
+        """使用数据库数据增强 LLM 返回的操作.
+
+        Pipeline: action_def.param_enhancer (action-specific) → adapter.enhance_action_params (generic)
+        """
+        registry = self.get_action_registry()
         for action in result.get("suggested_actions", []):
             params = action.get("params", {})
             action_type = action.get("action_type", "")
-            enhanced = self.adapter.enhance_action_params(
+
+            # Step 1: Action-level enhancer (action-specific DB lookups)
+            if registry:
+                action_def = registry.get_action(action_type)
+                if action_def and action_def.param_enhancer:
+                    try:
+                        params = action_def.param_enhancer(params, self.db)
+                    except Exception as e:
+                        logger.warning(f"param_enhancer failed for {action_type}: {e}")
+
+            # Step 2: Adapter-level enhancement (generic field parsing)
+            params = self.adapter.enhance_action_params(
                 action_type, params, "", self.db
             )
-            action["params"] = enhanced
+
+            action["params"] = params
         return result
 
     def _handle_query_action(self, result: Dict, user: Any) -> Dict:
@@ -1466,8 +1484,9 @@ class OodaOrchestrator:
             if best_match:
                 return f'action_{best_match}'
 
-        # Fallback: check generic ACTION_KEYWORDS
-        if any(kw in message_lower for kw in ACTION_KEYWORDS):
+        # Fallback: check generic ACTION_KEYWORDS + domain-injected keywords
+        all_action_keywords = list(ACTION_KEYWORDS) + list(self._domain_action_keywords)
+        if any(kw in message_lower for kw in all_action_keywords):
             return 'action_unknown'
 
         return 'unknown'

@@ -22,6 +22,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _enhance_reservation_params(params: Dict[str, Any], db) -> Dict[str, Any]:
+    """Enhance reservation action params: resolve guest_name → reservation_id."""
+    if "guest_name" in params and "reservation_id" not in params and "reservation_no" not in params:
+        res_svc = ReservationService(db)
+        reservations = res_svc.search_reservations(params["guest_name"])
+        confirmed = [r for r in reservations if r.status.value.upper() == "CONFIRMED"]
+        if confirmed:
+            params["reservation_id"] = confirmed[0].id
+    return params
+
+
 def register_reservation_actions(
     registry: ActionRegistry
 ) -> None:
@@ -173,7 +184,8 @@ def register_reservation_actions(
         allowed_roles={"receptionist", "manager"},
         undoable=False,
         side_effects=["cancels_reservation"],
-        search_keywords=["取消预订", "退订", "cancel reservation"]
+        search_keywords=["取消预订", "退订", "cancel reservation"],
+        param_enhancer=_enhance_reservation_params,
     )
     def handle_cancel_reservation(
         params: CancelReservationParams,
@@ -240,7 +252,8 @@ def register_reservation_actions(
         allowed_roles={"receptionist", "manager"},
         undoable=False,
         side_effects=["modifies_reservation"],
-        search_keywords=["修改预订", "更改预订", "调整预订", "modify reservation"]
+        search_keywords=["修改预订", "更改预订", "调整预订", "modify reservation"],
+        param_enhancer=_enhance_reservation_params,
     )
     def handle_modify_reservation(
         params: ModifyReservationParams,

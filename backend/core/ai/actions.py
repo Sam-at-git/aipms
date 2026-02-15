@@ -86,6 +86,9 @@ class ActionDefinition:
     # UI workflow: required fields for the follow-up form (overrides schema introspection)
     ui_required_fields: Optional[List[str]] = None
 
+    # Parameter enhancement: called before dispatch to enrich params with DB data
+    param_enhancer: Optional[Callable[[Dict[str, Any], Any], Dict[str, Any]]] = None
+
     def to_openai_tool(self) -> Dict[str, Any]:
         """
         Convert to OpenAI function calling format.
@@ -250,6 +253,7 @@ class ActionRegistry:
         category_description: Optional[str] = None,
         glossary_examples: Optional[List[Dict[str, str]]] = None,
         ui_required_fields: Optional[List[str]] = None,
+        param_enhancer: Optional[Callable[[Dict[str, Any], Any], Dict[str, Any]]] = None,
     ) -> Callable:
         """
         Decorator for registering actions.
@@ -305,6 +309,7 @@ class ActionRegistry:
                 category_description=category_description,
                 glossary_examples=glossary_examples or [],
                 ui_required_fields=ui_required_fields,
+                param_enhancer=param_enhancer,
             )
 
             # Register

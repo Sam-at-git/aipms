@@ -14,17 +14,15 @@ QUERY_KEYWORDS = [
     'show', 'list', 'get', 'find', 'search', 'query', 'count'
 ]
 
-# 操作类关键词
+# 操作类关键词 — 仅通用动词，领域特定关键词由 domain_action_keywords 注入
 ACTION_KEYWORDS = [
-    '入住', '办理入住', 'checkin', 'check in',
-    '退房', '结账', 'checkout', 'check out',
-    '预订', '预约', '订房', 'reserve', 'booking',
-    '换房', '转房', 'change',
-    '续住', '延期', 'extend',
-    '清洁', '打扫', 'cleaning',
     '创建', '新增', 'create', 'add',
     '修改', '更新', 'update', 'modify',
     '删除', '取消', 'delete', 'cancel',
+    '执行', '操作', 'execute', 'run',
+    '分配', '指派', 'assign',
+    '完成', 'complete', 'finish',
+    '启动', '开始', 'start', 'begin',
 ]
 
 # 帮助类关键词

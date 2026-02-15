@@ -19,6 +19,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _enhance_stay_params(params: Dict[str, Any], db) -> Dict[str, Any]:
+    """Enhance stay action params: resolve guest_name → stay_record_id."""
+    if "guest_name" in params and "stay_record_id" not in params:
+        checkin_svc = CheckInService(db)
+        stays = checkin_svc.search_active_stays(params["guest_name"])
+        if stays:
+            params["stay_record_id"] = stays[0].id
+    return params
+
+
 def register_stay_actions(
     registry: ActionRegistry
 ) -> None:
@@ -40,6 +50,7 @@ def register_stay_actions(
         side_effects=["settles_bill", "updates_room_status", "creates_cleaning_task"],
         search_keywords=["退房", "结算", "离店", "checkout"],
         ui_required_fields=["stay_record_id"],
+        param_enhancer=_enhance_stay_params,
     )
     def handle_checkout(
         params: CheckoutParams,
@@ -233,6 +244,7 @@ def register_stay_actions(
         side_effects=["updates_stay_record", "updates_bill"],
         search_keywords=["续住", "延住", "延长入住", "extend stay"],
         ui_required_fields=["stay_record_id", "new_check_out_date"],
+        param_enhancer=_enhance_stay_params,
     )
     def handle_extend_stay(
         params: ExtendStayParams,
@@ -281,6 +293,7 @@ def register_stay_actions(
         side_effects=["updates_stay_record", "updates_room_status"],
         search_keywords=["换房", "转房", "调房", "change room"],
         ui_required_fields=["stay_record_id", "new_room_number"],
+        param_enhancer=_enhance_stay_params,
     )
     def handle_change_room(
         params: ChangeRoomParams,

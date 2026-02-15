@@ -16,6 +16,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _enhance_bill_params(params: Dict[str, Any], db) -> Dict[str, Any]:
+    """Enhance bill action params: resolve room_number → stay_record_id."""
+    if "room_number" in params and "stay_record_id" not in params and "bill_id" not in params:
+        from app.services.checkin_service import CheckInService
+        checkin_svc = CheckInService(db)
+        stays = checkin_svc.search_active_stays(params["room_number"])
+        if stays:
+            params["stay_record_id"] = stays[0].id
+    return params
+
+
 def register_bill_actions(
     registry: ActionRegistry
 ) -> None:
@@ -119,7 +130,8 @@ def register_bill_actions(
         allowed_roles={"manager"},
         undoable=False,
         side_effects=["adjusts_bill"],
-        search_keywords=["调整账单", "账单调整", "折扣", "加价", "adjust bill"]
+        search_keywords=["调整账单", "账单调整", "折扣", "加价", "adjust bill"],
+        param_enhancer=_enhance_bill_params,
     )
     def handle_adjust_bill(
         params: AdjustBillParams,

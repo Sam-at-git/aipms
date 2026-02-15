@@ -192,36 +192,42 @@ class PhoneFormatValidator:
         return self.validate(old_value, new_value, entity_id, db)
 
 
-class PhoneUniquenessValidator:
+class FieldUniquenessValidator:
     """
-    手机号唯一性验证器
+    通用字段唯一性验证器
 
-    检查手机号是否已被其他客人使用。
+    检查某实体的某字段值是否已被其他记录使用。
     需要数据库会话来查询现有记录。
+
+    Args:
+        entity_name: 实体名称（在 OntologyRegistry 中注册的名称）
+        field_name: 需要检查唯一性的字段名
     """
 
-    def __init__(self):
+    def __init__(self, entity_name: str, field_name: str):
         """初始化验证器"""
-        self._guest_model = None
+        self._entity_name = entity_name
+        self._field_name = field_name
+        self._model = None
 
-    def _get_guest_model(self, db: "Session"):
-        """动态获取 Guest 模型以避免循环依赖"""
-        if self._guest_model is None:
+    def _get_model(self, db: "Session"):
+        """动态获取实体模型以避免循环依赖"""
+        if self._model is None:
             from core.ontology.registry import OntologyRegistry
-            guest_model = OntologyRegistry().get_model("Guest")
-            if guest_model is None:
-                raise ValueError("Guest model not registered in OntologyRegistry")
-            self._guest_model = guest_model
-        return self._guest_model
+            model = OntologyRegistry().get_model(self._entity_name)
+            if model is None:
+                raise ValueError(f"{self._entity_name} model not registered in OntologyRegistry")
+            self._model = model
+        return self._model
 
     def validate(self, old_value: Any, new_value: Any, entity_id: Optional[int] = None, db: Optional["Session"] = None) -> tuple[bool, str]:
         """
-        验证手机号唯一性
+        验证字段唯一性
 
         Args:
-            old_value: 原手机号
-            new_value: 新手机号
-            entity_id: 当前客人ID（用于排除自身）
+            old_value: 原值
+            new_value: 新值
+            entity_id: 当前实体ID（用于排除自身）
             db: 数据库会话
 
         Returns:
@@ -234,16 +240,20 @@ class PhoneUniquenessValidator:
             # 无数据库会话时跳过检查（记录警告）
             return True, ""
 
-        Guest = self._get_guest_model(db)
+        model = self._get_model(db)
+        field_attr = getattr(model, self._field_name, None)
+        if field_attr is None:
+            return True, ""
 
-        # 查询是否有其他客人使用此手机号
-        query = db.query(Guest).filter(Guest.phone == new_value)
+        # 查询是否有其他记录使用此值
+        query = db.query(model).filter(field_attr == new_value)
         if entity_id is not None:
-            query = query.filter(Guest.id != entity_id)
+            query = query.filter(model.id != entity_id)
 
         existing = query.first()
         if existing:
-            return False, f"手机号「{new_value}」已被客人「{existing.name}」使用"
+            display_name = getattr(existing, 'name', str(entity_id))
+            return False, f"「{new_value}」已被「{display_name}」使用"
 
         return True, ""
 
@@ -474,8 +484,8 @@ class ConstraintEngine:
         这是 OAG 决策流程的核心方法，在执行属性更新前调用。
 
         Args:
-            entity_type: 实体类型（如 "Guest"）
-            property_name: 属性名（如 "phone"）
+            entity_type: 实体类型
+            property_name: 属性名
             old_value: 原值
             new_value: 新值
             user_context: 用户上下文（包含 role 等信息）
@@ -610,5 +620,5 @@ __all__ = [
     "ConstraintViolation",
     "Decision",
     "PhoneFormatValidator",
-    "PhoneUniquenessValidator",
+    "FieldUniquenessValidator",
 ]

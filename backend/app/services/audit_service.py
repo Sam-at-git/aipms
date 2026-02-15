@@ -89,6 +89,27 @@ class AuditService:
         """获取单条日志详情"""
         return self.db.query(SystemLog).filter(SystemLog.id == log_id).first()
 
+    def get_daily_trend(self, days: int = 30) -> List[dict]:
+        """Get daily operation count for trend chart."""
+        from sqlalchemy import func, cast, Date
+        start_date = date.today() - timedelta(days=days)
+
+        results = self.db.query(
+            cast(SystemLog.created_at, Date).label('day'),
+            func.count(SystemLog.id).label('count'),
+        ).filter(
+            SystemLog.created_at >= start_date
+        ).group_by(
+            cast(SystemLog.created_at, Date)
+        ).order_by(
+            cast(SystemLog.created_at, Date)
+        ).all()
+
+        return [
+            {'day': str(r.day), 'count': r.count}
+            for r in results
+        ]
+
     def get_action_summary(self, days: int = 30) -> List[dict]:
         """获取操作统计摘要"""
         start_date = date.today() - timedelta(days=days)

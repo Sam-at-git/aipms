@@ -97,3 +97,28 @@ require_sysadmin = require_role([EmployeeRole.SYSADMIN])
 require_manager = require_role([EmployeeRole.SYSADMIN, EmployeeRole.MANAGER])
 require_receptionist_or_manager = require_role([EmployeeRole.SYSADMIN, EmployeeRole.MANAGER, EmployeeRole.RECEPTIONIST])
 require_any_role = require_role([EmployeeRole.SYSADMIN, EmployeeRole.MANAGER, EmployeeRole.RECEPTIONIST, EmployeeRole.CLEANER])
+
+
+def require_permission(permission_code: str):
+    """权限码验证装饰器 — 通过 RBAC 动态权限检查
+
+    优先使用 IPermissionProvider（如果已注册），否则回退到 sysadmin 角色检查。
+    """
+    async def permission_checker(current_user: Employee = Depends(get_current_user)):
+        from core.security.permission import permission_provider_registry
+
+        # sysadmin 始终拥有所有权限
+        if current_user.role == EmployeeRole.SYSADMIN:
+            return current_user
+
+        # 尝试通过 RBAC provider 检查
+        if permission_provider_registry.has_provider():
+            if permission_provider_registry.has_permission(current_user.id, permission_code):
+                return current_user
+
+        # 无 provider 或权限不足 → 403
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"缺少权限: {permission_code}"
+        )
+    return permission_checker

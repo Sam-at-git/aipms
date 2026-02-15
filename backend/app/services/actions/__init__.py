@@ -72,6 +72,12 @@ def _create_action_registry() -> ActionRegistry:
     room_actions.register_room_actions(registry)
     employee_actions.register_employee_actions(registry)
 
+    # System domain actions
+    from app.system.actions.system_query_actions import register_system_query_actions
+    from app.system.actions.system_mutation_actions import register_system_mutation_actions
+    register_system_query_actions(registry)
+    register_system_mutation_actions(registry)
+
     logger.info(f"ActionRegistry initialized with {len(registry.list_actions())} actions")
 
     return registry

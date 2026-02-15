@@ -14,8 +14,10 @@ export interface DebugSession {
   input_message: string;
   status: SessionStatus;
   llm_model: string | null;
+  llm_tokens_used: number | null;
   execution_time_ms: number | null;
   attempt_count?: number;
+  action_type?: string | null;
 }
 
 export interface DebugSessionDetail extends DebugSession {
@@ -23,7 +25,9 @@ export interface DebugSessionDetail extends DebugSession {
   retrieved_tools: Record<string, unknown>[] | null;
   llm_prompt: string | null;
   llm_response: string | null;
-  llm_tokens_used: number | null;
+  llm_prompt_parts: Record<string, unknown> | null;
+  llm_response_parsed: Record<string, unknown> | null;
+  llm_latency_ms: number | null;
   actions_executed: Record<string, unknown>[] | null;
   final_result: Record<string, unknown> | null;
   errors: Record<string, unknown>[] | null;
@@ -136,4 +140,35 @@ export interface SessionsListResponse {
 export interface ReplaysListResponse {
   replays: ReplayResult[];
   count: number;
+}
+
+// Analytics types
+
+export interface TokenTrendDataPoint {
+  day: string;
+  session_count: number;
+  total_tokens: number;
+  avg_tokens: number;
+  avg_latency_ms: number;
+}
+
+export interface TokenTrendResponse {
+  days: number;
+  data: TokenTrendDataPoint[];
+}
+
+export interface TopError {
+  error_msg: string;
+  count: number;
+}
+
+export interface ErrorAggregationResponse {
+  days: number;
+  by_day: { day: string; error_count: number }[];
+  top_errors: TopError[];
+  totals: {
+    total_sessions: number;
+    error_sessions: number;
+    success_sessions: number;
+  };
 }

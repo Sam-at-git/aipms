@@ -190,6 +190,60 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({ event, onClose }) =
   )
 }
 
+// SE-2: Trend data types
+interface TrendDay {
+  day: string
+  low: number
+  medium: number
+  high: number
+  critical: number
+  total: number
+}
+
+// SE-3: Risk score types
+interface UserRiskScore {
+  user_id: number
+  user_name: string
+  score: number
+  event_count: number
+  breakdown: Record<string, number>
+}
+
+// SE-2: Event trend chart component
+const EventTrendChart: React.FC<{ data: TrendDay[] }> = ({ data }) => {
+  if (data.length === 0) return <div className="text-dark-500 text-sm py-4 text-center">No trend data</div>
+  const maxTotal = Math.max(...data.map(d => d.total), 1)
+
+  return (
+    <div className="flex items-end gap-1" style={{ height: 120 }}>
+      {data.map(d => {
+        const segments = [
+          { key: 'critical', count: d.critical, color: 'bg-red-500' },
+          { key: 'high', count: d.high, color: 'bg-orange-500' },
+          { key: 'medium', count: d.medium, color: 'bg-yellow-500' },
+          { key: 'low', count: d.low, color: 'bg-blue-500' },
+        ].filter(s => s.count > 0)
+
+        return (
+          <div key={d.day} className="flex-1 flex flex-col items-center gap-0.5" title={`${d.day}: ${d.total} events`}>
+            <div className="w-full flex flex-col-reverse" style={{ height: `${(d.total / maxTotal) * 100}%`, minHeight: d.total > 0 ? 4 : 0 }}>
+              {segments.map(s => (
+                <div
+                  key={s.key}
+                  className={`w-full ${s.color} first:rounded-b last:rounded-t`}
+                  style={{ height: `${(s.count / d.total) * 100}%`, minHeight: 2 }}
+                  title={`${s.key}: ${s.count}`}
+                />
+              ))}
+            </div>
+            <span className="text-[9px] text-dark-600 truncate w-full text-center">{d.day.slice(5)}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 const SecurityDashboard: React.FC = () => {
   const [statistics, setStatistics] = useState<SecurityStatistics | null>(null)
   const [alertSummary, setAlertSummary] = useState<AlertSummary | null>(null)
@@ -198,6 +252,8 @@ const SecurityDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<SecurityEvent | null>(null)
+  const [trend, setTrend] = useState<TrendDay[]>([])
+  const [riskScores, setRiskScores] = useState<UserRiskScore[]>([])
 
   // Filters
   const [severityFilter, setSeverityFilter] = useState<string>('')
@@ -225,6 +281,10 @@ const SecurityDashboard: React.FC = () => {
       setAlertSummary(alertSummaryRes)
       setEvents(eventsRes)
       setAlerts(alertsRes)
+
+      // SE-2 + SE-3: Load trend and risk scores in background
+      securityApi.getTrend(7).then(r => setTrend(r.data)).catch(() => {})
+      securityApi.getRiskScores(7).then(setRiskScores).catch(() => {})
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load security data')
     } finally {
@@ -370,6 +430,49 @@ const SecurityDashboard: React.FC = () => {
           })}
         </div>
       )}
+
+      {/* SE-2: Trend + SE-3: Risk Scores */}
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        {/* Event Trend */}
+        <div className="bg-dark-900 border border-dark-800 rounded-lg p-4">
+          <h3 className="text-sm font-medium text-dark-300 mb-3">Event Trend (7 days)</h3>
+          <EventTrendChart data={trend} />
+          <div className="flex items-center gap-4 mt-2 justify-center">
+            <span className="flex items-center gap-1 text-[10px] text-dark-500"><span className="w-2 h-2 bg-red-500 rounded-sm inline-block" /> Critical</span>
+            <span className="flex items-center gap-1 text-[10px] text-dark-500"><span className="w-2 h-2 bg-orange-500 rounded-sm inline-block" /> High</span>
+            <span className="flex items-center gap-1 text-[10px] text-dark-500"><span className="w-2 h-2 bg-yellow-500 rounded-sm inline-block" /> Medium</span>
+            <span className="flex items-center gap-1 text-[10px] text-dark-500"><span className="w-2 h-2 bg-blue-500 rounded-sm inline-block" /> Low</span>
+          </div>
+        </div>
+
+        {/* User Risk Scores */}
+        <div className="bg-dark-900 border border-dark-800 rounded-lg p-4">
+          <h3 className="text-sm font-medium text-dark-300 mb-3">User Risk Scores (7 days)</h3>
+          {riskScores.length === 0 ? (
+            <div className="text-dark-500 text-sm py-4 text-center">No risk data</div>
+          ) : (
+            <div className="space-y-2 max-h-[140px] overflow-y-auto">
+              {riskScores.slice(0, 10).map(u => {
+                const maxScore = riskScores[0]?.score || 1
+                const pct = Math.min((u.score / maxScore) * 100, 100)
+                const riskLevel = u.score >= 50 ? 'text-red-400' : u.score >= 20 ? 'text-orange-400' : u.score >= 5 ? 'text-yellow-400' : 'text-green-400'
+                return (
+                  <div key={u.user_id} className="flex items-center gap-2 text-sm">
+                    <span className="w-20 truncate text-dark-300" title={u.user_name}>{u.user_name}</span>
+                    <div className="flex-1 bg-dark-800 rounded-full h-3 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${u.score >= 50 ? 'bg-red-500' : u.score >= 20 ? 'bg-orange-500' : u.score >= 5 ? 'bg-yellow-500' : 'bg-green-500'}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className={`w-10 text-right font-mono text-xs ${riskLevel}`}>{u.score}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Filters */}
       <div className="flex items-center gap-4 mb-4 flex-wrap">

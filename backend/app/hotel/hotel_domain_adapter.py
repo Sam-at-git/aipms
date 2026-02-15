@@ -4,10 +4,14 @@ app/hotel/hotel_domain_adapter.py
 Hotel domain adapter - Registers hotel-specific ontology to the framework
 Demonstrates how to implement IDomainAdapter for a real business domain
 """
-from typing import Dict, List, Any, TYPE_CHECKING
+import re
+import logging
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
+from datetime import date, datetime, timedelta
 
 if TYPE_CHECKING:
     from core.ontology.registry import OntologyRegistry
+    from sqlalchemy.orm import Session
 
 from core.ontology.domain_adapter import IDomainAdapter
 from core.ontology.metadata import (
@@ -22,13 +26,80 @@ from core.ontology.metadata import (
     EventMetadata,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class HotelDomainAdapter(IDomainAdapter):
     """
     酒店领域适配器 - 框架与应用的桥梁
 
     将酒店管理系统的领域本体注册到框架中。
+    Implements OODA orchestrator support methods for hotel domain.
     """
+
+    def __init__(self, db: "Session" = None):
+        self._db = db
+        self._room_service = None
+        self._reservation_service = None
+        self._checkin_service = None
+        self._checkout_service = None
+        self._task_service = None
+        self._billing_service = None
+        self._report_service = None
+        self._param_parser = None
+
+    def _ensure_services(self):
+        """Lazy-initialize hotel services (only when db is available)."""
+        if self._db is None:
+            return
+        if self._room_service is not None:
+            return
+        from app.services.room_service import RoomService
+        from app.services.reservation_service import ReservationService
+        from app.services.checkin_service import CheckInService
+        from app.services.checkout_service import CheckOutService
+        from app.services.task_service import TaskService
+        from app.services.billing_service import BillingService
+        from app.services.report_service import ReportService
+        from app.services.param_parser_service import ParamParserService
+        self._room_service = RoomService(self._db)
+        self._reservation_service = ReservationService(self._db)
+        self._checkin_service = CheckInService(self._db)
+        self._checkout_service = CheckOutService(self._db)
+        self._task_service = TaskService(self._db)
+        self._billing_service = BillingService(self._db)
+        self._report_service = ReportService(self._db)
+        self._param_parser = ParamParserService(self._db)
+
+    @property
+    def room_service(self):
+        self._ensure_services()
+        return self._room_service
+
+    @property
+    def reservation_service(self):
+        self._ensure_services()
+        return self._reservation_service
+
+    @property
+    def checkin_service(self):
+        self._ensure_services()
+        return self._checkin_service
+
+    @property
+    def task_service(self):
+        self._ensure_services()
+        return self._task_service
+
+    @property
+    def param_parser(self):
+        self._ensure_services()
+        return self._param_parser
+
+    @property
+    def report_service(self):
+        self._ensure_services()
+        return self._report_service
 
     def get_domain_name(self) -> str:
         """获取领域名称"""
@@ -911,6 +982,298 @@ class HotelDomainAdapter(IDomainAdapter):
         elif entity_type == "StayRecord":
             return f"住宿记录 #{entity_id}"
         return f"{entity_type}:{entity_id}"
+
+
+    # ========== OODA Orchestrator Support Methods ==========
+
+    def build_llm_context(self, db) -> Dict[str, Any]:
+        """Build hotel-specific LLM context: room summary, room types, active stays, tasks."""
+        self._ensure_services()
+        context = {}
+
+        # Room status summary
+        summary = self.room_service.get_room_status_summary()
+        context["room_summary"] = summary
+
+        # Available room types (so LLM can suggest during reservations)
+        room_types = self.room_service.get_room_types()
+        context["room_types"] = [
+            {"id": rt.id, "name": rt.name, "price": float(rt.base_price)}
+            for rt in room_types
+        ]
+
+        # Active stays (most recent 20)
+        active_stays = self.checkin_service.get_active_stays()
+        context["active_stays"] = [
+            {
+                "id": s.id,
+                "room_number": s.room.room_number,
+                "guest_name": s.guest.name,
+                "expected_check_out": str(s.expected_check_out),
+            }
+            for s in active_stays[:20]
+        ]
+
+        # Pending tasks
+        pending_tasks = self.task_service.get_pending_tasks()
+        context["pending_tasks"] = [
+            {
+                "id": t.id,
+                "room_number": t.room.room_number,
+                "task_type": t.task_type.value,
+            }
+            for t in pending_tasks[:20]
+        ]
+
+        return context
+
+    def enhance_action_params(self, action_type: str, params: Dict[str, Any],
+                              message: str, db) -> Dict[str, Any]:
+        """Enhance LLM-extracted params with hotel DB lookups and fuzzy matching."""
+        self._ensure_services()
+
+        # --- Room type parsing (multiple key names) ---
+        if "room_type_id" in params or "room_type_name" in params or "room_type" in params:
+            room_type_input = params.get("room_type_id") or params.get("room_type_name") or params.get("room_type")
+            if room_type_input:
+                parse_result = self.param_parser.parse_room_type(room_type_input)
+                if parse_result.confidence >= 0.7:
+                    params["room_type_id"] = parse_result.value
+                    room_type = self.room_service.get_room_type(parse_result.value)
+                    if room_type:
+                        params["room_type_name"] = room_type.name
+
+        # --- Room parsing ---
+        if "room_id" in params or "room_number" in params:
+            room_input = params.get("room_id") or params.get("room_number")
+            if room_input:
+                parse_result = self.param_parser.parse_room(room_input)
+                if parse_result.confidence >= 0.7:
+                    params["room_id"] = parse_result.value
+                    if "room_number" not in params and isinstance(parse_result.raw_input, str):
+                        params["room_number"] = parse_result.raw_input
+
+        # --- New room (change room scenario) ---
+        if "new_room_id" in params or "new_room_number" in params:
+            room_input = params.get("new_room_id") or params.get("new_room_number")
+            if room_input:
+                parse_result = self.param_parser.parse_room(room_input)
+                if parse_result.confidence >= 0.7:
+                    params["new_room_id"] = parse_result.value
+
+        # --- Employee parsing (task assignment) ---
+        if "assignee_id" in params or "assignee_name" in params:
+            assignee_input = params.get("assignee_id") or params.get("assignee_name")
+            if assignee_input:
+                parse_result = self.param_parser.parse_employee(assignee_input)
+                if parse_result.confidence >= 0.7:
+                    params["assignee_id"] = parse_result.value
+
+        # --- Room status parsing ---
+        if "status" in params:
+            status_result = self.param_parser.parse_room_status(params["status"])
+            if status_result.confidence >= 0.7:
+                params["status"] = status_result.value
+
+        # --- Task type parsing (Chinese: 维修, 清洁) ---
+        if "task_type" in params:
+            task_type_result = self.param_parser.parse_task_type(params["task_type"])
+            if task_type_result.confidence >= 0.7:
+                params["task_type"] = task_type_result.value.value
+
+        # --- Price type parsing ---
+        if "price_type" in params:
+            price_type_input = str(params["price_type"]).lower().strip()
+            price_type_aliases = {
+                'weekend': ['周末', '周末价', 'weekend', '周六日', '星期六日'],
+                'standard': ['平日', '标准', 'standard', '工作日', '平时'],
+            }
+            for ptype, aliases in price_type_aliases.items():
+                if price_type_input in [a.lower() for a in aliases]:
+                    params["price_type"] = ptype
+                    break
+
+        # --- Fallback DB lookups ---
+        if "room_number" in params and "room_id" not in params:
+            room = self.room_service.get_room_by_number(params["room_number"])
+            if room:
+                params["room_id"] = room.id
+
+        if "guest_name" in params and action_type in ["checkout", "extend_stay", "change_room"]:
+            stays = self.checkin_service.search_active_stays(params["guest_name"])
+            if stays and "stay_record_id" not in params:
+                params["stay_record_id"] = stays[0].id
+
+        if "guest_name" in params and action_type in ["cancel_reservation", "modify_reservation"]:
+            if "reservation_id" not in params and "reservation_no" not in params:
+                reservations = self.reservation_service.search_reservations(params["guest_name"])
+                confirmed = [r for r in reservations if r.status.value.upper() == "CONFIRMED"]
+                if confirmed:
+                    params["reservation_id"] = confirmed[0].id
+
+        if "room_number" in params and action_type in ["add_payment", "adjust_bill"]:
+            if "stay_record_id" not in params and "bill_id" not in params:
+                stays = self.checkin_service.search_active_stays(params["room_number"])
+                if stays:
+                    params["stay_record_id"] = stays[0].id
+
+        if "reservation_no" in params and "reservation_id" not in params:
+            reservation = self.reservation_service.get_reservation_by_no(params["reservation_no"])
+            if reservation:
+                params["reservation_id"] = reservation.id
+
+        # --- Date parsing ---
+        for date_field in ["expected_check_out", "new_check_out_date", "check_in_date", "check_out_date"]:
+            if date_field in params:
+                parse_result = self.param_parser.parse_date(params[date_field])
+                if parse_result.confidence > 0:
+                    val = parse_result.value
+                    params[date_field] = val.isoformat() if isinstance(val, date) else str(val)
+                else:
+                    parsed_date = self._parse_relative_date(params[date_field])
+                    if parsed_date:
+                        params[date_field] = parsed_date.isoformat() if isinstance(parsed_date, date) else str(parsed_date)
+
+        return params
+
+    def enhance_single_action_params(self, action_type: str, params: Dict[str, Any],
+                                     db) -> Dict[str, Any]:
+        """Simplified param enhancement for follow-up mode."""
+        self._ensure_services()
+        enhanced = params.copy()
+
+        if "room_type" in params and params["room_type"]:
+            parse_result = self.param_parser.parse_room_type(str(params["room_type"]))
+            if parse_result.confidence >= 0.7:
+                enhanced["room_type_id"] = parse_result.value
+                room_type = self.room_service.get_room_type(parse_result.value)
+                if room_type:
+                    enhanced["room_type_name"] = room_type.name
+
+        if "room_number" in params and params["room_number"]:
+            parse_result = self.param_parser.parse_room(str(params["room_number"]))
+            if parse_result.confidence >= 0.7:
+                enhanced["room_id"] = parse_result.value
+
+        if "new_room_number" in params and params["new_room_number"]:
+            parse_result = self.param_parser.parse_room(str(params["new_room_number"]))
+            if parse_result.confidence >= 0.7:
+                enhanced["new_room_id"] = parse_result.value
+
+        return enhanced
+
+    def get_field_definition(self, param_name: str, action_type: str,
+                             current_params: Dict[str, Any], db) -> Optional[Any]:
+        """Get UI field definition for a missing parameter."""
+        self._ensure_services()
+        from app.hotel.field_definitions import HotelFieldDefinitionProvider
+        provider = HotelFieldDefinitionProvider(
+            db=self._db,
+            room_service=self.room_service,
+            checkin_service=self.checkin_service,
+            reservation_service=self.reservation_service,
+        )
+        return provider.get_field_definition(param_name, action_type, current_params)
+
+    def get_report_data(self, db) -> Dict[str, Any]:
+        """Get hotel dashboard stats."""
+        self._ensure_services()
+        stats = self.report_service.get_dashboard_stats()
+        message = "**今日运营概览：**\n\n"
+        message += f"- 入住率：**{stats['occupancy_rate']}%**\n"
+        message += f"- 今日入住：{stats['today_checkins']} 间\n"
+        message += f"- 今日退房：{stats['today_checkouts']} 间\n"
+        message += f"- 今日营收：**¥{stats['today_revenue']}**\n"
+        return {"message": message, "stats": stats}
+
+    def get_help_text(self, language: str = "zh") -> str:
+        """Get hotel-specific help text."""
+        return (
+            '您好！我是酒店智能助手，可以帮您：\n\n'
+            '**查询类：**\n'
+            '- 查看房态 / 有多少空房\n'
+            '- 查询今日预抵\n'
+            '- 查看在住客人\n'
+            '- 查看清洁任务\n'
+            '- 今日入住率\n\n'
+            '**操作类：**\n'
+            '- 帮王五办理入住\n'
+            '- 301房退房\n'
+            '- 预订一间大床房\n\n'
+            '请问有什么可以帮您？'
+        )
+
+    def get_display_names(self) -> Dict[str, str]:
+        """Get hotel field name → display name mapping."""
+        return {
+            'guest_name': '客人',
+            'guest_phone': '电话',
+            'room_type': '房型',
+            'room_type_id': '房型',
+            'room_number': '房间号',
+            'check_in_date': '入住日期',
+            'check_out_date': '离店日期',
+            'expected_check_out': '预计离店',
+            'reservation_id': '预订号',
+            'stay_record_id': '住宿记录',
+            'new_room_number': '新房间号',
+            'new_check_out_date': '新离店日期',
+            'task_type': '任务类型',
+            'assignee_id': '执行人',
+        }
+
+    @staticmethod
+    def _parse_relative_date(date_input) -> Optional[date]:
+        """Parse relative date strings (今天, 明天, 后天, etc.) to date objects."""
+        if isinstance(date_input, date):
+            return date_input
+        if not isinstance(date_input, str):
+            return None
+
+        date_str = date_input.strip()
+
+        if date_str in ["今天", "今日", "今日内"]:
+            return date.today()
+        if date_str in ["明天", "明日", "明晚", "明早"]:
+            return date.today() + timedelta(days=1)
+        if date_str == "明":
+            return date.today() + timedelta(days=1)
+        if date_str in ["后天", "后日"]:
+            return date.today() + timedelta(days=2)
+        if date_str in ["大后天"]:
+            return date.today() + timedelta(days=3)
+
+        weekday_map = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
+        week_match = re.match(r'下?(周|星期)([一二三四五六日天])', date_str)
+        if week_match:
+            target_weekday = weekday_map.get(week_match.group(2))
+            if target_weekday is not None:
+                today = date.today()
+                days_ahead = target_weekday - today.weekday()
+                if days_ahead <= 0:
+                    days_ahead += 7
+                if week_match.group(1) == "周":
+                    days_ahead += 7
+                return today + timedelta(days=days_ahead)
+
+        try:
+            return date.fromisoformat(date_str)
+        except (ValueError, AttributeError):
+            pass
+
+        for fmt in ["%Y/%m/%d", "%Y.%m.%d", "%m/%d", "%m.%d"]:
+            try:
+                parsed = datetime.strptime(date_str, fmt)
+                if "%Y" not in fmt:
+                    if parsed.month < date.today().month:
+                        parsed = parsed.replace(year=date.today().year + 1)
+                    else:
+                        parsed = parsed.replace(year=date.today().year)
+                return parsed.date()
+            except ValueError:
+                continue
+
+        return None
 
 
 # Export

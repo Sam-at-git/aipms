@@ -1,6 +1,6 @@
 """
 初始化数据脚本
-创建：3种房型、40间房间、6名员工、初始价格策略
+创建：3种房型、40间房间、7名员工、初始价格策略、RBAC、菜单、系统配置
 """
 import sys
 sys.path.insert(0, '.')
@@ -231,11 +231,23 @@ def main():
     db = SessionLocal()
 
     try:
-        # 初始化数据
+        # 初始化业务数据
         room_types = init_room_types(db)
         init_rooms(db, room_types)
         init_employees(db)
         init_rate_plans(db, room_types)
+
+        # 初始化系统模块数据
+        from app.system.services.rbac_seed import seed_rbac_data
+        from app.system.services.menu_seed import seed_menu_data
+        from app.system.services.config_seed import seed_config_data
+
+        rbac_stats = seed_rbac_data(db)
+        print(f"RBAC初始化完成: {rbac_stats}")
+        menu_stats = seed_menu_data(db)
+        print(f"菜单初始化完成: {menu_stats}")
+        config_stats = seed_config_data(db)
+        print(f"系统配置初始化完成: {config_stats}")
 
         print("=" * 50)
         print("初始化完成！")

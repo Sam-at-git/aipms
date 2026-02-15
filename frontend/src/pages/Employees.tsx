@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import { Plus, RefreshCw, UserCog, Key } from 'lucide-react'
 import { employeeApi } from '../services/api'
 import Modal, { ModalFooter } from '../components/Modal'
-import { useUIStore } from '../store'
+import { useAuthStore, useUIStore } from '../store'
 import type { Employee, EmployeeRole } from '../types'
 
 const roleLabels: Record<EmployeeRole, string> = {
+  sysadmin: '系统管理员',
   manager: '经理',
   receptionist: '前台',
   cleaner: '清洁员'
@@ -14,7 +15,9 @@ const roleLabels: Record<EmployeeRole, string> = {
 export default function Employees() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [loading, setLoading] = useState(true)
+  const { user: currentUser } = useAuthStore()
   const { openModal, closeModal } = useUIStore()
+  const isSysadmin = currentUser?.role === 'sysadmin'
 
   // 新建员工表单
   const [form, setForm] = useState({
@@ -149,6 +152,7 @@ export default function Employees() {
                   <td className="px-4 py-3 font-mono text-sm">{emp.username}</td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-1 rounded text-xs ${
+                      emp.role === 'sysadmin' ? 'bg-red-500/20 text-red-400' :
                       emp.role === 'manager' ? 'bg-purple-500/20 text-purple-400' :
                       emp.role === 'receptionist' ? 'bg-blue-500/20 text-blue-400' :
                       'bg-emerald-500/20 text-emerald-400'
@@ -165,23 +169,27 @@ export default function Employees() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => openResetModal(emp)}
-                        className="flex items-center gap-1 text-sm text-dark-400 hover:text-primary-400"
-                      >
-                        <Key size={14} />
-                        重置密码
-                      </button>
-                      <button
-                        onClick={() => handleToggleActive(emp)}
-                        className={`text-sm ${
-                          emp.is_active ? 'text-red-400 hover:text-red-300' : 'text-emerald-400 hover:text-emerald-300'
-                        }`}
-                      >
-                        {emp.is_active ? '停用' : '启用'}
-                      </button>
-                    </div>
+                    {emp.role === 'sysadmin' && !isSysadmin ? (
+                      <span className="text-sm text-dark-500">—</span>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => openResetModal(emp)}
+                          className="flex items-center gap-1 text-sm text-dark-400 hover:text-primary-400"
+                        >
+                          <Key size={14} />
+                          重置密码
+                        </button>
+                        <button
+                          onClick={() => handleToggleActive(emp)}
+                          className={`text-sm ${
+                            emp.is_active ? 'text-red-400 hover:text-red-300' : 'text-emerald-400 hover:text-emerald-300'
+                          }`}
+                        >
+                          {emp.is_active ? '停用' : '启用'}
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

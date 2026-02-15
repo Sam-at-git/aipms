@@ -304,6 +304,7 @@ export interface ConversationMessage {
   content: string
   actions?: AIAction[]
   context?: MessageContext
+  result_data?: Record<string, unknown> | null
 }
 
 // 消息列表响应
@@ -322,6 +323,14 @@ export interface SearchResultsResponse {
 // 可用日期响应
 export interface AvailableDatesResponse {
   dates: string[]
+}
+
+// 聊天统计
+export interface ConversationStatistics {
+  total_messages: number
+  today_messages: number
+  user_count: number
+  action_distribution: { action_type: string; count: number }[]
 }
 
 // 查询结果数据
@@ -379,6 +388,7 @@ export interface OntologySchema {
 export interface OntologyEntity {
   name: string
   description: string
+  category?: string
   attributes: OntologyAttributeSimple[]
 }
 
@@ -418,6 +428,7 @@ export interface OntologyEntitySemantic {
   description: string
   table_name: string
   is_aggregate_root: boolean
+  category?: string
   attributes: OntologyAttribute[]
   relationships: OntologyRelationshipDetail[]
   related_entities: string[]
@@ -464,6 +475,7 @@ export interface OntologyKinetic {
 export interface OntologyEntityKinetic {
   name: string
   description: string
+  category?: string
   actions: OntologyAction[]
 }
 

@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuthStore } from './store'
 import Layout from './components/Layout'
@@ -22,6 +23,12 @@ import ConversationAdmin from './pages/ConversationAdmin'
 import DebugPanel from './pages/DebugPanel'
 import SessionDetail from './pages/SessionDetail'
 import ReplayResult from './pages/ReplayResult'
+import DictManagement from './pages/system/DictManagement'
+import ConfigManagement from './pages/system/ConfigManagement'
+import RbacManagement from './pages/system/RbacManagement'
+import OrgManagement from './pages/system/OrgManagement'
+import MessageCenter from './pages/system/MessageCenter'
+import SchedulerManagement from './pages/system/SchedulerManagement'
 
 // 受保护路由
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -94,6 +101,12 @@ export default function App() {
         <Route path="debug" element={<DebugPanel />} />
         <Route path="debug/sessions/:sessionId" element={<SessionDetail />} />
         <Route path="debug/replay/:replayId" element={<ReplayResult />} />
+        <Route path="system/dicts" element={<DictManagement />} />
+        <Route path="system/configs" element={<ConfigManagement />} />
+        <Route path="system/rbac" element={<RbacManagement />} />
+        <Route path="system/org" element={<OrgManagement />} />
+        <Route path="system/messages" element={<MessageCenter />} />
+        <Route path="system/schedulers" element={<SchedulerManagement />} />
       </Route>
     </Routes>
   )
@@ -104,11 +117,27 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, BedDouble, CalendarCheck, Users, ClipboardList,
   DollarSign, UserCog, BarChart3, LogOut, Menu, MessageSquare, Settings as SettingsIcon, Tag, FileText, UserCircle,
-  Database, Shield, Bug
+  Database, Shield, Bug, BookOpen, ChevronDown, ChevronRight, LucideIcon, Circle, Bell
 } from 'lucide-react'
 import { useUIStore } from './store'
+import { messageApi } from './services/api'
 
-const navItems = [
+// Icon name → Lucide component mapping
+const iconMap: Record<string, LucideIcon> = {
+  LayoutDashboard, BedDouble, CalendarCheck, Users, ClipboardList,
+  DollarSign, UserCog, BarChart3, MessageSquare, Tag, FileText, UserCircle,
+  Database, Shield, Bug, BookOpen, Settings: SettingsIcon,
+}
+
+interface DynamicMenuItem {
+  path: string
+  icon: LucideIcon
+  label: string
+  children?: DynamicMenuItem[]
+}
+
+// Fallback static navItems (used when API fails)
+const fallbackNavItems = [
   { path: '/', icon: LayoutDashboard, label: '工作台', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'] },
   { path: '/rooms', icon: BedDouble, label: '房态管理', roles: ['sysadmin', 'manager', 'receptionist'] },
   { path: '/reservations', icon: CalendarCheck, label: '预订管理', roles: ['sysadmin', 'manager', 'receptionist'] },
@@ -117,30 +146,73 @@ const navItems = [
   { path: '/tasks', icon: ClipboardList, label: '任务管理', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'] },
   { path: '/billing', icon: DollarSign, label: '账单管理', roles: ['sysadmin', 'manager', 'receptionist'] },
   { path: '/prices', icon: Tag, label: '价格管理', roles: ['sysadmin', 'manager'] },
-  { path: '/audit-logs', icon: FileText, label: '审计日志', roles: ['sysadmin'] },
-  { path: '/ontology', icon: Database, label: '本体视图', roles: ['sysadmin'] },
-  { path: '/security', icon: Shield, label: '安全管理', roles: ['sysadmin'] },
-  { path: '/conversation-admin', icon: MessageSquare, label: '聊天管理', roles: ['sysadmin'] },
-  { path: '/debug', icon: Bug, label: '调试面板', roles: ['sysadmin'] },
   { path: '/employees', icon: UserCog, label: '员工管理', roles: ['sysadmin', 'manager'] },
   { path: '/reports', icon: BarChart3, label: '统计报表', roles: ['sysadmin', 'manager'] },
   { path: '/settings', icon: SettingsIcon, label: '系统设置', roles: ['sysadmin'] },
   { path: '/chat', icon: MessageSquare, label: '独立聊天', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'] },
 ]
 
+function convertMenuTree(tree: any[]): DynamicMenuItem[] {
+  return tree.map(node => {
+    const IconComp = iconMap[node.icon] || Circle
+    const item: DynamicMenuItem = {
+      path: node.path || '',
+      icon: IconComp,
+      label: node.name,
+    }
+    if (node.children && node.children.length > 0) {
+      item.children = convertMenuTree(node.children)
+    }
+    return item
+  })
+}
+
 function AppLayout() {
   const { user, logout } = useAuthStore()
   const { sidebarCollapsed, toggleSidebar } = useUIStore()
   const navigate = useNavigate()
+  const [dynamicMenus, setDynamicMenus] = useState<DynamicMenuItem[] | null>(null)
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set())
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  useEffect(() => {
+    if (user) {
+      // Fetch user menus from backend
+      fetch('/api/system/menus/user', {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` }
+      })
+        .then(res => res.ok ? res.json() : Promise.reject())
+        .then(tree => setDynamicMenus(convertMenuTree(tree)))
+        .catch(() => setDynamicMenus(null))
+
+      // Fetch unread message count
+      messageApi.getUnreadCount().then(setUnreadCount).catch(() => {})
+      // Poll every 60 seconds
+      const interval = setInterval(() => {
+        messageApi.getUnreadCount().then(setUnreadCount).catch(() => {})
+      }, 60000)
+      return () => clearInterval(interval)
+    }
+  }, [user])
 
   const handleLogout = () => {
     logout()
     navigate('/login')
   }
 
-  const filteredNavItems = navItems.filter(item =>
-    user && item.roles.includes(user.role)
+  // Use dynamic menus if available, otherwise fallback to role-filtered static items
+  const menuItems: DynamicMenuItem[] = dynamicMenus || fallbackNavItems.filter(
+    item => user && item.roles.includes(user.role)
   )
+
+  const toggleDir = (label: string) => {
+    setExpandedDirs(prev => {
+      const next = new Set(prev)
+      if (next.has(label)) next.delete(label)
+      else next.add(label)
+      return next
+    })
+  }
 
   return (
     <>
@@ -149,7 +221,17 @@ function AppLayout() {
         {/* Logo */}
         <div className="h-14 flex items-center justify-between px-4 border-b border-dark-800">
           {!sidebarCollapsed && (
-            <span className="text-lg font-bold text-primary-400">AIPMS</span>
+            <div className="flex items-center gap-2">
+              <span className="text-lg font-bold text-primary-400">AIPMS</span>
+              <button onClick={() => navigate('/system/messages')} className="relative p-1 hover:bg-dark-800 rounded" title="消息中心">
+                <Bell size={16} className="text-dark-400" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] min-w-[16px] h-4 flex items-center justify-center rounded-full px-1">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+              </button>
+            </div>
           )}
           <button
             onClick={toggleSidebar}
@@ -161,7 +243,38 @@ function AppLayout() {
 
         {/* 导航 */}
         <nav className="flex-1 py-4 overflow-y-auto">
-          {filteredNavItems.map(item => (
+          {menuItems.map(item => item.children ? (
+            <div key={item.label}>
+              <button
+                onClick={() => toggleDir(item.label)}
+                className="flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg transition-colors text-dark-400 hover:bg-dark-800 hover:text-dark-200 w-full text-left"
+              >
+                <item.icon size={20} />
+                {!sidebarCollapsed && (
+                  <>
+                    <span className="flex-1">{item.label}</span>
+                    {expandedDirs.has(item.label) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </>
+                )}
+              </button>
+              {expandedDirs.has(item.label) && !sidebarCollapsed && item.children.map(child => (
+                <NavLink
+                  key={child.path}
+                  to={child.path}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 pl-10 pr-4 py-2 mx-2 rounded-lg transition-colors text-sm ${
+                      isActive
+                        ? 'bg-primary-600/20 text-primary-400'
+                        : 'text-dark-400 hover:bg-dark-800 hover:text-dark-200'
+                    }`
+                  }
+                >
+                  <child.icon size={16} />
+                  <span>{child.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          ) : (
             <NavLink
               key={item.path}
               to={item.path}

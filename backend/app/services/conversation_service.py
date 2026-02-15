@@ -43,6 +43,7 @@ class ConversationMessage:
     content: str
     actions: Optional[List[Dict]] = None
     context: Optional[MessageContext] = None
+    result_data: Optional[Dict[str, Any]] = None  # query_result, context from AI response
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -56,6 +57,8 @@ class ConversationMessage:
             result['actions'] = self.actions
         if self.context:
             result['context'] = asdict(self.context)
+        if self.result_data:
+            result['result_data'] = self.result_data
         return result
 
     @classmethod
@@ -75,7 +78,8 @@ class ConversationMessage:
             role=data['role'],
             content=data['content'],
             actions=data.get('actions'),
-            context=context
+            context=context,
+            result_data=data.get('result_data'),
         )
 
 
@@ -148,7 +152,8 @@ class ConversationService:
         actions: Optional[List[Dict]] = None,
         topic_id: Optional[str] = None,
         is_followup: bool = False,
-        parent_message_id: Optional[str] = None
+        parent_message_id: Optional[str] = None,
+        result_data: Optional[Dict[str, Any]] = None,
     ) -> tuple[ConversationMessage, ConversationMessage]:
         """
         保存一对用户-助手消息
@@ -191,7 +196,8 @@ class ConversationService:
                 topic_id=topic_id,
                 is_followup=False,
                 parent_message_id=user_msg.id
-            )
+            ),
+            result_data=result_data,
         )
 
         # 保存消息
@@ -469,3 +475,103 @@ class ConversationService:
     def generate_topic_id(self) -> str:
         """生成新的话题 ID"""
         return str(uuid.uuid4())[:8]
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """
+        Get conversation statistics across all users.
+
+        Returns:
+            Dict with total_conversations, today_count, per_user stats,
+            action distribution, etc.
+        """
+        today_str = date.today().isoformat()
+        total_messages = 0
+        today_messages = 0
+        user_count = 0
+        action_counts: Dict[str, int] = {}
+
+        if not self.base_dir.exists():
+            return {
+                "total_messages": 0,
+                "today_messages": 0,
+                "user_count": 0,
+                "action_distribution": [],
+            }
+
+        for user_dir in self.base_dir.iterdir():
+            if not user_dir.is_dir():
+                continue
+            try:
+                int(user_dir.name)
+            except ValueError:
+                continue
+
+            files = list(user_dir.glob("*.jsonl"))
+            if not files:
+                continue
+            user_count += 1
+
+            for file_path in files:
+                msgs = self._read_file(file_path)
+                total_messages += len(msgs)
+
+                if file_path.stem == today_str:
+                    today_messages += len(msgs)
+
+                # Count actions
+                for msg in msgs:
+                    if msg.actions:
+                        for act in msg.actions:
+                            atype = act.get("action_type", "unknown")
+                            action_counts[atype] = action_counts.get(atype, 0) + 1
+
+        # Sort actions by count desc
+        action_distribution = sorted(
+            [{"action_type": k, "count": v} for k, v in action_counts.items()],
+            key=lambda x: x["count"],
+            reverse=True,
+        )
+
+        return {
+            "total_messages": total_messages,
+            "today_messages": today_messages,
+            "user_count": user_count,
+            "action_distribution": action_distribution[:10],
+        }
+
+    def export_messages(
+        self,
+        user_id: int,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Export messages for a user within a date range.
+
+        Returns:
+            List of message dicts ready for JSON/CSV serialization.
+        """
+        user_dir = self._get_user_dir(user_id)
+        files = sorted(user_dir.glob("*.jsonl"))
+
+        start_d = date.fromisoformat(start_date) if start_date else None
+        end_d = date.fromisoformat(end_date) if end_date else None
+
+        results = []
+        for file_path in files:
+            file_date_str = file_path.stem
+            try:
+                file_date = date.fromisoformat(file_date_str)
+            except ValueError:
+                continue
+
+            if start_d and file_date < start_d:
+                continue
+            if end_d and file_date > end_d:
+                continue
+
+            msgs = self._read_file(file_path)
+            for msg in msgs:
+                results.append(msg.to_dict())
+
+        return results

@@ -31,6 +31,7 @@ def init_db():
     from app.models import ontology  # noqa
     from app.models import snapshots  # noqa - 操作快照和配置历史表
     from app.models import security_events  # noqa - 安全事件表
+    from app.system import models as system_models  # noqa - 系统管理表
     Base.metadata.create_all(bind=engine)
 
     # 启用 WAL 模式以提高并发性能

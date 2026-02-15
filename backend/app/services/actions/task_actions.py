@@ -40,7 +40,8 @@ def register_task_actions(
         allowed_roles={"receptionist", "manager", "cleaner"},
         undoable=True,
         side_effects=["creates_task"],
-        search_keywords=["创建任务", "清洁任务", "维修任务", "打扫", "create task"]
+        search_keywords=["创建任务", "清洁任务", "维修任务", "打扫", "create task"],
+        ui_required_fields=["room_number", "task_type"],
     )
     def handle_create_task(
         params: CreateTaskParams,

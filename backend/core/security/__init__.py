@@ -54,6 +54,13 @@ from core.security.masking import (
     data_masker,
 )
 
+# 权限提供者接口
+from core.security.permission import (
+    IPermissionProvider,
+    PermissionProviderRegistry,
+    permission_provider_registry,
+)
+
 # 安全级别（从 core.ontology.security 重新导出）
 from core.ontology.security import SecurityLevel
 
@@ -81,6 +88,10 @@ __all__ = [
     "MaskingRule",
     "DataMasker",
     "data_masker",
+    # 权限提供者
+    "IPermissionProvider",
+    "PermissionProviderRegistry",
+    "permission_provider_registry",
     # 安全级别
     "SecurityLevel",
 ]

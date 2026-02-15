@@ -3,9 +3,10 @@ import type {
   Room, RoomType, Reservation, StayRecord, Task, Employee,
   Bill, RatePlan, DashboardStats, LoginResponse, AuditLog, ActionSummary,
   Guest, GuestStayHistory, GuestReservationHistory,
-  MessagesListResponse, SearchResultsResponse, AvailableDatesResponse, AIResponseWithHistory,
+  MessagesListResponse, SearchResultsResponse, AvailableDatesResponse, AIResponseWithHistory, ConversationStatistics,
   DebugSession, DebugSessionDetail, SessionDetailResponse, ReplayRequest,
-  ReplayResponse, DebugStatistics, SessionsListResponse, ReplaysListResponse
+  ReplayResponse, DebugStatistics, SessionsListResponse, ReplaysListResponse,
+  TokenTrendResponse, ErrorAggregationResponse
 } from '../types'
 
 const api = axios.create({
@@ -521,7 +522,36 @@ export const conversationApi = {
   }): Promise<MessagesListResponse> => {
     const res = await api.get(`/conversations/admin/user/${userId}/messages`, { params })
     return res.data
-  }
+  },
+  adminGetStatistics: async (): Promise<ConversationStatistics> => {
+    const res = await api.get('/conversations/admin/statistics')
+    return res.data
+  },
+  adminExport: async (userId: number, params?: {
+    start_date?: string
+    end_date?: string
+    format?: 'json' | 'csv'
+  }): Promise<any> => {
+    const format = params?.format || 'json'
+    if (format === 'csv') {
+      const res = await api.get('/conversations/admin/export', {
+        params: { user_id: userId, ...params },
+        responseType: 'blob',
+      })
+      // Trigger download
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `chat_user_${userId}.csv`
+      a.click()
+      window.URL.revokeObjectURL(url)
+      return { downloaded: true }
+    }
+    const res = await api.get('/conversations/admin/export', {
+      params: { user_id: userId, ...params },
+    })
+    return res.data
+  },
 }
 
 // ============== 审计日志 ==============
@@ -549,6 +579,33 @@ export const auditApi = {
   getSummary: async (days?: number): Promise<ActionSummary[]> => {
     const res = await api.get('/audit-logs/summary', { params: { days } })
     return res.data
+  },
+  getTrend: async (days?: number): Promise<{ days: number; data: { day: string; count: number }[] }> => {
+    const res = await api.get('/audit-logs/trend', { params: { days } })
+    return res.data
+  },
+  exportLogs: async (params: {
+    action?: string
+    entity_type?: string
+    operator_id?: number
+    start_date?: string
+    end_date?: string
+    format?: string
+  }): Promise<void> => {
+    const format = params.format || 'json'
+    const res = await api.get('/audit-logs/export', {
+      params,
+      responseType: format === 'csv' ? 'blob' : 'json'
+    })
+    const blob = format === 'csv'
+      ? new Blob([res.data], { type: 'text/csv' })
+      : new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `audit_logs.${format === 'csv' ? 'csv' : 'json'}`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 }
 
@@ -613,6 +670,7 @@ export const undoApi = {
 export interface OntologyEntity {
   name: string
   description: string
+  category?: string
   attributes: {
     name: string
     type: string
@@ -840,6 +898,14 @@ export const securityApi = {
   getSeverityLevels: async (): Promise<{ value: string; label: string }[]> => {
     const res = await api.get('/security/severity-levels')
     return res.data
+  },
+  getTrend: async (days?: number): Promise<{ days: number; data: { day: string; low: number; medium: number; high: number; critical: number; total: number }[] }> => {
+    const res = await api.get('/security/trend', { params: { days } })
+    return res.data
+  },
+  getRiskScores: async (days?: number): Promise<{ user_id: number; user_name: string; score: number; event_count: number; breakdown: Record<string, number> }[]> => {
+    const res = await api.get('/security/risk-scores', { params: { days } })
+    return res.data
   }
 }
 
@@ -902,5 +968,328 @@ export const debugApi = {
   cleanupOldSessions: async (days: number): Promise<{ message: string; deleted_count: number; days: number }> => {
     const res = await api.post('/debug/cleanup', null, { params: { days } })
     return res.data
-  }
+  },
+
+  // Analytics: Token trend (daily aggregation)
+  getTokenTrend: async (days: number = 7): Promise<TokenTrendResponse> => {
+    const res = await api.get('/debug/analytics/token-trend', { params: { days } })
+    return res.data
+  },
+
+  // Analytics: Error aggregation
+  getErrorAggregation: async (days: number = 7): Promise<ErrorAggregationResponse> => {
+    const res = await api.get('/debug/analytics/error-aggregation', { params: { days } })
+    return res.data
+  },
+}
+
+// ============== 数据字典 ==============
+
+export interface DictType {
+  id: number
+  code: string
+  name: string
+  description: string
+  is_system: boolean
+  is_active: boolean
+  item_count: number
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface DictItem {
+  id: number
+  dict_type_id: number
+  label: string
+  value: string
+  color: string
+  extra: string
+  sort_order: number
+  is_default: boolean
+  is_active: boolean
+  created_at: string | null
+  updated_at: string | null
+}
+
+// ============== RBAC Types ==============
+
+export interface SysRole {
+  id: number
+  code: string
+  name: string
+  description: string
+  data_scope: string
+  sort_order: number
+  is_system: boolean
+  is_active: boolean
+  created_at: string | null
+  updated_at: string | null
+  permission_count: number
+}
+
+export interface SysRoleDetail extends SysRole {
+  permissions: SysPermission[]
+}
+
+export interface SysPermission {
+  id: number
+  code: string
+  name: string
+  type: string
+  resource: string
+  action: string
+  parent_id: number | null
+  sort_order: number
+  is_active: boolean
+  created_at: string | null
+}
+
+export interface PermissionTreeNode extends SysPermission {
+  children: PermissionTreeNode[]
+}
+
+export interface UserRoleInfo {
+  user_id: number
+  roles: SysRole[]
+}
+
+export const rbacApi = {
+  // Roles
+  getRoles: async (includeInactive?: boolean): Promise<SysRole[]> => {
+    const res = await api.get('/system/roles', { params: includeInactive ? { include_inactive: true } : {} })
+    return res.data
+  },
+  getRole: async (id: number): Promise<SysRoleDetail> => {
+    const res = await api.get(`/system/roles/${id}`)
+    return res.data
+  },
+  createRole: async (data: { code: string; name: string; description?: string; data_scope?: string; sort_order?: number }): Promise<SysRole> => {
+    const res = await api.post('/system/roles', data)
+    return res.data
+  },
+  updateRole: async (id: number, data: { name?: string; description?: string; data_scope?: string; sort_order?: number; is_active?: boolean }): Promise<SysRole> => {
+    const res = await api.put(`/system/roles/${id}`, data)
+    return res.data
+  },
+  deleteRole: async (id: number): Promise<void> => {
+    await api.delete(`/system/roles/${id}`)
+  },
+  assignPermissions: async (roleId: number, permissionIds: number[]): Promise<void> => {
+    await api.put(`/system/roles/${roleId}/permissions`, permissionIds)
+  },
+
+  // Permissions
+  getPermissions: async (permType?: string): Promise<SysPermission[]> => {
+    const res = await api.get('/system/permissions', { params: permType ? { perm_type: permType } : {} })
+    return res.data
+  },
+  getPermissionTree: async (): Promise<PermissionTreeNode[]> => {
+    const res = await api.get('/system/permissions/tree')
+    return res.data
+  },
+  createPermission: async (data: { code: string; name: string; type?: string; resource?: string; action?: string; parent_id?: number | null; sort_order?: number }): Promise<SysPermission> => {
+    const res = await api.post('/system/permissions', data)
+    return res.data
+  },
+  updatePermission: async (id: number, data: { name?: string; type?: string; resource?: string; action?: string; sort_order?: number; is_active?: boolean }): Promise<SysPermission> => {
+    const res = await api.put(`/system/permissions/${id}`, data)
+    return res.data
+  },
+  deletePermission: async (id: number): Promise<void> => {
+    await api.delete(`/system/permissions/${id}`)
+  },
+
+  // User Roles
+  getUserRoles: async (userId: number): Promise<UserRoleInfo> => {
+    const res = await api.get(`/system/users/${userId}/roles`)
+    return res.data
+  },
+  assignUserRoles: async (userId: number, roleIds: number[]): Promise<void> => {
+    await api.put(`/system/users/${userId}/roles`, { role_ids: roleIds })
+  },
+}
+
+// ============== Message Types ==============
+
+export interface SysMessageItem {
+  id: number
+  sender_id: number | null
+  recipient_id: number
+  title: string
+  content: string
+  msg_type: string
+  related_entity_type: string | null
+  related_entity_id: number | null
+  is_read: boolean
+  read_at: string | null
+  created_at: string | null
+}
+
+export interface InboxData {
+  messages: SysMessageItem[]
+  total: number
+  unread_count: number
+}
+
+export interface SysAnnouncementActive {
+  id: number
+  title: string
+  content: string
+  is_pinned: boolean
+  publish_at: string | null
+  is_read: boolean
+}
+
+export const messageApi = {
+  getInbox: async (params?: { is_read?: boolean; msg_type?: string; limit?: number; offset?: number }): Promise<InboxData> => {
+    const res = await api.get('/system/messages/inbox', { params })
+    return res.data
+  },
+  getUnreadCount: async (): Promise<number> => {
+    const res = await api.get('/system/messages/unread-count')
+    return res.data.count
+  },
+  sendMessage: async (data: { recipient_id: number; title: string; content: string; msg_type?: string }): Promise<SysMessageItem> => {
+    const res = await api.post('/system/messages/send', data)
+    return res.data
+  },
+  markRead: async (id: number): Promise<void> => {
+    await api.put(`/system/messages/${id}/read`)
+  },
+  markAllRead: async (): Promise<{ updated: number }> => {
+    const res = await api.put('/system/messages/read-all')
+    return res.data
+  },
+  getActiveAnnouncements: async (): Promise<SysAnnouncementActive[]> => {
+    const res = await api.get('/system/announcements/active')
+    return res.data
+  },
+  markAnnouncementRead: async (id: number): Promise<void> => {
+    await api.put(`/system/announcements/${id}/read`)
+  },
+}
+
+// ============== Organization Types ==============
+
+export interface SysDepartment {
+  id: number
+  code: string
+  name: string
+  parent_id: number | null
+  leader_id: number | null
+  sort_order: number
+  is_active: boolean
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface SysDepartmentTree extends SysDepartment {
+  children: SysDepartmentTree[]
+}
+
+export interface SysPosition {
+  id: number
+  code: string
+  name: string
+  department_id: number | null
+  sort_order: number
+  is_active: boolean
+  created_at: string | null
+}
+
+export const orgApi = {
+  // Departments
+  getDepartments: async (isActive?: boolean): Promise<SysDepartment[]> => {
+    const res = await api.get('/system/departments', { params: isActive !== undefined ? { is_active: isActive } : {} })
+    return res.data
+  },
+  getDepartmentTree: async (): Promise<SysDepartmentTree[]> => {
+    const res = await api.get('/system/departments/tree')
+    return res.data
+  },
+  getDepartment: async (id: number): Promise<SysDepartment> => {
+    const res = await api.get(`/system/departments/${id}`)
+    return res.data
+  },
+  createDepartment: async (data: { code: string; name: string; parent_id?: number | null; leader_id?: number | null; sort_order?: number }): Promise<SysDepartment> => {
+    const res = await api.post('/system/departments', data)
+    return res.data
+  },
+  updateDepartment: async (id: number, data: { name?: string; parent_id?: number | null; leader_id?: number | null; sort_order?: number; is_active?: boolean }): Promise<SysDepartment> => {
+    const res = await api.put(`/system/departments/${id}`, data)
+    return res.data
+  },
+  deleteDepartment: async (id: number): Promise<void> => {
+    await api.delete(`/system/departments/${id}`)
+  },
+
+  // Positions
+  getPositions: async (departmentId?: number, isActive?: boolean): Promise<SysPosition[]> => {
+    const params: Record<string, any> = {}
+    if (departmentId !== undefined) params.department_id = departmentId
+    if (isActive !== undefined) params.is_active = isActive
+    const res = await api.get('/system/positions', { params })
+    return res.data
+  },
+  getPosition: async (id: number): Promise<SysPosition> => {
+    const res = await api.get(`/system/positions/${id}`)
+    return res.data
+  },
+  createPosition: async (data: { code: string; name: string; department_id?: number | null; sort_order?: number }): Promise<SysPosition> => {
+    const res = await api.post('/system/positions', data)
+    return res.data
+  },
+  updatePosition: async (id: number, data: { name?: string; department_id?: number | null; sort_order?: number; is_active?: boolean }): Promise<SysPosition> => {
+    const res = await api.put(`/system/positions/${id}`, data)
+    return res.data
+  },
+  deletePosition: async (id: number): Promise<void> => {
+    await api.delete(`/system/positions/${id}`)
+  },
+}
+
+export const dictApi = {
+  // Dict Types
+  getTypes: async (isActive?: boolean): Promise<DictType[]> => {
+    const res = await api.get('/system/dicts', { params: isActive !== undefined ? { is_active: isActive } : {} })
+    return res.data
+  },
+  getType: async (id: number): Promise<DictType> => {
+    const res = await api.get(`/system/dicts/${id}`)
+    return res.data
+  },
+  createType: async (data: { code: string; name: string; description?: string; is_system?: boolean }): Promise<DictType> => {
+    const res = await api.post('/system/dicts', data)
+    return res.data
+  },
+  updateType: async (id: number, data: { name?: string; description?: string; is_active?: boolean }): Promise<DictType> => {
+    const res = await api.put(`/system/dicts/${id}`, data)
+    return res.data
+  },
+  deleteType: async (id: number): Promise<{ success: boolean }> => {
+    const res = await api.delete(`/system/dicts/${id}`)
+    return res.data
+  },
+
+  // Dict Items
+  getItems: async (typeId: number): Promise<DictItem[]> => {
+    const res = await api.get(`/system/dicts/${typeId}/items`)
+    return res.data
+  },
+  getItemsByCode: async (typeCode: string): Promise<DictItem[]> => {
+    const res = await api.get(`/system/dicts/code/${typeCode}/items`)
+    return res.data
+  },
+  createItem: async (typeId: number, data: { label: string; value: string; color?: string; extra?: string; sort_order?: number; is_default?: boolean }): Promise<DictItem> => {
+    const res = await api.post(`/system/dicts/${typeId}/items`, data)
+    return res.data
+  },
+  updateItem: async (itemId: number, data: { label?: string; value?: string; color?: string; extra?: string; sort_order?: number; is_default?: boolean; is_active?: boolean }): Promise<DictItem> => {
+    const res = await api.put(`/system/dicts/items/${itemId}`, data)
+    return res.data
+  },
+  deleteItem: async (itemId: number): Promise<{ success: boolean }> => {
+    const res = await api.delete(`/system/dicts/items/${itemId}`)
+    return res.data
+  },
 }

@@ -339,11 +339,15 @@ class Employee(Base):
     phone = Column(String(20))                           # 手机号
     role = Column(SQLEnum(EmployeeRole), nullable=False)
     is_active = Column(Boolean, default=True)            # 是否启用
+    department_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True)  # 所属部门
+    position_id = Column(Integer, ForeignKey("sys_position.id"), nullable=True)      # 岗位
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # 链接
     assigned_tasks = relationship("Task", foreign_keys="Task.assignee_id", back_populates="assignee")
+    department = relationship("SysDepartment", foreign_keys=[department_id])
+    position = relationship("SysPosition", foreign_keys=[position_id])
 
     @property
     def clearance(self) -> SecurityLevel:

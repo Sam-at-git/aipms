@@ -119,6 +119,28 @@ def receptionist_auth_headers(receptionist_token):
 
 
 @pytest.fixture
+def sysadmin_token(db_session):
+    """创建系统管理员用户并返回token"""
+    sysadmin = Employee(
+        username="sysadmin",
+        password_hash=get_password_hash("123456"),
+        name="系统管理员",
+        role=EmployeeRole.SYSADMIN,
+        is_active=True
+    )
+    db_session.add(sysadmin)
+    db_session.commit()
+    db_session.refresh(sysadmin)
+    return create_access_token(sysadmin.id, sysadmin.role)
+
+
+@pytest.fixture
+def sysadmin_auth_headers(sysadmin_token):
+    """返回系统管理员认证的请求头"""
+    return {"Authorization": f"Bearer {sysadmin_token}"}
+
+
+@pytest.fixture
 def cleaner_auth_headers(cleaner_token):
     """返回清洁员认证的请求头"""
     return {"Authorization": f"Bearer {cleaner_token}"}

@@ -38,7 +38,8 @@ def register_stay_actions(
         allowed_roles={"receptionist", "manager"},
         undoable=True,
         side_effects=["settles_bill", "updates_room_status", "creates_cleaning_task"],
-        search_keywords=["退房", "结算", "离店", "checkout"]
+        search_keywords=["退房", "结算", "离店", "checkout"],
+        ui_required_fields=["stay_record_id"],
     )
     def handle_checkout(
         params: CheckoutParams,
@@ -131,7 +132,8 @@ def register_stay_actions(
         allowed_roles={"receptionist", "manager"},
         undoable=True,
         side_effects=["creates_stay_record", "creates_bill", "updates_room_status"],
-        search_keywords=["入住", "预订入住", "办理入住", "checkin", "check in"]
+        search_keywords=["入住", "预订入住", "办理入住", "checkin", "check in"],
+        ui_required_fields=["reservation_id", "room_number"],
     )
     def handle_checkin(
         params: CheckinParams,
@@ -229,7 +231,8 @@ def register_stay_actions(
         allowed_roles={"receptionist", "manager"},
         undoable=True,
         side_effects=["updates_stay_record", "updates_bill"],
-        search_keywords=["续住", "延住", "延长入住", "extend stay"]
+        search_keywords=["续住", "延住", "延长入住", "extend stay"],
+        ui_required_fields=["stay_record_id", "new_check_out_date"],
     )
     def handle_extend_stay(
         params: ExtendStayParams,
@@ -276,7 +279,8 @@ def register_stay_actions(
         allowed_roles={"receptionist", "manager"},
         undoable=True,
         side_effects=["updates_stay_record", "updates_room_status"],
-        search_keywords=["换房", "转房", "调房", "change room"]
+        search_keywords=["换房", "转房", "调房", "change room"],
+        ui_required_fields=["stay_record_id", "new_room_number"],
     )
     def handle_change_room(
         params: ChangeRoomParams,

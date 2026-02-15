@@ -87,11 +87,19 @@ class EmployeeService:
         self.db.refresh(employee)
         return employee
 
-    def reset_password(self, employee_id: int, data: PasswordReset) -> bool:
-        """重置密码（经理操作）"""
+    def reset_password(self, employee_id: int, data: PasswordReset,
+                       operator: Optional[Employee] = None) -> bool:
+        """重置密码
+
+        只有 sysadmin 角色才能重置 sysadmin 角色用户的密码。
+        """
         employee = self.get_employee(employee_id)
         if not employee:
             raise ValueError("员工不存在")
+
+        if employee.role == EmployeeRole.SYSADMIN:
+            if operator is None or operator.role != EmployeeRole.SYSADMIN:
+                raise ValueError("只有系统管理员才能重置系统管理员的密码")
 
         employee.password_hash = get_password_hash(data.new_password)
         self.db.commit()

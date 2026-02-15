@@ -185,24 +185,20 @@ class TestExecuteActionWithRegistry:
             assert "Registry error" in result["message"]
 
     def test_execute_action_registry_unavailable(self, db_session, mock_user):
-        """Test execute_action when registry is not available."""
+        """Test execute_action when registry is not available returns error."""
         service = AIService(db_session)
         service._action_registry = False
 
-        # Should use legacy path
-        with patch.object(service, 'checkout_service') as mock_checkout:
-            mock_stay = Mock()
-            mock_stay.room.room_number = "201"
-            mock_checkout.check_out.return_value = mock_stay
+        # With no registry, action should fail gracefully
+        action = {
+            "action_type": "checkout",
+            "params": {"stay_record_id": 1}
+        }
 
-            action = {
-                "action_type": "checkout",
-                "params": {"stay_record_id": 1}
-            }
+        result = service.execute_action(action, mock_user)
 
-            result = service.execute_action(action, mock_user)
-
-            assert result["success"] is True
+        assert result["success"] is False
+        assert "不支持" in result["message"]
 
 
 class TestGetRelevantTools:

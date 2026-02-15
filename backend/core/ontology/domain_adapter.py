@@ -121,6 +121,54 @@ class IDomainAdapter(ABC):
         """
         return f"{entity_type}:{entity_id}"
 
+    # ========== OODA Orchestrator Support Methods ==========
+    # These methods allow the domain adapter to inject domain-specific logic
+    # into the generic OODA orchestrator without the orchestrator knowing
+    # about any specific business domain.
+
+    def build_llm_context(self, db) -> Dict[str, Any]:
+        """Build domain-specific context for LLM prompts.
+
+        Returns context data the LLM needs to make informed decisions,
+        e.g., available inventory, active transactions, pending tasks.
+        """
+        return {}
+
+    def enhance_action_params(self, action_type: str, params: Dict[str, Any],
+                              message: str, db) -> Dict[str, Any]:
+        """Enhance LLM-extracted params with DB lookups.
+
+        Resolves fuzzy references (e.g., room name → room_id) and fills
+        in derived fields that the LLM cannot know.
+        """
+        return params
+
+    def enhance_single_action_params(self, action_type: str, params: Dict[str, Any],
+                                     db) -> Dict[str, Any]:
+        """Simplified param enhancement for follow-up mode (single action)."""
+        return params
+
+    def get_field_definition(self, param_name: str, action_type: str,
+                             current_params: Dict[str, Any], db) -> Optional[Any]:
+        """Get UI field definition for a missing parameter.
+
+        Returns a MissingField-like object with field type, options, etc.
+        for the frontend to render an input form.
+        """
+        return None
+
+    def get_report_data(self, db) -> Dict[str, Any]:
+        """Get domain-specific dashboard/report data."""
+        return {}
+
+    def get_help_text(self, language: str = "zh") -> str:
+        """Get domain-specific help text for the AI assistant."""
+        return ""
+
+    def get_display_names(self) -> Dict[str, str]:
+        """Get field name → display name mapping for follow-up messages."""
+        return {}
+
 
 # Export
 __all__ = ["IDomainAdapter"]

@@ -2,10 +2,11 @@
 安全事件路由
 提供安全事件查询、统计、告警管理API
 """
-from datetime import datetime, timedelta, UTC
-from typing import List, Optional
+from datetime import datetime, timedelta, date, UTC
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func, cast, Date
 from app.database import get_db
 from app.models.ontology import Employee
 from app.models.security_events import SecurityEventType, SecurityEventSeverity
@@ -174,3 +175,85 @@ async def get_severity_levels(
         {"value": sv.value, "label": SEVERITY_DESCRIPTIONS.get(sv, sv.value)}
         for sv in SecurityEventSeverity
     ]
+
+
+@router.get("/trend")
+async def get_event_trend(
+    days: int = Query(default=7, ge=1, le=30),
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_sysadmin),
+) -> Dict[str, Any]:
+    """获取安全事件趋势（SE-2）— 按天/severity 分层"""
+    from app.models.security_events import SecurityEventModel
+    start_date = date.today() - timedelta(days=days)
+
+    results = db.query(
+        cast(SecurityEventModel.timestamp, Date).label('day'),
+        SecurityEventModel.severity,
+        func.count(SecurityEventModel.id).label('count'),
+    ).filter(
+        SecurityEventModel.timestamp >= datetime.combine(start_date, datetime.min.time())
+    ).group_by(
+        cast(SecurityEventModel.timestamp, Date),
+        SecurityEventModel.severity,
+    ).order_by(
+        cast(SecurityEventModel.timestamp, Date),
+    ).all()
+
+    data: Dict[str, Dict[str, int]] = {}
+    for r in results:
+        day_str = str(r.day)
+        if day_str not in data:
+            data[day_str] = {"low": 0, "medium": 0, "high": 0, "critical": 0, "total": 0}
+        data[day_str][r.severity] = r.count
+        data[day_str]["total"] += r.count
+
+    return {
+        "days": days,
+        "data": [{"day": day, **counts} for day, counts in sorted(data.items())],
+    }
+
+
+@router.get("/risk-scores")
+async def get_user_risk_scores(
+    days: int = Query(default=7, ge=1, le=30),
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_sysadmin),
+) -> List[Dict[str, Any]]:
+    """获取用户风险评分（SE-3）— 基于事件频率和严重程度"""
+    from app.models.security_events import SecurityEventModel
+    start_date = date.today() - timedelta(days=days)
+
+    SEVERITY_WEIGHTS = {"low": 1, "medium": 3, "high": 7, "critical": 15}
+
+    results = db.query(
+        SecurityEventModel.user_id,
+        SecurityEventModel.user_name,
+        SecurityEventModel.severity,
+        func.count(SecurityEventModel.id).label('count'),
+    ).filter(
+        SecurityEventModel.timestamp >= datetime.combine(start_date, datetime.min.time()),
+        SecurityEventModel.user_id.isnot(None),
+    ).group_by(
+        SecurityEventModel.user_id,
+        SecurityEventModel.user_name,
+        SecurityEventModel.severity,
+    ).all()
+
+    user_scores: Dict[int, Dict[str, Any]] = {}
+    for r in results:
+        if r.user_id not in user_scores:
+            user_scores[r.user_id] = {
+                "user_id": r.user_id,
+                "user_name": r.user_name or f"User {r.user_id}",
+                "score": 0,
+                "event_count": 0,
+                "breakdown": {},
+            }
+        weight = SEVERITY_WEIGHTS.get(r.severity, 1)
+        user_scores[r.user_id]["score"] += r.count * weight
+        user_scores[r.user_id]["event_count"] += r.count
+        user_scores[r.user_id]["breakdown"][r.severity] = r.count
+
+    scored = sorted(user_scores.values(), key=lambda x: x["score"], reverse=True)
+    return scored

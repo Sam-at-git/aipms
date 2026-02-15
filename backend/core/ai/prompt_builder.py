@@ -34,6 +34,7 @@ class PromptContext:
     include_permissions: bool = False  # 默认不包含权限矩阵（除非是管理员）
     custom_variables: Dict[str, Any] = field(default_factory=dict)
     domain_prompt: str = ""  # 领域特定提示词，由 DomainAdapter 注入
+    message_hint: str = ""  # 用户消息（用于关键词匹配按需注入）
 
     def __post_init__(self):
         if self.current_date is None:
@@ -168,7 +169,7 @@ class PromptBuilder:
         # 构建各部分描述
         role_context = self._build_role_context(context) if context.user_role else ""
         semantic_query_syntax = self._build_semantic_query_syntax() if context.include_entities else ""
-        entity_descriptions = self._build_entity_descriptions() if context.include_entities else ""
+        entity_descriptions = self._build_entity_descriptions(context) if context.include_entities else ""
         action_descriptions = self._build_action_descriptions() if context.include_actions else ""
         state_machine_descriptions = self._build_state_machine_descriptions() if context.include_state_machines else ""
         rule_descriptions = self._build_rule_descriptions() if context.include_rules else ""
@@ -205,44 +206,81 @@ class PromptBuilder:
             lines.append(f"**用户ID:** {context.user_id}")
         return "\n".join(lines)
 
-    def _build_entity_descriptions(self) -> str:
-        """构建实体描述部分 (SPEC-51)"""
+    # 系统管理相关关键词（用于按需注入系统实体到 prompt）
+    _SYSTEM_KEYWORDS = frozenset({
+        "角色", "权限", "部门", "字典", "配置", "菜单",
+        "公告", "定时任务", "岗位", "组织架构",
+        "system", "role", "permission", "config", "menu", "dict",
+    })
+
+    def _build_entity_descriptions(self, context: Optional[PromptContext] = None) -> str:
+        """构建实体描述部分 (SPEC-51 + SPEC-23: 按需注入系统实体)"""
         entities = self.registry.get_entities()
 
         if not entities:
             return "**本体实体:** 暂无注册实体"
 
+        # 按 category 分组
+        business_entities = [e for e in entities if getattr(e, 'category', '') != 'system']
+        system_entities = [e for e in entities if getattr(e, 'category', '') == 'system']
+
         lines = ["**本体实体:**"]
-        for entity in entities:
-            # 实体基本信息
-            lines.append(f"\n### {entity.name}")
-            if entity.description:
-                lines.append(f"**描述:** {entity.description}")
-            if hasattr(entity, 'table_name') and entity.table_name:
-                lines.append(f"**数据表:** {entity.table_name}")
 
-            # 属性列表（SPEC-51: 动态注入属性元数据）
-            if getattr(entity, 'properties', None):
-                lines.append("\n**属性:**")
-                for prop in entity.properties:
-                    if isinstance(prop, PropertyMetadata):
-                        # 使用 PropertyMetadata 的信息
-                        required = "必填" if prop.required else "可选"
-                        type_info = prop.type.value if hasattr(prop.type, 'value') else str(prop.type)
-                        security_note = ""
-                        if hasattr(prop, 'security_level') and prop.security_level:
-                            security_note = f" [{prop.security_level}]"
+        # 业务实体始终注入
+        for entity in business_entities:
+            self._append_entity_description(entity, lines)
 
-                        lines.append(f"- **{prop.name}** ({type_info}) {required}{security_note}: {prop.description or ''}")
-                    elif isinstance(prop, dict):
-                        # 回退到字典处理
-                        required = "必填" if prop.get('required', False) else "可选"
-                        lines.append(f"- **{prop.get('name')}** {required}: {prop.get('description', '')}")
-                    elif isinstance(prop, str):
-                        # 纯字符串属性名
-                        lines.append(f"- **{prop}**")
+        # 系统实体按需注入
+        if system_entities and self._should_include_system_entities(context):
+            lines.append("\n## 系统管理实体")
+            for entity in system_entities:
+                self._append_entity_description(entity, lines)
 
         return "\n".join(lines)
+
+    def _should_include_system_entities(self, context: Optional[PromptContext] = None) -> bool:
+        """判断是否需要注入系统实体到 prompt（SPEC-23）"""
+        if context is None:
+            return False
+
+        # 条件 1：用户角色是 sysadmin/manager
+        if context.user_role in ("sysadmin", "manager"):
+            return True
+
+        # 条件 2：用户消息包含系统管理关键词
+        if context.message_hint and any(
+            kw in context.message_hint for kw in self._SYSTEM_KEYWORDS
+        ):
+            return True
+
+        return False
+
+    def _append_entity_description(self, entity: EntityMetadata, lines: list) -> None:
+        """追加单个实体的描述到 lines"""
+        lines.append(f"\n### {entity.name}")
+        if entity.description:
+            lines.append(f"**描述:** {entity.description}")
+        if hasattr(entity, 'table_name') and entity.table_name:
+            lines.append(f"**数据表:** {entity.table_name}")
+
+        # 属性列表（SPEC-51: 动态注入属性元数据）
+        if getattr(entity, 'properties', None):
+            lines.append("\n**属性:**")
+            props = entity.properties.values() if isinstance(entity.properties, dict) else entity.properties
+            for prop in props:
+                if isinstance(prop, PropertyMetadata):
+                    required = "必填" if prop.is_required else "可选"
+                    type_info = prop.type.value if hasattr(prop.type, 'value') else str(prop.type)
+                    security_note = ""
+                    if hasattr(prop, 'security_level') and prop.security_level:
+                        security_note = f" [{prop.security_level}]"
+                    enum_hint = f" 可选值: {', '.join(prop.enum_values)}" if prop.enum_values else ""
+                    lines.append(f"- **{prop.name}** ({type_info}) {required}{security_note}: {prop.description or ''}{enum_hint}")
+                elif isinstance(prop, dict):
+                    required = "必填" if prop.get('required', False) else "可选"
+                    lines.append(f"- **{prop.get('name')}** {required}: {prop.get('description', '')}")
+                elif isinstance(prop, str):
+                    lines.append(f"- **{prop}**")
 
     def _build_action_descriptions(self) -> str:
         """

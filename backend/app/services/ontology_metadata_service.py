@@ -427,9 +427,11 @@ class OntologyMetadataService:
         # 构建响应
         entities = []
         for entity_name, entity_actions in all_actions.items():
+            entity_meta = onto_registry.get_entity(entity_name)
             entities.append({
                 "name": entity_name,
                 "description": self.ENTITY_DESCRIPTIONS.get(entity_name, ""),
+                "category": getattr(entity_meta, "category", "") if entity_meta else "",
                 "actions": entity_actions
             })
 

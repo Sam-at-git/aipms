@@ -2,9 +2,12 @@
 会话历史路由
 管理聊天消息的查询和搜索
 """
+import csv
+import io
 from datetime import date
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.models.ontology import Employee
 from app.services.conversation_service import ConversationService, ConversationMessage
@@ -40,6 +43,7 @@ class ConversationMessageResponse(BaseModel):
     content: str
     actions: Optional[List[dict]] = None
     context: Optional[MessageContextResponse] = None
+    result_data: Optional[dict] = None  # query_result, context from AI response
 
     @classmethod
     def from_model(cls, msg: ConversationMessage) -> 'ConversationMessageResponse':
@@ -56,7 +60,8 @@ class ConversationMessageResponse(BaseModel):
             role=msg.role,
             content=msg.content,
             actions=msg.actions,
-            context=context
+            context=context,
+            result_data=msg.result_data,
         )
 
 
@@ -281,3 +286,57 @@ def admin_get_user_messages(
         has_more=False,
         oldest_timestamp=oldest_timestamp
     )
+
+
+@router.get("/admin/statistics")
+def admin_get_statistics(
+    current_user: Employee = Depends(require_sysadmin),
+    service: ConversationService = Depends(get_conversation_service),
+) -> Dict[str, Any]:
+    """
+    【管理员】获取聊天统计概览
+
+    返回总消息数、今日消息数、用户数、热门操作分布
+    """
+    return service.get_statistics()
+
+
+@router.get("/admin/export")
+def admin_export_messages(
+    user_id: int = Query(..., description="用户 ID"),
+    start_date: Optional[str] = Query(default=None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(default=None, description="结束日期 YYYY-MM-DD"),
+    format: str = Query(default="json", description="导出格式: json 或 csv"),
+    current_user: Employee = Depends(require_sysadmin),
+    service: ConversationService = Depends(get_conversation_service),
+):
+    """
+    【管理员】导出指定用户的聊天记录
+
+    支持 JSON 和 CSV 格式
+    """
+    messages = service.export_messages(
+        user_id=user_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    if format == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["id", "timestamp", "role", "content"])
+        for msg in messages:
+            writer.writerow([
+                msg.get("id", ""),
+                msg.get("timestamp", ""),
+                msg.get("role", ""),
+                msg.get("content", ""),
+            ])
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=chat_user_{user_id}.csv"},
+        )
+
+    return {"user_id": user_id, "count": len(messages), "messages": messages}

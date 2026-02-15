@@ -128,6 +128,13 @@ def chat(
         # 生成新的 topic_id
         topic_id = conv_service.generate_topic_id()
 
+    # 构建结构化结果数据（SPEC-27: 保存完整消息结构）
+    result_data = {}
+    if result.get('query_result'):
+        result_data['query_result'] = result['query_result']
+    if result.get('context'):
+        result_data['context'] = result['context']
+
     # 保存消息对
     user_msg, assistant_msg = conv_service.save_message_pair(
         user_id=current_user.id,
@@ -135,7 +142,8 @@ def chat(
         assistant_content=result.get('message', ''),
         actions=[a.dict() if hasattr(a, 'dict') else a for a in result.get('suggested_actions', [])],
         topic_id=topic_id,
-        is_followup=bool(message.topic_id)
+        is_followup=bool(message.topic_id),
+        result_data=result_data if result_data else None,
     )
 
     # 构建响应

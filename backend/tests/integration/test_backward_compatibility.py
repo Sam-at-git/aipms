@@ -282,56 +282,26 @@ class TestRegistryAndLegacyCoexistence:
         # Note: registry_result has task_id in the 'data' field
         assert "task_id" in registry_result.get("data", {})
 
-    def test_registry_unavailable_falls_back_to_legacy(self, db_session, mock_user):
+    def test_registry_unavailable_returns_error(self, db_session, mock_user):
         """
-        Test that when registry is unavailable, actions fall back
-        to legacy path.
+        Test that when registry is unavailable, actions return an error
+        (legacy fallback chain has been removed — all actions go through ActionRegistry).
         """
         service = AIService(db_session)
 
         # Disable registry
         service._action_registry = False
 
-        # Create a room_type first
-        room_type = RoomType(
-            name="标准间",
-            description="Standard",
-            base_price=Decimal("288.00"),
-            max_occupancy=2
-        )
-        db_session.add(room_type)
-        db_session.flush()
-
-        # Legacy action should still work
-        room = Room(
-            room_number="103",
-            floor=1,
-            room_type_id=room_type.id,
-            status=RoomStatus.VACANT_DIRTY
-        )
-        db_session.add(room)
-        db_session.flush()
-
-        task = Task(
-            room_id=room.id,
-            task_type=TaskType.CLEANING,
-            status=TaskStatus.ASSIGNED,  # Must be ASSIGNED to be started
-            priority=1,  # Integer 1-5, not string
-            notes="测试",
-            assignee_id=mock_user.id  # Assign to mock_user so they can start it
-        )
-        db_session.add(task)
-        db_session.commit()
-
         action = {
             "action_type": "start_task",
-            "params": {"task_id": task.id}
+            "params": {"task_id": 1}
         }
 
         result = service.execute_action(action, mock_user)
 
-        # Should succeed via legacy path
-        assert result["success"] is True
+        # Should fail — no legacy fallback
+        assert result["success"] is False
+        assert "不支持" in result["message"]
 
     def test_registry_error_returns_error_directly(self, db_session, mock_user, sample_room):
         """

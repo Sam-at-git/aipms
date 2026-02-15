@@ -296,6 +296,50 @@ class TestResetPassword:
 
         assert response.status_code == 403
 
+    def test_manager_cannot_reset_sysadmin_password(self, client: TestClient, manager_auth_headers, db_session):
+        """测试经理不能重置系统管理员密码"""
+        from app.models.ontology import Employee, EmployeeRole
+        from app.security.auth import get_password_hash
+
+        sysadmin = Employee(
+            username="sysadmin_target",
+            password_hash=get_password_hash("old_password"),
+            name="系统管理员",
+            role=EmployeeRole.SYSADMIN
+        )
+        db_session.add(sysadmin)
+        db_session.commit()
+        db_session.refresh(sysadmin)
+
+        response = client.post(f"/employees/{sysadmin.id}/reset-password", headers=manager_auth_headers, json={
+            "new_password": "new_password123"
+        })
+
+        assert response.status_code == 400
+        assert "系统管理员" in response.json()["detail"]
+
+    def test_sysadmin_can_reset_sysadmin_password(self, client: TestClient, sysadmin_auth_headers, db_session):
+        """测试系统管理员可以重置系统管理员密码"""
+        from app.models.ontology import Employee, EmployeeRole
+        from app.security.auth import get_password_hash
+
+        another_sysadmin = Employee(
+            username="sysadmin_target2",
+            password_hash=get_password_hash("old_password"),
+            name="另一个管理员",
+            role=EmployeeRole.SYSADMIN
+        )
+        db_session.add(another_sysadmin)
+        db_session.commit()
+        db_session.refresh(another_sysadmin)
+
+        response = client.post(f"/employees/{another_sysadmin.id}/reset-password", headers=sysadmin_auth_headers, json={
+            "new_password": "new_password123"
+        })
+
+        assert response.status_code == 200
+        assert response.json()["message"] == "密码已重置"
+
 
 class TestEmployeePermissions:
     """员工权限测试"""

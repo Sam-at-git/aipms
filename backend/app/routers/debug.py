@@ -117,8 +117,10 @@ def list_sessions(
             "input_message": session.input_message,
             "status": session.status,
             "llm_model": session.llm_model,
+            "llm_tokens_used": session.llm_tokens_used,
             "execution_time_ms": session.execution_time_ms,
             "attempt_count": attempt_count,
+            "action_type": attempts[0].action_name if attempts else None,
         })
 
     return {
@@ -170,6 +172,93 @@ def get_statistics(
     """
     debug_logger = get_debug_logger()
     return debug_logger.get_statistics()
+
+
+# ==================== Analytics Endpoints ====================
+
+@router.get("/analytics/token-trend")
+def get_token_trend(
+    days: int = Query(default=7, ge=1, le=90, description="回溯天数"),
+    current_user: Employee = Depends(require_sysadmin),
+) -> Dict[str, Any]:
+    """Token 使用趋势（按天聚合）"""
+    debug_logger = get_debug_logger()
+    conn = debug_logger._get_conn()
+    try:
+        cursor = conn.execute("""
+            SELECT
+                date(timestamp) as day,
+                COUNT(*) as session_count,
+                COALESCE(SUM(llm_tokens_used), 0) as total_tokens,
+                COALESCE(AVG(llm_tokens_used), 0) as avg_tokens,
+                COALESCE(AVG(execution_time_ms), 0) as avg_latency_ms
+            FROM debug_sessions
+            WHERE timestamp > datetime('now', ?)
+            GROUP BY date(timestamp)
+            ORDER BY day
+        """, (f"-{days} days",))
+        rows = [dict(r) for r in cursor.fetchall()]
+        return {"days": days, "data": rows}
+    finally:
+        conn.close()
+
+
+@router.get("/analytics/error-aggregation")
+def get_error_aggregation(
+    days: int = Query(default=7, ge=1, le=90, description="回溯天数"),
+    current_user: Employee = Depends(require_sysadmin),
+) -> Dict[str, Any]:
+    """错误聚合统计"""
+    debug_logger = get_debug_logger()
+    conn = debug_logger._get_conn()
+    try:
+        # Error count by day
+        cursor = conn.execute("""
+            SELECT
+                date(timestamp) as day,
+                COUNT(*) as error_count
+            FROM debug_sessions
+            WHERE status = 'error'
+              AND timestamp > datetime('now', ?)
+            GROUP BY date(timestamp)
+            ORDER BY day
+        """, (f"-{days} days",))
+        by_day = [dict(r) for r in cursor.fetchall()]
+
+        # Top error messages
+        cursor = conn.execute("""
+            SELECT
+                errors as error_msg,
+                COUNT(*) as count
+            FROM debug_sessions
+            WHERE status = 'error'
+              AND errors IS NOT NULL
+              AND timestamp > datetime('now', ?)
+            GROUP BY errors
+            ORDER BY count DESC
+            LIMIT 10
+        """, (f"-{days} days",))
+        top_errors = [dict(r) for r in cursor.fetchall()]
+
+        # Total stats
+        cursor = conn.execute("""
+            SELECT
+                COUNT(*) as total_sessions,
+                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_sessions,
+                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_sessions
+            FROM debug_sessions
+            WHERE timestamp > datetime('now', ?)
+        """, (f"-{days} days",))
+        totals = dict(cursor.fetchone())
+
+        return {
+            "days": days,
+            "by_day": by_day,
+            "top_errors": top_errors,
+            "totals": totals,
+        }
+    finally:
+        conn.close()
 
 
 # ==================== Replay Endpoints ====================

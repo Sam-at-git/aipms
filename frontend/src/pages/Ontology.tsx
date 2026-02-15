@@ -23,7 +23,7 @@ import type {
   OntologyEvent,
   OntologyTabType,
 } from '../types'
-import { Database, RefreshCw, Box, Network, GitBranch, Shield, AlertTriangle, Package, Wrench, DollarSign, BarChart3, X, Download, Copy, Check, Zap } from 'lucide-react'
+import { Database, RefreshCw, Box, Network, GitBranch, Shield, AlertTriangle, Package, Wrench, DollarSign, BarChart3, X, Download, Copy, Check, Zap, Eye, EyeOff } from 'lucide-react'
 import StateMachineGraph from '../components/StateMachineGraph'
 
 // Entity color mapping
@@ -163,18 +163,46 @@ const DataTab: React.FC<DataTabProps> = ({
   onNodeClick,
   selectedEntity,
 }) => {
+  const [showSystemEntities, setShowSystemEntities] = useState(false)
+
   const selectedEntityData = useMemo(() => {
     if (!selectedEntity || !schema) return null
     return schema.entities.find(e => e.name === selectedEntity)
   }, [selectedEntity, schema])
 
+  const filteredNodes = useMemo(() => {
+    if (showSystemEntities) return nodes
+    return nodes.filter(n => n.data?.category !== 'system')
+  }, [nodes, showSystemEntities])
+
+  const filteredEdges = useMemo(() => {
+    if (showSystemEntities) return edges
+    const visibleIds = new Set(filteredNodes.map(n => n.id))
+    return edges.filter(e => visibleIds.has(e.source) && visibleIds.has(e.target))
+  }, [edges, filteredNodes, showSystemEntities])
+
   return (
     <div className="flex-1 flex gap-4 min-h-0" style={{ minHeight: '600px' }}>
       {/* Left: Graph */}
-      <div className="flex-1 bg-dark-900 rounded-lg overflow-hidden" style={{ minHeight: '600px' }}>
+      <div className="flex-1 bg-dark-900 rounded-lg overflow-hidden relative" style={{ minHeight: '600px' }}>
+        {/* System entity toggle */}
+        <div className="absolute top-3 right-3 z-10">
+          <button
+            onClick={() => setShowSystemEntities(v => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              showSystemEntities
+                ? 'bg-primary-500/20 text-primary-300 border border-primary-500/30'
+                : 'bg-dark-800/90 text-dark-400 border border-dark-700 hover:text-dark-300'
+            }`}
+            title={showSystemEntities ? 'Hide system entities' : 'Show system entities'}
+          >
+            {showSystemEntities ? <Eye size={14} /> : <EyeOff size={14} />}
+            System Entities
+          </button>
+        </div>
         <ReactFlow
-          nodes={nodes}
-          edges={edges}
+          nodes={filteredNodes}
+          edges={filteredEdges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
@@ -331,11 +359,25 @@ interface SemanticTabProps {
 
 const SemanticTab: React.FC<SemanticTabProps> = ({ semanticData, loading }) => {
   const [selectedEntity, setSelectedEntity] = useState<string | null>(null)
+  const [entitySearch, setEntitySearch] = useState('')
 
   const selectedEntityData = useMemo(() => {
     if (!selectedEntity || !semanticData) return null
     return semanticData.entities.find(e => e.name === selectedEntity)
   }, [selectedEntity, semanticData])
+
+  const groupedEntities = useMemo(() => {
+    if (!semanticData) return { business: [], system: [] }
+    const filtered = entitySearch
+      ? semanticData.entities.filter(e =>
+          e.name.toLowerCase().includes(entitySearch.toLowerCase()) ||
+          e.description.toLowerCase().includes(entitySearch.toLowerCase()))
+      : semanticData.entities
+    return {
+      business: filtered.filter(e => e.category !== 'system'),
+      system: filtered.filter(e => e.category === 'system'),
+    }
+  }, [semanticData, entitySearch])
 
   if (loading) {
     return (
@@ -353,27 +395,47 @@ const SemanticTab: React.FC<SemanticTabProps> = ({ semanticData, loading }) => {
     )
   }
 
+  const renderEntityButton = (entity: typeof semanticData.entities[0]) => (
+    <button
+      key={entity.name}
+      onClick={() => setSelectedEntity(entity.name)}
+      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+        selectedEntity === entity.name
+          ? 'bg-primary-500/20 text-primary-400'
+          : 'bg-dark-800 text-dark-300 hover:bg-dark-700'
+      }`}
+    >
+      <div className="font-medium">{entity.name}</div>
+      <div className="text-xs text-dark-500">{entity.description}</div>
+    </button>
+  )
+
   return (
     <div className="flex-1 flex gap-4 min-h-0">
-      {/* Left: Entity list */}
+      {/* Left: Entity list with search + category groups */}
       <div className="w-64 bg-dark-900 rounded-lg p-4 overflow-y-auto">
-        <h3 className="text-sm font-medium text-dark-300 mb-3">Entities</h3>
-        <div className="space-y-1">
-          {semanticData.entities.map(entity => (
-            <button
-              key={entity.name}
-              onClick={() => setSelectedEntity(entity.name)}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                selectedEntity === entity.name
-                  ? 'bg-primary-500/20 text-primary-400'
-                  : 'bg-dark-800 text-dark-300 hover:bg-dark-700'
-              }`}
-            >
-              <div className="font-medium">{entity.name}</div>
-              <div className="text-xs text-dark-500">{entity.description}</div>
-            </button>
-          ))}
-        </div>
+        <input
+          value={entitySearch}
+          onChange={e => setEntitySearch(e.target.value)}
+          className="w-full px-3 py-1.5 bg-dark-800 border border-dark-700 rounded text-sm mb-3"
+          placeholder="搜索实体..."
+        />
+        {groupedEntities.business.length > 0 && (
+          <>
+            <h3 className="text-xs font-medium text-dark-500 mb-2 uppercase tracking-wider">业务实体</h3>
+            <div className="space-y-1 mb-4">
+              {groupedEntities.business.map(renderEntityButton)}
+            </div>
+          </>
+        )}
+        {groupedEntities.system.length > 0 && (
+          <>
+            <h3 className="text-xs font-medium text-dark-500 mb-2 uppercase tracking-wider">系统实体</h3>
+            <div className="space-y-1">
+              {groupedEntities.system.map(renderEntityButton)}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Right: Entity detail */}
@@ -569,6 +631,7 @@ interface KineticTabProps {
 const KineticTab: React.FC<KineticTabProps> = ({ kineticData, loading }) => {
   const [selectedEntity, setSelectedEntity] = useState<string | null>(null)
   const [selectedAction, setSelectedAction] = useState<string | null>(null)
+  const [entitySearch, setEntitySearch] = useState('')
 
   const selectedEntityData = useMemo(() => {
     if (!selectedEntity || !kineticData) return null
@@ -579,6 +642,19 @@ const KineticTab: React.FC<KineticTabProps> = ({ kineticData, loading }) => {
     if (!selectedAction || !selectedEntityData) return null
     return selectedEntityData.actions.find(a => a.action_type === selectedAction)
   }, [selectedAction, selectedEntityData])
+
+  const groupedEntities = useMemo(() => {
+    if (!kineticData) return { business: [], system: [] }
+    const filtered = entitySearch
+      ? kineticData.entities.filter(e =>
+          e.name.toLowerCase().includes(entitySearch.toLowerCase()) ||
+          e.description.toLowerCase().includes(entitySearch.toLowerCase()))
+      : kineticData.entities
+    return {
+      business: filtered.filter(e => e.category !== 'system'),
+      system: filtered.filter(e => e.category === 'system'),
+    }
+  }, [kineticData, entitySearch])
 
   if (loading) {
     return (
@@ -596,32 +672,52 @@ const KineticTab: React.FC<KineticTabProps> = ({ kineticData, loading }) => {
     )
   }
 
+  const renderEntityButton = (entity: typeof kineticData.entities[0]) => (
+    <button
+      key={entity.name}
+      onClick={() => {
+        setSelectedEntity(entity.name)
+        setSelectedAction(null)
+      }}
+      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+        selectedEntity === entity.name
+          ? 'bg-primary-500/20 text-primary-400'
+          : 'bg-dark-800 text-dark-300 hover:bg-dark-700'
+      }`}
+    >
+      <div className="flex items-center justify-between">
+        <span className="font-medium">{entity.name}</span>
+        <span className="text-xs text-dark-500">{entity.actions.length}</span>
+      </div>
+    </button>
+  )
+
   return (
     <div className="flex-1 flex gap-4 min-h-0">
-      {/* Left: Entity list */}
+      {/* Left: Entity list with search + category groups */}
       <div className="w-56 bg-dark-900 rounded-lg p-4 overflow-y-auto">
-        <h3 className="text-sm font-medium text-dark-300 mb-3">Entities</h3>
-        <div className="space-y-1">
-          {kineticData.entities.map(entity => (
-            <button
-              key={entity.name}
-              onClick={() => {
-                setSelectedEntity(entity.name)
-                setSelectedAction(null)
-              }}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                selectedEntity === entity.name
-                  ? 'bg-primary-500/20 text-primary-400'
-                  : 'bg-dark-800 text-dark-300 hover:bg-dark-700'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{entity.name}</span>
-                <span className="text-xs text-dark-500">{entity.actions.length}</span>
-              </div>
-            </button>
-          ))}
-        </div>
+        <input
+          value={entitySearch}
+          onChange={e => setEntitySearch(e.target.value)}
+          className="w-full px-3 py-1.5 bg-dark-800 border border-dark-700 rounded text-sm mb-3"
+          placeholder="搜索实体..."
+        />
+        {groupedEntities.business.length > 0 && (
+          <>
+            <h3 className="text-xs font-medium text-dark-500 mb-2 uppercase tracking-wider">业务实体</h3>
+            <div className="space-y-1 mb-4">
+              {groupedEntities.business.map(renderEntityButton)}
+            </div>
+          </>
+        )}
+        {groupedEntities.system.length > 0 && (
+          <>
+            <h3 className="text-xs font-medium text-dark-500 mb-2 uppercase tracking-wider">系统实体</h3>
+            <div className="space-y-1">
+              {groupedEntities.system.map(renderEntityButton)}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Middle: Action list */}
@@ -1585,6 +1681,7 @@ const Ontology: React.FC = () => {
         position: { x, y },
         data: {
           name: entity.name,
+          category: entity.category || 'business',
           total: stat?.total || 0,
           attributes: entity.attributes,
           interfaces: entityInterfaces[entity.name] || [],

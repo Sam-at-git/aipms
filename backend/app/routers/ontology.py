@@ -45,6 +45,7 @@ async def get_ontology_schema(
         entity_list.append({
             "name": entity.name,
             "description": entity.description,
+            "category": entity.category or "business",
             "attributes": attrs,
         })
 

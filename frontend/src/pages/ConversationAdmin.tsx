@@ -1,7 +1,72 @@
 import { useState, useEffect } from 'react'
-import { Users, Calendar, MessageSquare, Search, Loader2 } from 'lucide-react'
+import { Users, Calendar, MessageSquare, Search, Loader2, ChevronDown, ChevronRight, Download, BarChart3 } from 'lucide-react'
 import { conversationApi, employeeApi } from '../services/api'
-import type { ConversationMessage, Employee } from '../types'
+import type { ConversationMessage, Employee, ConversationStatistics } from '../types'
+
+// Collapsible inline section for structured data
+function InlineCollapsible({ title, badge, children }: { title: string; badge?: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-2 border border-dark-700 rounded text-xs">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-1 px-2 py-1 hover:bg-dark-700/50"
+      >
+        {open ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+        <span className="text-dark-400">{title}</span>
+        {badge && <span className="ml-auto text-dark-500">{badge}</span>}
+      </button>
+      {open && <div className="px-2 py-1 border-t border-dark-700 bg-dark-950">{children}</div>}
+    </div>
+  )
+}
+
+// C-3: Highlight keyword in text
+function HighlightText({ text, keyword }: { text: string; keyword: string }) {
+  if (!keyword || !keyword.trim()) {
+    return <>{text}</>
+  }
+  const parts = text.split(new RegExp(`(${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'))
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === keyword.toLowerCase()
+          ? <mark key={i} className="bg-amber-500/30 text-amber-200 rounded px-0.5">{part}</mark>
+          : part
+      )}
+    </>
+  )
+}
+
+// C-6: Time gap separator
+function TimeGapSeparator({ minutes }: { minutes: number }) {
+  let label: string
+  if (minutes >= 1440) {
+    label = `${Math.floor(minutes / 1440)} 天`
+  } else if (minutes >= 60) {
+    label = `${Math.floor(minutes / 60)} 小时`
+  } else {
+    label = `${minutes} 分钟`
+  }
+  return (
+    <div className="flex items-center gap-2 my-3 px-4">
+      <div className="flex-1 border-t border-dashed border-dark-700" />
+      <span className="text-[10px] text-dark-500">间隔 {label}</span>
+      <div className="flex-1 border-t border-dashed border-dark-700" />
+    </div>
+  )
+}
+
+// C-6: Date separator
+function DateSeparator({ date }: { date: string }) {
+  return (
+    <div className="flex items-center gap-2 my-3 px-4">
+      <div className="flex-1 border-t border-dark-600" />
+      <span className="text-xs text-dark-400 bg-dark-900 px-2">{date}</span>
+      <div className="flex-1 border-t border-dark-600" />
+    </div>
+  )
+}
 
 export default function ConversationAdmin() {
   const [users, setUsers] = useState<{ user_id: number; name?: string }[]>([])
@@ -10,16 +75,20 @@ export default function ConversationAdmin() {
   const [selectedDate, setSelectedDate] = useState<string>('')
   const [messages, setMessages] = useState<ConversationMessage[]>([])
   const [keyword, setKeyword] = useState('')
+  const [activeKeyword, setActiveKeyword] = useState('') // The keyword being applied to highlights
   const [loading, setLoading] = useState(false)
   const [employeeMap, setEmployeeMap] = useState<Record<number, string>>({})
+  const [stats, setStats] = useState<ConversationStatistics | null>(null)
+  const [showStats, setShowStats] = useState(true)
 
-  // 加载有聊天记录的用户列表
+  // 加载有聊天记录的用户列表 + 统计
   useEffect(() => {
     const load = async () => {
       try {
-        const [usersRes, employees] = await Promise.all([
+        const [usersRes, employees, statsData] = await Promise.all([
           conversationApi.adminGetUsers(),
-          employeeApi.getList()
+          employeeApi.getList(),
+          conversationApi.adminGetStatistics(),
         ])
         const empMap: Record<number, string> = {}
         employees.forEach((e: Employee) => { empMap[e.id] = e.name })
@@ -28,6 +97,7 @@ export default function ConversationAdmin() {
           user_id: u.user_id,
           name: empMap[u.user_id] || `用户 ${u.user_id}`
         })))
+        setStats(statsData)
       } catch (error) {
         console.error('Failed to load users:', error)
       }
@@ -65,6 +135,7 @@ export default function ConversationAdmin() {
         keyword: kw || undefined
       })
       setMessages(res.messages)
+      setActiveKeyword(kw || '')
     } catch (error) {
       console.error('Failed to load messages:', error)
     } finally {
@@ -83,12 +154,81 @@ export default function ConversationAdmin() {
     loadMessages(selectedDate, keyword)
   }
 
+  // C-5: Export
+  const handleExport = async (format: 'json' | 'csv') => {
+    if (!selectedUserId) return
+    try {
+      if (format === 'csv') {
+        await conversationApi.adminExport(selectedUserId, {
+          start_date: selectedDate || undefined,
+          end_date: selectedDate || undefined,
+          format: 'csv',
+        })
+      } else {
+        const data = await conversationApi.adminExport(selectedUserId, {
+          start_date: selectedDate || undefined,
+          end_date: selectedDate || undefined,
+          format: 'json',
+        })
+        // Download JSON
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `chat_user_${selectedUserId}.json`
+        a.click()
+        window.URL.revokeObjectURL(url)
+      }
+    } catch (error) {
+      console.error('Export failed:', error)
+    }
+  }
+
+  // C-6: Calculate time gap in minutes between two timestamps
+  const getGapMinutes = (ts1: string, ts2: string): number => {
+    const d1 = new Date(ts1)
+    const d2 = new Date(ts2)
+    return Math.floor((d2.getTime() - d1.getTime()) / 60000)
+  }
+
+  const getDateStr = (ts: string): string => {
+    return new Date(ts).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+  }
+
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center gap-2 mb-4">
         <MessageSquare size={24} className="text-primary-400" />
         <h1 className="text-xl font-bold">聊天记录管理</h1>
+        <button
+          onClick={() => setShowStats(!showStats)}
+          className="ml-auto p-1.5 rounded hover:bg-dark-800 text-dark-400"
+          title="Toggle statistics"
+        >
+          <BarChart3 size={16} />
+        </button>
       </div>
+
+      {/* C-4: Statistics panel */}
+      {showStats && stats && (
+        <div className="flex items-center gap-6 mb-4 px-4 py-2.5 bg-dark-900 border border-dark-800 rounded-lg text-sm">
+          <span className="text-dark-400">总消息: <span className="text-white font-medium">{stats.total_messages.toLocaleString()}</span></span>
+          <span className="text-dark-400">今日: <span className="text-primary-400 font-medium">{stats.today_messages}</span></span>
+          <span className="text-dark-400">用户: <span className="text-white font-medium">{stats.user_count}</span></span>
+          {stats.action_distribution.length > 0 && (
+            <span className="text-dark-400">
+              热门操作:{' '}
+              {stats.action_distribution.slice(0, 3).map((a, i) => (
+                <span key={a.action_type}>
+                  {i > 0 && ', '}
+                  <span className="text-sky-400 font-mono text-xs">{a.action_type}</span>
+                  <span className="text-dark-500">({a.count})</span>
+                </span>
+              ))}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 flex gap-4 min-h-0">
         {/* 左栏：用户列表 */}
@@ -175,6 +315,27 @@ export default function ConversationAdmin() {
             {selectedDate && (
               <span className="text-xs text-dark-500 ml-2">{selectedDate}</span>
             )}
+            {/* C-5: Export buttons */}
+            {selectedUserId && messages.length > 0 && (
+              <div className="ml-auto flex gap-1">
+                <button
+                  onClick={() => handleExport('json')}
+                  className="flex items-center gap-1 px-2 py-1 text-xs text-dark-400 hover:text-white hover:bg-dark-800 rounded"
+                  title="导出 JSON"
+                >
+                  <Download size={12} />
+                  JSON
+                </button>
+                <button
+                  onClick={() => handleExport('csv')}
+                  className="flex items-center gap-1 px-2 py-1 text-xs text-dark-400 hover:text-white hover:bg-dark-800 rounded"
+                  title="导出 CSV"
+                >
+                  <Download size={12} />
+                  CSV
+                </button>
+              </div>
+            )}
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {loading && (
@@ -187,20 +348,106 @@ export default function ConversationAdmin() {
                 {selectedDate ? '该日期无聊天记录' : '请选择日期查看记录'}
               </p>
             )}
-            {!loading && messages.map(msg => (
-              <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[70%] rounded-lg px-3 py-2 ${
-                  msg.role === 'user'
-                    ? 'bg-primary-600/20 text-primary-100'
-                    : 'bg-dark-800 text-dark-200'
-                }`}>
-                  <div className="text-sm whitespace-pre-wrap">{msg.content}</div>
-                  <div className="text-xs text-dark-500 mt-1">
-                    {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+            {!loading && messages.map((msg, idx) => {
+              // Topic grouping (C-2): detect topic boundary
+              const prevMsg = idx > 0 ? messages[idx - 1] : null
+              const currentTopic = msg.context?.topic_id
+              const prevTopic = prevMsg?.context?.topic_id
+              const isNewTopic = currentTopic && prevTopic && currentTopic !== prevTopic
+              const isFollowup = msg.context?.is_followup
+
+              // C-6: Time gap and date separators
+              let timeGap: number | null = null
+              let showDateSep = false
+              if (prevMsg) {
+                timeGap = getGapMinutes(prevMsg.timestamp, msg.timestamp)
+                const prevDate = getDateStr(prevMsg.timestamp)
+                const currDate = getDateStr(msg.timestamp)
+                if (prevDate !== currDate) {
+                  showDateSep = true
+                }
+              }
+
+              return (
+                <div key={msg.id}>
+                  {/* C-6: Date separator (cross-day) */}
+                  {showDateSep && (
+                    <DateSeparator date={getDateStr(msg.timestamp)} />
+                  )}
+
+                  {/* C-6: Time gap separator (>30 min) */}
+                  {!showDateSep && timeGap !== null && timeGap >= 30 && (
+                    <TimeGapSeparator minutes={timeGap} />
+                  )}
+
+                  {/* Topic boundary separator */}
+                  {isNewTopic && (
+                    <div className="flex items-center gap-2 my-3">
+                      <div className="flex-1 border-t border-dark-700" />
+                      <span className="text-xs text-dark-500">新话题</span>
+                      <div className="flex-1 border-t border-dark-700" />
+                    </div>
+                  )}
+
+                  <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    {/* Topic continuity indicator */}
+                    {currentTopic && !isNewTopic && msg.role === 'assistant' && (
+                      <div className="w-0.5 bg-dark-700 mr-2 rounded-full" />
+                    )}
+
+                    <div className={`max-w-[75%] rounded-lg px-3 py-2 ${
+                      msg.role === 'user'
+                        ? 'bg-primary-600/20 text-primary-100'
+                        : 'bg-dark-800 text-dark-200'
+                    }`}>
+                      {/* Followup badge */}
+                      {isFollowup && (
+                        <span className="inline-block text-xs bg-dark-700 text-dark-400 px-1.5 py-0.5 rounded mb-1">续上轮</span>
+                      )}
+
+                      {/* C-3: Search highlight */}
+                      <div className="text-sm whitespace-pre-wrap">
+                        <HighlightText text={msg.content} keyword={activeKeyword} />
+                      </div>
+
+                      {/* Structured data: actions (C-1) */}
+                      {msg.actions && msg.actions.length > 0 && (
+                        <InlineCollapsible
+                          title="Actions"
+                          badge={`${msg.actions.length} action(s)`}
+                        >
+                          {msg.actions.map((action: any, i: number) => (
+                            <div key={i} className="flex items-center gap-2 py-0.5">
+                              <span className="text-sky-400 font-mono">{action.action_type}</span>
+                              {action.entity_type && <span className="text-dark-500">({action.entity_type})</span>}
+                              {action.requires_confirmation && <span className="text-amber-400">需确认</span>}
+                            </div>
+                          ))}
+                        </InlineCollapsible>
+                      )}
+
+                      {/* Structured data: query result (C-1) */}
+                      {!!msg.result_data?.query_result && (
+                        <InlineCollapsible
+                          title="Query Result"
+                          badge={(msg.result_data.query_result as any)?.total != null
+                            ? `${(msg.result_data.query_result as any).total} rows`
+                            : undefined}
+                        >
+                          <pre className="text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-32 overflow-auto">
+                            {JSON.stringify(msg.result_data.query_result, null, 2)}
+                          </pre>
+                        </InlineCollapsible>
+                      )}
+
+                      <div className="text-xs text-dark-500 mt-1">
+                        {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       </div>

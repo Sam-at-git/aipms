@@ -81,7 +81,7 @@ def reset_password(
     """重置密码"""
     service = EmployeeService(db)
     try:
-        service.reset_password(employee_id, data)
+        service.reset_password(employee_id, data, operator=current_user)
         return {"message": "密码已重置"}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

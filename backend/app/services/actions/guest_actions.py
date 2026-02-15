@@ -38,6 +38,7 @@ def register_guest_actions(
         undoable=True,
         side_effects=["creates_guest", "creates_stay_record", "creates_bill", "updates_room_status"],
         search_keywords=["散客", "直接入住", "无预订", "临时入住", "walk-in"],
+        ui_required_fields=["room_number", "guest_name", "guest_phone", "expected_check_out"],
         semantic_category="checkin_type",
         category_description="入住方式（预订入住 vs 直接入住）",
         glossary_examples=[

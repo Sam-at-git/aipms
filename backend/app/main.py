@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
 from app.routers import auth, rooms, reservations, checkin, checkout, tasks, billing, employees, reports, ai, prices, settings, audit_logs, guests, conversations, undo, ontology, security, debug
+from app.system.routers import dict_router, config_router, rbac_router, menu_router, org_router, message_router, scheduler_router
 
 
 @asynccontextmanager
@@ -100,6 +101,38 @@ async def lifespan(app: FastAPI):
         register_smart_updates(ont_registry)
         print(f"✓ ActionRegistry 已同步到 OntologyRegistry ({len(action_registry.list_actions())} actions)")
 
+        # ========== System Domain: Register system entities to OntologyRegistry ==========
+        from app.system.system_domain_adapter import SystemDomainAdapter
+        sys_adapter = SystemDomainAdapter()
+        sys_adapter.register_ontology(ont_registry)
+        print(f"✓ 系统管理域本体已注册 ({len([e for e in ont_registry.get_entities() if getattr(e, 'category', '') == 'system'])} system entities)")
+
+        # ========== RBAC: Register permission provider ==========
+        from core.security.permission import permission_provider_registry
+        from app.system.services.permission_provider import RBACPermissionProvider
+        from app.database import SessionLocal
+        provider = RBACPermissionProvider(SessionLocal)
+        permission_provider_registry.set_provider(provider)
+        print("✓ RBAC PermissionProvider 已注册")
+
+        # ========== RBAC: Seed initial data ==========
+        from app.system.services.rbac_seed import seed_rbac_data
+        from app.system.services.menu_seed import seed_menu_data
+        from app.system.services.config_seed import seed_config_data
+        seed_db = SessionLocal()
+        try:
+            seed_stats = seed_rbac_data(seed_db)
+            if any(seed_stats.values()):
+                print(f"✓ RBAC 种子数据已初始化: {seed_stats}")
+            menu_stats = seed_menu_data(seed_db)
+            if any(menu_stats.values()):
+                print(f"✓ 菜单种子数据已初始化: {menu_stats}")
+            config_stats = seed_config_data(seed_db)
+            if any(config_stats.values()):
+                print(f"✓ 系统配置种子数据已初始化: {config_stats}")
+        finally:
+            seed_db.close()
+
     except Exception as e:
         print(f"本体注册中心初始化警告: {e}")
 
@@ -162,6 +195,18 @@ app.include_router(undo.router)
 app.include_router(ontology.router)
 app.include_router(security.router)
 app.include_router(debug.router)
+app.include_router(dict_router.router)
+app.include_router(config_router.router)
+app.include_router(rbac_router.role_router)
+app.include_router(rbac_router.permission_router)
+app.include_router(rbac_router.user_role_router)
+app.include_router(menu_router.router)
+app.include_router(org_router.dept_router)
+app.include_router(org_router.pos_router)
+app.include_router(message_router.msg_router)
+app.include_router(message_router.tpl_router)
+app.include_router(message_router.ann_router)
+app.include_router(scheduler_router.router)
 
 
 @app.get("/")

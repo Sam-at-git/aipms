@@ -83,6 +83,9 @@ class ActionDefinition:
     category_description: Optional[str] = None
     glossary_examples: List[Dict[str, str]] = field(default_factory=list)
 
+    # UI workflow: required fields for the follow-up form (overrides schema introspection)
+    ui_required_fields: Optional[List[str]] = None
+
     def to_openai_tool(self) -> Dict[str, Any]:
         """
         Convert to OpenAI function calling format.
@@ -245,7 +248,8 @@ class ActionRegistry:
         search_keywords: Optional[List[str]] = None,
         semantic_category: Optional[str] = None,
         category_description: Optional[str] = None,
-        glossary_examples: Optional[List[Dict[str, str]]] = None
+        glossary_examples: Optional[List[Dict[str, str]]] = None,
+        ui_required_fields: Optional[List[str]] = None,
     ) -> Callable:
         """
         Decorator for registering actions.
@@ -299,7 +303,8 @@ class ActionRegistry:
                 search_keywords=search_keywords or [],
                 semantic_category=semantic_category,
                 category_description=category_description,
-                glossary_examples=glossary_examples or []
+                glossary_examples=glossary_examples or [],
+                ui_required_fields=ui_required_fields,
             )
 
             # Register

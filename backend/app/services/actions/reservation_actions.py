@@ -41,7 +41,8 @@ def register_reservation_actions(
         allowed_roles={"receptionist", "manager"},
         undoable=True,
         side_effects=["creates_reservation", "may_create_guest"],
-        search_keywords=["预订", "创建预订", "订房", "reservation", "book room"]
+        search_keywords=["预订", "创建预订", "订房", "reservation", "book room"],
+        ui_required_fields=["guest_name", "guest_phone", "room_type_id", "check_in_date", "check_out_date"],
     )
     def handle_create_reservation(
         params: CreateReservationParams,

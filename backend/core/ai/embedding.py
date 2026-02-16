@@ -7,22 +7,15 @@ Provides OpenAI-compatible text embedding generation with in-memory caching
 to reduce API calls and improve performance.
 """
 import os
+from collections import OrderedDict
 from typing import List, Dict, Any, Optional
-from dataclasses import dataclass, field
+from dataclasses import field
 
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
-
-
-@dataclass
-class EmbeddingResult:
-    """Result of an embedding operation"""
-    embedding: List[float]
-    model: str
-    dimension: int
 
 
 class EmbeddingService:
@@ -79,9 +72,8 @@ class EmbeddingService:
         self.model = model
         self.base_url = base_url
         self.enabled = enabled
-        self._cache: Dict[str, List[float]] = {}
+        self._cache: OrderedDict[str, List[float]] = OrderedDict()
         self._cache_size = cache_size
-        self._cache_order: List[str] = []  # For LRU eviction
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
 
@@ -98,7 +90,7 @@ class EmbeddingService:
             1536  # Default for text-embedding-3-small
         )
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> Optional[List[float]]:
         """
         Generate embedding for a single text
 
@@ -108,28 +100,18 @@ class EmbeddingService:
             text: Input text to embed
 
         Returns:
-            List of floats representing the embedding vector
+            List of floats representing the embedding vector, or None on failure
         """
         # Check cache
-        cache_key = text
-        if cache_key in self._cache:
-            # Move to end of cache order (most recently used)
-            self._cache_order.remove(cache_key)
-            self._cache_order.append(cache_key)
-            return self._cache[cache_key].copy()
+        if text in self._cache:
+            self._cache.move_to_end(text)  # O(1) LRU touch
+            return self._cache[text].copy()
 
         # Generate new embedding
         if not self._client or not self.enabled:
             # Return zero vector for testing, but still cache it
             embedding = [0.0] * self.dimension
-            self._cache[cache_key] = embedding
-            self._cache_order.append(cache_key)
-
-            # LRU eviction if cache is too large
-            if len(self._cache_order) > self._cache_size:
-                oldest = self._cache_order.pop(0)
-                del self._cache[oldest]
-
+            self._cache_put(text, embedding)
             return embedding.copy()
 
         try:
@@ -138,23 +120,13 @@ class EmbeddingService:
                 input=text
             )
             embedding = response.data[0].embedding
-
-            # Cache result
-            self._cache[cache_key] = embedding
-            self._cache_order.append(cache_key)
-
-            # LRU eviction if cache is too large
-            if len(self._cache_order) > self._cache_size:
-                oldest = self._cache_order.pop(0)
-                del self._cache[oldest]
-
+            self._cache_put(text, embedding)
             return embedding.copy()
 
         except Exception as e:
-            # On error, return zero vector to avoid breaking the system
             import logging
-            logging.warning(f"Failed to generate embedding: {e}")
-            return [0.0] * self.dimension
+            logging.warning(f"Failed to generate embedding for text '{text[:50]}...': {e}")
+            return None
 
     def batch_embed(self, texts: List[str]) -> List[List[float]]:
         """
@@ -177,10 +149,8 @@ class EmbeddingService:
 
         for i, text in enumerate(texts):
             if text in self._cache:
+                self._cache.move_to_end(text)  # O(1) LRU touch
                 cached_embeddings[i] = self._cache[text].copy()
-                # Update cache order
-                self._cache_order.remove(text)
-                self._cache_order.append(text)
             else:
                 uncached_texts.append(text)
                 uncached_indices.append(i)
@@ -200,17 +170,14 @@ class EmbeddingService:
 
                     cached_embeddings[idx] = embedding
                     results.append(embedding)
-
-                    # Cache the result
-                    self._cache[text] = embedding
-                    self._cache_order.append(text)
+                    self._cache_put(text, embedding)
 
             except Exception as e:
                 import logging
                 logging.warning(f"Batch embedding failed: {e}")
-                # Fill remaining with zero vectors
+                # Fill remaining with None to signal failure
                 for idx in uncached_indices[len(results):]:
-                    cached_embeddings[idx] = [0.0] * self.dimension
+                    cached_embeddings[idx] = None
 
         elif uncached_texts and (not self.enabled or not self._client):
             # Zero vectors for testing or when client is unavailable, but still cache them
@@ -218,17 +185,22 @@ class EmbeddingService:
                 text = uncached_texts[i]
                 embedding = [0.0] * self.dimension
                 cached_embeddings[idx] = embedding
-
-                # Cache the zero vector
-                self._cache[text] = embedding
-                self._cache_order.append(text)
+                self._cache_put(text, embedding)
 
         return cached_embeddings
+
+    def _cache_put(self, key: str, value: List[float]) -> None:
+        """Insert into LRU cache with O(1) eviction."""
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        else:
+            if len(self._cache) >= self._cache_size:
+                self._cache.popitem(last=False)  # evict oldest
+        self._cache[key] = value
 
     def clear_cache(self) -> None:
         """Clear the embedding cache"""
         self._cache.clear()
-        self._cache_order.clear()
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """
@@ -273,6 +245,5 @@ def create_embedding_service(
 
 __all__ = [
     "EmbeddingService",
-    "EmbeddingResult",
     "create_embedding_service",
 ]

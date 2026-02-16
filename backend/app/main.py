@@ -73,6 +73,10 @@ async def lifespan(app: FastAPI):
             enabled=settings.ENABLE_LLM and settings.EMBEDDING_ENABLED and bool(embed_api_key),
         )
 
+        # ========== Configure admin roles for SecurityContext ==========
+        from core.security.context import SecurityContext
+        SecurityContext.set_admin_roles({"sysadmin", "manager"})
+
         # ========== Register hotel role permissions (SPEC-1) ==========
         from app.hotel.security import register_hotel_role_permissions
         register_hotel_role_permissions()

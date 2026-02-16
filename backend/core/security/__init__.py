@@ -42,7 +42,6 @@ from core.security.attribute_acl import (
     AttributePermission,
     AttributeAccessDenied,
     AttributeACL,
-    SecureEntityMixin,
     attribute_acl,
 )
 
@@ -81,7 +80,6 @@ __all__ = [
     "AttributePermission",
     "AttributeAccessDenied",
     "AttributeACL",
-    "SecureEntityMixin",
     "attribute_acl",
     # 敏感数据脱敏
     "MaskingStrategy",

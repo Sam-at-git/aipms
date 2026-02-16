@@ -46,9 +46,31 @@ export interface AttemptLog {
   timestamp: string;
 }
 
+export interface LLMInteraction {
+  interaction_id: string;
+  session_id?: string;
+  sequence_number: number;
+  ooda_phase: string;
+  call_type: string;
+  started_at: string;
+  ended_at: string;
+  latency_ms: number;
+  model: string | null;
+  prompt: string | null;
+  response: string | null;
+  tokens_input: number | null;
+  tokens_output: number | null;
+  tokens_total: number | null;
+  temperature: number | null;
+  response_parsed: string | null;
+  success: boolean;
+  error: string | null;
+}
+
 export interface SessionDetailResponse {
   session: DebugSessionDetail;
   attempts: AttemptLog[];
+  llm_interactions: LLMInteraction[];
 }
 
 export interface ReplayOverrides {

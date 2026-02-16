@@ -4,9 +4,8 @@ core/security/context.py
 安全上下文管理 - 为整个框架提供统一的安全上下文访问接口
 支持线程安全、上下文嵌套和服务层访问
 """
-from typing import Dict, Any, Optional, List
+from typing import ClassVar, Dict, Any, Optional, List, Set
 from dataclasses import dataclass, field
-from enum import Enum
 import threading
 import logging
 
@@ -43,9 +42,19 @@ class SecurityContext:
     parent_context: Optional["SecurityContext"] = None
     should_mask_pii: bool = False
 
+    _admin_roles: ClassVar[Set[str]] = {"manager"}
+
+    @classmethod
+    def set_admin_roles(cls, roles: Set[str]) -> None:
+        """Configure which roles are considered admin.
+
+        Call at application startup to inject domain-specific admin roles.
+        """
+        cls._admin_roles = set(roles)
+
     def is_admin(self) -> bool:
         """检查是否为管理员"""
-        return self.role == "manager"
+        return self.role in self._admin_roles
 
     def has_role(self, role: str) -> bool:
         """检查是否具有指定角色"""
@@ -231,9 +240,13 @@ class SecurityContextManager:
         if context.is_admin():
             return True
 
-        # TODO: 实现更细粒度的权限检查
-        # 这里需要在 SPEC-18 中实现权限检查器
-        return True
+        # Delegate to PermissionChecker for fine-grained checks
+        try:
+            from core.security.checker import permission_checker
+            return permission_checker.check_permission(permission, context)
+        except Exception as e:
+            logger.warning(f"Permission check failed, defaulting to deny: {e}")
+            return False
 
 
 # 全局安全上下文管理器实例

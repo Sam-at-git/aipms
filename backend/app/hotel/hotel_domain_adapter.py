@@ -576,6 +576,71 @@ class HotelDomainAdapter(IDomainAdapter):
             'assignee_id': '执行人',
         }
 
+    # ========== SPEC-04: Classification & HITL Support ==========
+
+    def get_admin_roles(self) -> List[str]:
+        """Return hotel admin role names."""
+        return ["sysadmin", "manager"]
+
+    def get_query_examples(self) -> List[Dict[str, Any]]:
+        """Return hotel-specific query examples for LLM prompts."""
+        return [
+            {
+                "description": "查询在住客人",
+                "query": {
+                    "root_object": "Guest",
+                    "fields": ["name", "phone"],
+                    "filters": [{"path": "stays.status", "operator": "eq", "value": "ACTIVE"}],
+                },
+            },
+            {
+                "description": "查询空闲房间",
+                "query": {
+                    "root_object": "Room",
+                    "fields": ["room_number", "room_type.name", "status"],
+                    "filters": [{"path": "status", "operator": "eq", "value": "VACANT_CLEAN"}],
+                },
+            },
+        ]
+
+    def get_context_summary(self, db, additional_context: Dict[str, Any]) -> List[str]:
+        """Format hotel business context as user message lines."""
+        lines = []
+        if additional_context.get("room_summary"):
+            rs = additional_context["room_summary"]
+            lines.append(
+                f"- 总房间: {rs.get('total', 'N/A')}, "
+                f"空闲: {rs.get('vacant_clean', 'N/A')}, "
+                f"入住: {rs.get('occupied', 'N/A')}"
+            )
+        if additional_context.get("room_types"):
+            rt_list = additional_context["room_types"]
+            if isinstance(rt_list, list):
+                for rt in rt_list:
+                    name = rt.get("name", "")
+                    price = rt.get("base_price", "")
+                    if name:
+                        lines.append(f"  - {name}: ¥{price}")
+        return lines
+
+    def get_hitl_risk_overrides(self) -> Dict[str, Any]:
+        """Return hotel HITL risk overrides — use ActionMetadata defaults."""
+        return {}
+
+    def get_hitl_custom_rules(self) -> list:
+        """Return hotel-specific HITL custom rules."""
+        def check_high_amount_adjustment(action_type, params, **kwargs):
+            if action_type == "adjust_bill":
+                amount = params.get("adjustment_amount", 0)
+                try:
+                    if abs(float(amount)) > 1000:
+                        from core.ontology.metadata import ConfirmationLevel
+                        return ConfirmationLevel.HIGH
+                except (ValueError, TypeError):
+                    pass
+            return None
+        return [check_high_amount_adjustment]
+
     @staticmethod
     def _parse_relative_date(date_input) -> Optional[date]:
         """Parse relative date strings (今天, 明天, 后天, etc.) to date objects."""

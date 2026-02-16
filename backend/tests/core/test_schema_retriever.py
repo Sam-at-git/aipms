@@ -5,10 +5,24 @@ Unit tests for SchemaRetriever.
 """
 import pytest
 from unittest.mock import Mock, MagicMock
+from dataclasses import dataclass
+from typing import Optional
 
 from core.ai.schema_retriever import SchemaRetriever
 from core.ai import VectorStore, SchemaItem, create_embedding_service_for_test
 from core.ontology.metadata import EntityMetadata, PropertyMetadata, ActionMetadata
+
+
+@dataclass
+class _MockRelationshipMetadata:
+    """Mock RelationshipMetadata for tests."""
+    name: str
+    target_entity: str
+    cardinality: str
+    foreign_key: str = ""
+    foreign_key_entity: str = ""
+    inverse_name: Optional[str] = None
+    description: str = ""
 
 
 class TestSchemaRetriever:
@@ -62,12 +76,31 @@ class TestSchemaRetriever:
             }
         )
 
-        registry.get_entities.return_value = [guest_entity, room_entity]
+        stay_entity = EntityMetadata(
+            name="StayRecord",
+            description="Stay record",
+            table_name="stay_records",
+        )
+
+        registry.get_entities.return_value = [guest_entity, room_entity, stay_entity]
         registry.get_entity.side_effect = lambda name: {
             "Guest": guest_entity,
-            "Room": room_entity
+            "Room": room_entity,
+            "StayRecord": stay_entity,
         }.get(name)
         registry.get_actions.return_value = []
+
+        # Mock relationships (replaces hardcoded _RELATIONSHIP_MAP)
+        _relationships = {
+            "Guest": [
+                _MockRelationshipMetadata("stay_records", "StayRecord", "one_to_many"),
+            ],
+            "StayRecord": [
+                _MockRelationshipMetadata("guest", "Guest", "many_to_one"),
+                _MockRelationshipMetadata("room", "Room", "many_to_one"),
+            ],
+        }
+        registry.get_relationships.side_effect = lambda name: _relationships.get(name, [])
 
         return registry
 

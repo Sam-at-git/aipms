@@ -25,10 +25,10 @@ from app.hotel.domain.relationships import (
 @pytest.fixture(autouse=True)
 def _setup_relationships():
     """Ensure hotel relationships are registered for tests"""
-    RelationshipRegistry.clear()
+    relationship_registry.clear()
     register_hotel_relationships(relationship_registry)
     yield
-    RelationshipRegistry.clear()
+    relationship_registry.clear()
 
 
 class TestLinkType:

@@ -1,14 +1,16 @@
 """
-调度器后端接口 — 域无关的定时任务抽象
+Scheduler backend interface - domain-agnostic scheduled task abstraction.
 
-app 层通过实现 ISchedulerBackend 来对接具体调度框架（APScheduler 等）。
+The app layer implements ISchedulerBackend to connect to a specific
+scheduling framework (APScheduler, etc.).
 """
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, List, Optional
+import threading
 
 
 class ISchedulerBackend(ABC):
-    """调度后端接口"""
+    """Scheduler backend interface."""
 
     @abstractmethod
     def add_job(
@@ -18,69 +20,78 @@ class ISchedulerBackend(ABC):
         trigger: str,
         **trigger_args,
     ) -> None:
-        """添加定时任务
+        """Add a scheduled job.
 
         Args:
-            job_id: 任务唯一标识
-            func: 要执行的函数
-            trigger: 触发器类型（'cron', 'interval', 'date'）
-            **trigger_args: 触发器参数（如 cron 表达式字段）
+            job_id: Unique job identifier
+            func: Function to execute
+            trigger: Trigger type ('cron', 'interval', 'date')
+            **trigger_args: Trigger parameters (e.g., cron expression fields)
         """
 
     @abstractmethod
     def remove_job(self, job_id: str) -> None:
-        """移除任务"""
+        """Remove a job."""
 
     @abstractmethod
     def pause_job(self, job_id: str) -> None:
-        """暂停任务"""
+        """Pause a job."""
 
     @abstractmethod
     def resume_job(self, job_id: str) -> None:
-        """恢复任务"""
+        """Resume a job."""
 
     @abstractmethod
     def get_jobs(self) -> List[Dict]:
-        """获取所有任务
+        """Get all jobs.
 
         Returns:
-            任务列表，每项至少包含 id, name, trigger, next_run_time, status
+            List of jobs, each containing at least id, name, trigger, next_run_time, status.
         """
 
     @abstractmethod
     def get_job(self, job_id: str) -> Optional[Dict]:
-        """获取单个任务信息"""
+        """Get a single job's information."""
 
     @abstractmethod
     def trigger_job(self, job_id: str) -> None:
-        """立即触发一次任务执行"""
+        """Trigger an immediate execution of a job."""
 
 
 class SchedulerRegistry:
-    """调度器注册表 — 单例模式
+    """Scheduler registry - singleton.
 
-    app 层在 lifespan 中注册实现：
+    The app layer registers the implementation at startup:
         from core.scheduler import SchedulerRegistry
         registry = SchedulerRegistry()
         registry.set_backend(APSchedulerBackend(scheduler))
     """
 
     _instance: Optional["SchedulerRegistry"] = None
+    _lock = threading.Lock()
 
     def __new__(cls) -> "SchedulerRegistry":
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._backend: Optional[ISchedulerBackend] = None
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._backend: Optional[ISchedulerBackend] = None
         return cls._instance
 
     def set_backend(self, backend: ISchedulerBackend) -> None:
-        """注册调度后端"""
+        """Register the scheduler backend."""
         self._backend = backend
 
     def get_backend(self) -> Optional[ISchedulerBackend]:
-        """获取调度后端"""
+        """Get the scheduler backend."""
         return self._backend
 
     def clear(self) -> None:
-        """清除后端（用于测试）"""
+        """Clear the backend (for testing)."""
         self._backend = None
+
+
+__all__ = [
+    "ISchedulerBackend",
+    "SchedulerRegistry",
+]

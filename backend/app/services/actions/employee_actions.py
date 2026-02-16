@@ -159,7 +159,8 @@ def register_employee_actions(
         allowed_roles={"manager", "sysadmin"},
         undoable=False,
         side_effects=["deactivates_employee"],
-        search_keywords=["停用员工", "禁用员工", "deactivate employee"]
+        search_keywords=["停用员工", "禁用员工", "deactivate employee"],
+        risk_level="high",
     )
     def handle_deactivate_employee(
         params: DeactivateEmployeeParams,

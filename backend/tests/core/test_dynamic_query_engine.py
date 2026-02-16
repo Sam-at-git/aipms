@@ -74,10 +74,6 @@ class TestDynamicDisplayName:
 class TestBackwardCompatibility:
     """Ensure backward compat aliases exist"""
 
-    def test_model_map_alias_exists(self):
-        from core.ontology.query_engine import MODEL_MAP
-        assert isinstance(MODEL_MAP, dict)
-
     def test_relationship_map_alias_exists(self):
         from core.ontology.query_engine import RELATIONSHIP_MAP
         # SPEC-R04: RELATIONSHIP_MAP is now a callable returning a dict

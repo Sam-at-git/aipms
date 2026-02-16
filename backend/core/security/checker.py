@@ -7,8 +7,10 @@ core/security/checker.py
 from typing import Dict, Set, List, Any, Optional, Union, Callable
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from functools import wraps
 import logging
+import threading
 
 from core.security.context import SecurityContext, security_context_manager
 from core.engine.audit import AuditEngine, audit_engine, AuditSeverity
@@ -232,13 +234,15 @@ class PermissionChecker:
     """
 
     _instance: Optional["PermissionChecker"] = None
-    _lock = object()  # 使用简单对象锁避免 threading 导入问题
+    _lock = threading.Lock()
+    _MAX_CACHE_SIZE = 2048
 
     def __new__(cls) -> "PermissionChecker":
-        """单例模式（简化版，单线程）"""
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):
@@ -246,9 +250,7 @@ class PermissionChecker:
             return
 
         self._rules: List[PermissionRule] = []
-        self._cache: Dict[
-            tuple[str, str, Optional[int], Optional[str]], bool
-        ] = {}
+        self._cache: OrderedDict = OrderedDict()
         self._audit_engine: Optional[AuditEngine] = None
 
         # 添加默认规则
@@ -335,7 +337,9 @@ class PermissionChecker:
                 allowed = True
                 break
 
-        # 缓存结果
+        # 缓存结果 (bounded LRU)
+        if len(self._cache) >= self._MAX_CACHE_SIZE:
+            self._cache.popitem(last=False)
         self._cache[cache_key] = allowed
 
         # 记录拒绝

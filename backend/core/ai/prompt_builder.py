@@ -129,16 +129,21 @@ class PromptBuilder:
 ```
 """
 
-    def __init__(self, ontology_registry=None, action_registry=None):
+    def __init__(self, ontology_registry=None, action_registry=None,
+                 admin_roles=None, adapter=None):
         """
         初始化 PromptBuilder
 
         Args:
             ontology_registry: 本体注册中心，默认使用全局单例
             action_registry: ActionRegistry 实例（可选），用于构建领域关键词表
+            admin_roles: 被视为管理员的角色名集合（可选）
+            adapter: IDomainAdapter 实例（可选），用于注入领域相关提示词/上下文
         """
         self.registry = ontology_registry or registry
         self._action_registry = action_registry
+        self._admin_roles: set = set(admin_roles) if admin_roles else set()
+        self._adapter = adapter
 
     def build_system_prompt(
         self,
@@ -243,8 +248,8 @@ class PromptBuilder:
         if context is None:
             return False
 
-        # 条件 1：用户角色是 sysadmin/manager
-        if context.user_role in ("sysadmin", "manager"):
+        # 条件 1：用户角色是管理员（由 admin_roles 配置）
+        if self._admin_roles and context.user_role in self._admin_roles:
             return True
 
         # 条件 2：用户消息包含系统管理关键词
@@ -454,7 +459,7 @@ class PromptBuilder:
     def _build_permission_context(self, context: PromptContext) -> str:
         """构建权限上下文 (SPEC-51: 动态注入权限矩阵)"""
         # 只对管理员显示完整权限矩阵
-        if context.user_role not in ('manager', 'sysadmin'):
+        if not self._admin_roles or context.user_role not in self._admin_roles:
             return ""
 
         permissions = self.registry.get_permissions()
@@ -548,66 +553,27 @@ class PromptBuilder:
             "- `between` - 在范围内",
         ])
 
-        # 查询示例
+        # 查询示例（从 adapter 注入，domain-agnostic）
+        examples = self._adapter.get_query_examples() if self._adapter else []
+        if examples:
+            import json
+            lines.extend(["", "## 查询示例", ""])
+            for i, example in enumerate(examples, 1):
+                desc = example.get("description", f"示例 {i}")
+                lines.append(f"### 示例 {i}: {desc}")
+                lines.append("```json")
+                lines.append(json.dumps(example["query"], ensure_ascii=False, indent=2))
+                lines.append("```")
+                lines.append("")
+
+        # 重要规则（framework-generic）
         lines.extend([
-            "",
-            "## 查询示例",
-            "",
-            "### 示例 1: 查询所有在住客人",
-            "```json",
-            "{",
-            '  "root_object": "Guest",',
-            '  "fields": ["name", "phone"],',
-            '  "filters": [',
-            '    {"path": "stays.status", "operator": "eq", "value": "ACTIVE"}',
-            "  ]",
-            "}",
-            "```",
-            "",
-            "### 示例 2: 查询特定房间的在住客人",
-            "```json",
-            "{",
-            '  "root_object": "Guest",',
-            '  "fields": ["name", "phone"],',
-            '  "filters": [',
-            '    {"path": "stays.status", "operator": "eq", "value": "ACTIVE"},',
-            '    {"path": "stays.room.room_number", "operator": "eq", "value": "201"}',
-            "  ]",
-            "}",
-            "```",
-            "",
-            "### 示例 3: 查询本月的入住记录",
-            "```json",
-            "{",
-            '  "root_object": "StayRecord",',
-            '  "fields": ["guest.name", "check_in_time", "room.room_number"],',
-            '  "filters": [',
-            '    {"path": "check_in_time", "operator": "gte", "value": "2026-02-01"},',
-            '    {"path": "check_in_time", "operator": "lt", "value": "2026-03-01"}',
-            "  ],",
-            '  "order_by": ["check_in_time DESC"],',
-            '  "limit": 50',
-            "}",
-            "```",
-            "",
-            "### 示例 4: 查询 VIP 客人的入住历史",
-            "```json",
-            "{",
-            '  "root_object": "StayRecord",',
-            '  "fields": ["guest.name", "check_in_time", "room.room_number", "room.room_type.name"],',
-            '  "filters": [',
-            '    {"path": "guest.tier", "operator": "eq", "value": "VIP"}',
-            "  ],",
-            '  "order_by": ["check_in_time DESC"],',
-            '  "limit": 20',
-            "}",
-            "```",
             "",
             "## 重要规则",
             "",
-            "1. **路径必须使用关系属性名**（如 `stays` 而非 `stay_records`）",
+            "1. **路径必须使用关系属性名**",
             "2. **日期字段使用 ISO 格式**（YYYY-MM-DD）",
-            "3. **状态值使用枚举值**（如 ACTIVE, VACANT_CLEAN, CHECKED_IN）",
+            "3. **状态值使用枚举值**",
             "4. **多个过滤器之间是 AND 关系**",
             "5. **limit 默认为 100，最大 1000**",
         ])
@@ -679,19 +645,20 @@ class PromptBuilder:
         # 添加额外上下文
         if additional_context:
             lines = ["**当前状态:**"]
-            if additional_context.get("room_summary"):
-                rs = additional_context["room_summary"]
-                lines.append(f"- 总房间: {rs.get('total')}, 空闲: {rs.get('vacant_clean')}, 入住: {rs.get('occupied')}")
-            if additional_context.get("room_types"):
-                rt_list = ", ".join([
-                    f"{rt.get('name')}(ID:{rt.get('id')}, ¥{rt.get('price')})"
-                    for rt in additional_context["room_types"]
-                ])
-                lines.append(f"- 可用房型: {rt_list}")
-            if additional_context.get("active_stays"):
-                lines.append(f"- 在住客人: {len(additional_context['active_stays'])} 位")
-            if additional_context.get("pending_tasks"):
-                lines.append(f"- 待处理任务: {len(additional_context['pending_tasks'])} 个")
+            if self._adapter:
+                # Delegate formatting to domain adapter
+                adapter_lines = self._adapter.get_context_summary(None, additional_context)
+                lines.extend(adapter_lines)
+            else:
+                # Generic fallback: output raw key-value summary
+                for key, value in additional_context.items():
+                    if isinstance(value, list):
+                        lines.append(f"- {key}: {len(value)} 项")
+                    elif isinstance(value, dict):
+                        summary = ", ".join(f"{k}: {v}" for k, v in list(value.items())[:4])
+                        lines.append(f"- {key}: {summary}")
+                    else:
+                        lines.append(f"- {key}: {value}")
 
             parts.append("\n".join(lines))
 
@@ -761,34 +728,13 @@ class PromptBuilder:
         rules = self.registry.get_business_rules()
         context["registered_rules"] = [getattr(r, 'name', 'unnamed') for r in rules]
 
-        # 如果有数据库会话，获取实时数据
-        if db_session:
+        # 如果有数据库会话，获取实时数据（委托给 adapter）
+        if db_session and self._adapter:
             try:
-                # Use registry to dynamically get model classes
-                Room = self.registry.get_model("Room")
-                Task = self.registry.get_model("Task")
-
-                if Room:
-                    # 房间统计
-                    total_rooms = db_session.query(Room).count()
-                    occupied_rooms = db_session.query(Room).filter(
-                        Room.status == 'occupied'
-                    ).count()
-                    context["room_stats"] = {
-                        "total": total_rooms,
-                        "occupied": occupied_rooms,
-                        "available": total_rooms - occupied_rooms
-                    }
-
-                if Task:
-                    # 任务统计
-                    pending_tasks = db_session.query(Task).filter(
-                        Task.status == 'pending'
-                    ).count()
-                    context["pending_tasks"] = pending_tasks
-
-            except Exception:
-                pass  # 数据库查询失败时忽略
+                dynamic_ctx = self._adapter.build_llm_context(db_session)
+                context.update(dynamic_ctx)
+            except Exception as e:
+                logger.warning(f"Failed to build dynamic context from adapter: {e}")
 
         return context
 

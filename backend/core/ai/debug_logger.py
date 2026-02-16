@@ -205,6 +205,77 @@ class AttemptLog:
         )
 
 
+@dataclass
+class LLMInteraction:
+    """Record of a single LLM API call within a debug session."""
+
+    interaction_id: str
+    session_id: str
+    sequence_number: int
+    ooda_phase: str           # 'orient' | 'decide' | 'act'
+    call_type: str            # 'topic_relevance' | 'extract_params' | 'chat' | 'parse_followup' | 'format_result'
+    started_at: str           # ISO datetime
+    ended_at: str             # ISO datetime
+    latency_ms: int
+    model: Optional[str] = None
+    prompt: Optional[str] = None
+    response: Optional[str] = None
+    tokens_input: Optional[int] = None
+    tokens_output: Optional[int] = None
+    tokens_total: Optional[int] = None
+    temperature: Optional[float] = None
+    response_parsed: Optional[str] = None
+    success: bool = True
+    error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "interaction_id": self.interaction_id,
+            "session_id": self.session_id,
+            "sequence_number": self.sequence_number,
+            "ooda_phase": self.ooda_phase,
+            "call_type": self.call_type,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "latency_ms": self.latency_ms,
+            "model": self.model,
+            "prompt": self.prompt,
+            "response": self.response,
+            "tokens_input": self.tokens_input,
+            "tokens_output": self.tokens_output,
+            "tokens_total": self.tokens_total,
+            "temperature": self.temperature,
+            "response_parsed": self.response_parsed,
+            "success": self.success,
+            "error": self.error,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "LLMInteraction":
+        """Create LLMInteraction from database row."""
+        return cls(
+            interaction_id=row["interaction_id"],
+            session_id=row["session_id"],
+            sequence_number=row["sequence_number"],
+            ooda_phase=row["ooda_phase"],
+            call_type=row["call_type"],
+            started_at=row["started_at"],
+            ended_at=row["ended_at"],
+            latency_ms=row["latency_ms"],
+            model=row["model"],
+            prompt=row["prompt"],
+            response=row["response"],
+            tokens_input=row["tokens_input"],
+            tokens_output=row["tokens_output"],
+            tokens_total=row["tokens_total"],
+            temperature=row["temperature"],
+            response_parsed=row["response_parsed"],
+            success=bool(row["success"]),
+            error=row["error"],
+        )
+
+
 # ==================== Debug Logger ====================
 
 class DebugLogger:
@@ -368,6 +439,36 @@ class DebugLogger:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_attempt_logs_session
                 ON attempt_logs(session_id, attempt_number)
+            """)
+
+            # Create llm_interactions table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS llm_interactions (
+                    interaction_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    sequence_number INTEGER NOT NULL,
+                    ooda_phase TEXT NOT NULL,
+                    call_type TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT NOT NULL,
+                    latency_ms INTEGER NOT NULL,
+                    model TEXT,
+                    prompt TEXT,
+                    response TEXT,
+                    tokens_input INTEGER,
+                    tokens_output INTEGER,
+                    tokens_total INTEGER,
+                    temperature REAL,
+                    response_parsed TEXT,
+                    success BOOLEAN NOT NULL DEFAULT 1,
+                    error TEXT,
+                    FOREIGN KEY (session_id) REFERENCES debug_sessions(id) ON DELETE CASCADE
+                )
+            """)
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_llm_interactions_session
+                ON llm_interactions(session_id, sequence_number)
             """)
 
             # Migrate existing databases: add new columns if missing
@@ -614,6 +715,80 @@ class DebugLogger:
         finally:
             conn.close()
 
+    # ==================== LLM Interaction Logging ====================
+
+    def log_llm_interaction(
+        self,
+        session_id: str,
+        sequence_number: int,
+        ooda_phase: str,
+        call_type: str,
+        started_at: str,
+        ended_at: str,
+        latency_ms: int,
+        model: Optional[str] = None,
+        prompt: Optional[str] = None,
+        response: Optional[str] = None,
+        tokens_input: Optional[int] = None,
+        tokens_output: Optional[int] = None,
+        tokens_total: Optional[int] = None,
+        temperature: Optional[float] = None,
+        response_parsed: Optional[str] = None,
+        success: bool = True,
+        error: Optional[str] = None,
+    ) -> str:
+        """
+        Log an LLM interaction within a session.
+
+        Returns:
+            interaction_id
+        """
+        interaction_id = str(uuid.uuid4())
+
+        conn = self._get_conn()
+        try:
+            conn.execute("""
+                INSERT INTO llm_interactions
+                (interaction_id, session_id, sequence_number, ooda_phase, call_type,
+                 started_at, ended_at, latency_ms, model, prompt, response,
+                 tokens_input, tokens_output, tokens_total, temperature,
+                 response_parsed, success, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                interaction_id, session_id, sequence_number, ooda_phase, call_type,
+                started_at, ended_at, latency_ms, model, prompt, response,
+                tokens_input, tokens_output, tokens_total, temperature,
+                response_parsed, success, error
+            ))
+            conn.commit()
+            logger.debug(f"DebugLogger: Logged LLM interaction {interaction_id} for session {session_id}")
+            return interaction_id
+
+        finally:
+            conn.close()
+
+    def get_llm_interactions(self, session_id: str) -> List[LLMInteraction]:
+        """
+        Get all LLM interactions for a session, ordered by sequence_number.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            List of LLMInteraction objects
+        """
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute("""
+                SELECT * FROM llm_interactions
+                WHERE session_id = ?
+                ORDER BY sequence_number ASC
+            """, (session_id,))
+            return [LLMInteraction.from_row(row) for row in cursor.fetchall()]
+
+        finally:
+            conn.close()
+
     # ==================== Attempt Logging ====================
 
     def log_attempt(
@@ -815,7 +990,10 @@ class DebugLogger:
         """
         conn = self._get_conn()
         try:
-            cursor = conn.execute("""
+            conn.execute("""
+                DELETE FROM llm_interactions WHERE session_id = ?
+            """, (session_id,))
+            conn.execute("""
                 DELETE FROM attempt_logs WHERE session_id = ?
             """, (session_id,))
             cursor = conn.execute("""
@@ -844,7 +1022,14 @@ class DebugLogger:
 
         conn = self._get_conn()
         try:
-            cursor = conn.execute("""
+            conn.execute("""
+                DELETE FROM llm_interactions
+                WHERE session_id IN (
+                    SELECT id FROM debug_sessions WHERE timestamp < ?
+                )
+            """, (cutoff_date,))
+
+            conn.execute("""
                 DELETE FROM attempt_logs
                 WHERE session_id IN (
                     SELECT id FROM debug_sessions WHERE timestamp < ?
@@ -933,4 +1118,5 @@ __all__ = [
     "DebugLogger",
     "DebugSession",
     "AttemptLog",
+    "LLMInteraction",
 ]

@@ -133,3 +133,9 @@ class StateMachineExecutor:
             ),
             side_effects=list(matching_transition.side_effects),
         )
+
+
+__all__ = [
+    "TransitionResult",
+    "StateMachineExecutor",
+]

@@ -8,7 +8,6 @@ from unittest.mock import Mock, patch, MagicMock
 
 from core.ai.embedding import (
     EmbeddingService,
-    EmbeddingResult,
     create_embedding_service
 )
 
@@ -62,7 +61,7 @@ class TestEmbeddingService:
         result2 = service.embed("test text")
 
         assert len(service._cache) == 1
-        assert "test text" in service._cache_order
+        assert "test text" in service._cache
 
     def test_embed_cache_lru_eviction(self):
         """Test LRU cache eviction when cache is full"""
@@ -126,7 +125,6 @@ class TestEmbeddingService:
 
         service.clear_cache()
         assert len(service._cache) == 0
-        assert len(service._cache_order) == 0
 
     def test_get_cache_stats(self):
         """Test getting cache statistics"""
@@ -166,8 +164,8 @@ class TestEmbeddingService:
             service.base_url = "https://api.openai.com"
             service.enabled = True
             service._client = mock_client
-            service._cache = {}
-            service._cache_order = []
+            from collections import OrderedDict
+            service._cache = OrderedDict()
             service._cache_size = 1000
 
             result = service.embed("test")

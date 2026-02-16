@@ -13,8 +13,8 @@ Ontology 查询引擎 - 动态构建并执行 SQLAlchemy 查询
 import logging
 from datetime import datetime, date, timedelta
 from typing import List, Any, Dict, Optional, Type
-from sqlalchemy import and_, or_, not_, func, case, literal_column
-from sqlalchemy.orm import Session, joinedload, lazyload
+from sqlalchemy import and_, func
+from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import BinaryExpression
 
 from core.ontology.query import (
@@ -24,10 +24,6 @@ from core.ontology.registry import OntologyRegistry
 
 logger = logging.getLogger(__name__)
 
-
-# 动态映射 - 从 OntologyRegistry 获取（SPEC-13）
-# 保留 _FALLBACK_MODEL_MAP 用于向后兼容（Registry 未注册时的延迟导入）
-_FALLBACK_MODEL_MAP: Dict[str, Optional[Type]] = {}
 
 # SPEC-R04: Relationship map removed - now fully registry-driven
 
@@ -101,10 +97,6 @@ def _get_display_names_from_registry() -> Dict[str, str]:
 
 
 DISPLAY_NAMES = _get_display_names_from_registry
-
-
-# Backward compatibility aliases
-MODEL_MAP = _FALLBACK_MODEL_MAP
 
 
 def _get_relationship_map_from_registry() -> Dict[str, Dict[str, tuple]]:

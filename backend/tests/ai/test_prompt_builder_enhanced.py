@@ -62,7 +62,7 @@ class TestEnhancedPromptBuilder:
 
     def test_build_with_permissions_for_manager(self):
         """测试为管理员构建包含权限的提示词"""
-        builder = PromptBuilder()
+        builder = PromptBuilder(admin_roles=["sysadmin", "manager"])
         context = PromptContext(user_role="manager", include_permissions=True)
         prompt = builder.build_system_prompt(context)
 
@@ -72,11 +72,20 @@ class TestEnhancedPromptBuilder:
 
     def test_build_without_permissions_for_receptionist(self):
         """测试为前台构建不包含权限的提示词"""
-        builder = PromptBuilder()
+        builder = PromptBuilder(admin_roles=["sysadmin", "manager"])
         context = PromptContext(user_role="receptionist", include_permissions=True)
         prompt = builder.build_system_prompt(context)
 
         # 非管理员不显示权限矩阵
+        assert "**权限矩阵**" not in prompt
+
+    def test_build_without_admin_roles_no_permissions(self):
+        """测试无 admin_roles 时不显示权限矩阵"""
+        builder = PromptBuilder()  # no admin_roles
+        context = PromptContext(user_role="manager", include_permissions=True)
+        prompt = builder.build_system_prompt(context)
+
+        # Without admin_roles configured, nobody sees permission matrix
         assert "**权限矩阵**" not in prompt
 
     def test_get_dynamic_context(self):

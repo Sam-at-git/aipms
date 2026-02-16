@@ -9,14 +9,15 @@ from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from datetime import datetime
 import logging
+import threading
 
-from core.ooda.decide import Decision
+from core.ooda.decide import OodaDecision as Decision
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ActionResult:
+class OodaActionResult:
     """
     动作执行结果 - Act 阶段的输出
 
@@ -68,7 +69,7 @@ class ActionHandler(ABC):
         pass
 
     @abstractmethod
-    def execute(self, decision: Decision) -> ActionResult:
+    def execute(self, decision: Decision) -> OodaActionResult:
         """
         执行动作
 
@@ -109,13 +110,13 @@ class MockActionHandler(ActionHandler):
             return True
         return action_type in self._action_types
 
-    def execute(self, decision: Decision) -> ActionResult:
+    def execute(self, decision: Decision) -> OodaActionResult:
         """执行动作（模拟）"""
         self.execute_calls.append(decision)
 
         mock_result = self._mock_results.get(decision.action_type, {})
 
-        return ActionResult(
+        return OodaActionResult(
             decision=decision,
             success=True,
             result_data=mock_result,
@@ -143,12 +144,12 @@ class DelegatingActionHandler(ActionHandler):
         """检查是否能处理该动作类型"""
         return action_type in self._service_registry
 
-    def execute(self, decision: Decision) -> ActionResult:
+    def execute(self, decision: Decision) -> OodaActionResult:
         """执行动作（委托给服务）"""
         service_func = self._service_registry.get(decision.action_type)
 
         if service_func is None:
-            return ActionResult(
+            return OodaActionResult(
                 decision=decision,
                 success=False,
                 error_message=f"No service registered for action: {decision.action_type}",
@@ -156,7 +157,7 @@ class DelegatingActionHandler(ActionHandler):
 
         try:
             result = service_func(decision.action_params)
-            return ActionResult(
+            return OodaActionResult(
                 decision=decision,
                 success=True,
                 result_data=result if isinstance(result, dict) else {"result": result},
@@ -164,7 +165,7 @@ class DelegatingActionHandler(ActionHandler):
             )
         except Exception as e:
             logger.error(f"Action execution failed: {e}")
-            return ActionResult(
+            return OodaActionResult(
                 decision=decision,
                 success=False,
                 error_message=str(e),
@@ -219,7 +220,7 @@ class ActPhase:
         self._handlers.clear()
         logger.debug("Cleared all action handlers")
 
-    def act(self, decision: Decision, skip_confirmation: bool = False) -> ActionResult:
+    def act(self, decision: Decision, skip_confirmation: bool = False) -> OodaActionResult:
         """
         执行动作阶段
 
@@ -234,7 +235,7 @@ class ActPhase:
 
         # 检查决策有效性
         if not decision.is_valid:
-            return ActionResult(
+            return OodaActionResult(
                 decision=decision,
                 success=False,
                 error_message="Invalid decision: " + "; ".join(decision.errors),
@@ -242,7 +243,7 @@ class ActPhase:
 
         # 检查确认需求
         if decision.requires_confirmation and not skip_confirmation:
-            return ActionResult(
+            return OodaActionResult(
                 decision=decision,
                 success=False,
                 error_message="Action requires confirmation",
@@ -257,7 +258,7 @@ class ActPhase:
                 break
 
         if handler is None:
-            return ActionResult(
+            return OodaActionResult(
                 decision=decision,
                 success=False,
                 error_message=f"No handler found for action: {decision.action_type}",
@@ -281,20 +282,21 @@ class ActPhase:
 
         except Exception as e:
             logger.error(f"Action handler failed: {e}")
-            return ActionResult(
+            return OodaActionResult(
                 decision=decision,
                 success=False,
                 error_message=f"Handler failed: {e}",
             )
 
 
-# 全局 Act 阶段实例
+# 全局 Act 阶段实例（线程安全）
 _act_phase_instance: Optional[ActPhase] = None
+_act_phase_lock = threading.Lock()
 
 
 def get_act_phase() -> ActPhase:
     """
-    获取全局 Act 阶段实例
+    获取全局 Act 阶段实例（线程安全）
 
     Returns:
         ActPhase 单例
@@ -302,25 +304,31 @@ def get_act_phase() -> ActPhase:
     global _act_phase_instance
 
     if _act_phase_instance is None:
-        _act_phase_instance = ActPhase()
+        with _act_phase_lock:
+            if _act_phase_instance is None:
+                _act_phase_instance = ActPhase()
 
     return _act_phase_instance
 
 
-def set_act_phase(act_phase: ActPhase) -> None:
+def set_act_phase(act_phase: Optional[ActPhase]) -> None:
     """
     设置全局 Act 阶段实例（用于测试）
 
     Args:
-        act_phase: ActPhase 实例
+        act_phase: ActPhase 实例，或 None 以重置
     """
     global _act_phase_instance
     _act_phase_instance = act_phase
 
 
+# Backward-compat alias
+ActionResult = OodaActionResult
+
 # 导出
 __all__ = [
-    "ActionResult",
+    "OodaActionResult",
+    "ActionResult",  # backward-compat alias
     "ActionHandler",
     "MockActionHandler",
     "DelegatingActionHandler",

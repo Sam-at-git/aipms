@@ -6,6 +6,7 @@ core/security/permission.py — 权限提供者接口
 """
 from abc import ABC, abstractmethod
 from typing import List, Optional, Set
+import threading
 
 
 class IPermissionProvider(ABC):
@@ -33,11 +34,14 @@ class PermissionProviderRegistry:
     """
 
     _instance: Optional["PermissionProviderRegistry"] = None
-    _provider: Optional[IPermissionProvider] = None
+    _lock = threading.Lock()
 
     def __new__(cls) -> "PermissionProviderRegistry":
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._provider: Optional[IPermissionProvider] = None
         return cls._instance
 
     def set_provider(self, provider: IPermissionProvider) -> None:

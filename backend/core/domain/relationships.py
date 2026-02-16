@@ -4,9 +4,10 @@ core/domain/relationships.py
 通用关系类型定义 - 领域无关
 酒店特定关系常量在 app.hotel.domain.relationships 中
 """
-from typing import List
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
+import threading
 
 
 class LinkType(str, Enum):
@@ -17,6 +18,7 @@ class LinkType(str, Enum):
     MANY_TO_MANY = "many_to_many"       # 多对多
     AGGREGATION = "aggregation"         # 聚合关系
     COMPOSITION = "composition"         # 组合关系
+    REFERENCE = "reference"             # 引用关系
 
 
 class Cardinality(str, Enum):
@@ -53,39 +55,49 @@ class EntityLink:
 
 class RelationshipRegistry:
     """
-    关系注册表 - 管理所有实体间的关系
+    关系注册表 - 管理所有实体间的关系（单例模式）
     """
 
-    _relationships: dict[str, List[EntityLink]] = {}
+    _instance: Optional["RelationshipRegistry"] = None
+    _lock = threading.Lock()
+    _initialized = False
 
-    @classmethod
-    def get_relationships(cls, entity_name: str) -> List[EntityLink]:
-        return cls._relationships.get(entity_name, [])
+    def __new__(cls) -> "RelationshipRegistry":
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
 
-    @classmethod
-    def get_linked_entities(cls, entity_name: str) -> List[str]:
-        links = cls.get_relationships(entity_name)
+    def __init__(self):
+        if self._initialized:
+            return
+        self._relationships: Dict[str, List[EntityLink]] = {}
+        self._initialized = True
+
+    def get_relationships(self, entity_name: str) -> List[EntityLink]:
+        return self._relationships.get(entity_name, [])
+
+    def get_linked_entities(self, entity_name: str) -> List[str]:
+        links = self.get_relationships(entity_name)
         linked = set()
         for link in links:
             linked.add(link.target_entity)
         return list(linked)
 
-    @classmethod
-    def register_relationship(cls, entity_name: str, link: EntityLink) -> None:
-        if entity_name not in cls._relationships:
-            cls._relationships[entity_name] = []
-        cls._relationships[entity_name].append(link)
+    def register_relationship(self, entity_name: str, link: EntityLink) -> None:
+        if entity_name not in self._relationships:
+            self._relationships[entity_name] = []
+        self._relationships[entity_name].append(link)
 
-    @classmethod
-    def register_relationships(cls, entity_name: str, links: List[EntityLink]) -> None:
+    def register_relationships(self, entity_name: str, links: List[EntityLink]) -> None:
         """Batch register relationships for an entity"""
         for link in links:
-            cls.register_relationship(entity_name, link)
+            self.register_relationship(entity_name, link)
 
-    @classmethod
-    def clear(cls) -> None:
+    def clear(self) -> None:
         """Clear all registered relationships (for testing)"""
-        cls._relationships = {}
+        self._relationships = {}
 
 
 # 全局关系注册表实例

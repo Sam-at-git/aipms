@@ -51,6 +51,7 @@ def register_stay_actions(
         search_keywords=["退房", "结算", "离店", "checkout"],
         ui_required_fields=["stay_record_id"],
         param_enhancer=_enhance_stay_params,
+        risk_level="high",
     )
     def handle_checkout(
         params: CheckoutParams,
@@ -145,6 +146,7 @@ def register_stay_actions(
         side_effects=["creates_stay_record", "creates_bill", "updates_room_status"],
         search_keywords=["入住", "预订入住", "办理入住", "checkin", "check in"],
         ui_required_fields=["reservation_id", "room_number"],
+        risk_level="medium",
     )
     def handle_checkin(
         params: CheckinParams,

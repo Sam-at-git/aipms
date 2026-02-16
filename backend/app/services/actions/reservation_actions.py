@@ -186,6 +186,7 @@ def register_reservation_actions(
         side_effects=["cancels_reservation"],
         search_keywords=["取消预订", "退订", "cancel reservation"],
         param_enhancer=_enhance_reservation_params,
+        risk_level="high",
     )
     def handle_cancel_reservation(
         params: CancelReservationParams,

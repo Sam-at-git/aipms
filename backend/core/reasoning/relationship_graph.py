@@ -6,24 +6,16 @@ Part of the universal ontology-driven LLM reasoning framework
 """
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Optional, Any, TYPE_CHECKING, Tuple
-from enum import Enum
 from collections import deque
 
 if TYPE_CHECKING:
     from core.ontology.registry import OntologyRegistry
 
 from core.ontology.metadata import EntityMetadata, PropertyMetadata
+from core.domain.relationships import LinkType
 
-
-class RelationType(Enum):
-    """关系类型"""
-    ONE_TO_ONE = "one_to_one"
-    ONE_TO_MANY = "one_to_many"
-    MANY_TO_ONE = "many_to_one"
-    MANY_TO_MANY = "many_to_many"
-    REFERENCE = "reference"
-    COMPOSITION = "composition"
-    AGGREGATION = "aggregation"
+# Backward-compat alias
+RelationType = LinkType
 
 
 @dataclass

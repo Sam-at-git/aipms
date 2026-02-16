@@ -41,7 +41,9 @@ def register_bill_actions(
         allowed_roles={"receptionist", "manager"},
         undoable=True,
         side_effects=["adds_payment", "may_settle_bill"],
-        search_keywords=["付款", "支付", "收款", "缴费", "add payment", "pay"]
+        search_keywords=["付款", "支付", "收款", "缴费", "add payment", "pay"],
+        risk_level="high",
+        is_financial=True,
     )
     def handle_add_payment(
         params: AddPaymentParams,
@@ -131,6 +133,8 @@ def register_bill_actions(
         undoable=False,
         side_effects=["adjusts_bill"],
         search_keywords=["调整账单", "账单调整", "折扣", "加价", "adjust bill"],
+        risk_level="critical",
+        is_financial=True,
         param_enhancer=_enhance_bill_params,
     )
     def handle_adjust_bill(
@@ -205,6 +209,8 @@ def register_bill_actions(
         allowed_roles={"manager"},
         undoable=False,
         side_effects=["creates_refund_payment"],
+        risk_level="high",
+        is_financial=True,
         search_keywords=["退款", "退钱", "refund"]
     )
     def handle_refund_payment(

@@ -9,7 +9,6 @@ from core.security.attribute_acl import (
     AttributePermission,
     AttributeAccessDenied,
     AttributeACL,
-    SecureEntityMixin,
     attribute_acl,
 )
 
@@ -271,109 +270,6 @@ class TestAttributeACL:
 
         attrs = acl.get_entity_attributes("Test")
         assert set(attrs) == {"attr1", "attr2"}
-
-
-class TestSecureEntityMixin:
-    def setup_method(self):
-        """每个测试前重置上下文和 ACL"""
-        manager = SecurityContextManager()
-        while manager.get_context():
-            manager.clear_context()
-
-        # 清空 ACL 并重新注册酒店域权限
-        acl = attribute_acl
-        acl._rules.clear()
-        acl.register_domain_permissions([
-            AttributePermission("Guest", "phone", SecurityLevel.CONFIDENTIAL),
-            AttributePermission("Guest", "id_card", SecurityLevel.RESTRICTED),
-            AttributePermission("Guest", "blacklist_reason", SecurityLevel.RESTRICTED),
-            AttributePermission("Guest", "tier", SecurityLevel.INTERNAL),
-            AttributePermission("Room", "price", SecurityLevel.INTERNAL),
-            AttributePermission("Employee", "salary", SecurityLevel.RESTRICTED, allow_write=False),
-            AttributePermission("Employee", "password_hash", SecurityLevel.RESTRICTED, allow_read=False),
-            AttributePermission("Bill", "total_amount", SecurityLevel.INTERNAL),
-        ])
-
-    def test_read_allowed_attribute(self):
-        """测试读取允许的属性"""
-        # 使用全局 ACL 注册规则
-        attribute_acl.register_attribute(
-            AttributePermission("TestEntity", "public_attr", SecurityLevel.PUBLIC, allow_write=True)
-        )
-
-        class TestEntity(SecureEntityMixin):
-            def __init__(self):
-                self.public_attr = "public_value"
-
-        obj = TestEntity()
-        # 没有规则拦截应该正常工作
-        assert obj.public_attr == "public_value"
-
-    def test_read_denied_attribute(self):
-        """测试读取被拒绝的属性"""
-        # 使用全局 ACL 注册规则
-        attribute_acl.register_attribute(
-            AttributePermission(
-                "TestEntity", "secret", SecurityLevel.RESTRICTED, allow_read=True, allow_write=True
-            )
-        )
-
-        class TestEntity(SecureEntityMixin):
-            def __init__(self):
-                # 使用 object.__setattr__ 绕过权限检查进行初始化
-                object.__setattr__(self, "secret", "secret_value")
-                self._internal = "internal"
-
-        obj = TestEntity()
-
-        # 无上下文，级别不足
-        with pytest.raises(AttributeAccessDenied) as exc_info:
-            _ = obj.secret
-        assert exc_info.value.operation == "read"
-        assert exc_info.value.attribute == "secret"
-
-        # 内部属性不受影响
-        assert obj._internal == "internal"
-
-    def test_write_denied_attribute(self):
-        """测试写入被拒绝的属性"""
-        # 使用全局 ACL 注册规则
-        attribute_acl.register_attribute(
-            AttributePermission(
-                "TestEntity", "readonly", SecurityLevel.PUBLIC, allow_read=True, allow_write=False
-            )
-        )
-
-        class TestEntity(SecureEntityMixin):
-            def __init__(self):
-                # 使用内部属性避免在初始化时被拦截
-                object.__setattr__(self, "readonly", "value")
-                self._internal = "internal"
-
-        obj = TestEntity()
-
-        # 写入被拒绝
-        with pytest.raises(AttributeAccessDenied) as exc_info:
-            obj.readonly = "new_value"
-        assert exc_info.value.operation == "write"
-
-        # 内部属性不受影响
-        obj._internal = "new_internal"
-        assert obj._internal == "new_internal"
-
-    def test_internal_attributes_bypass(self):
-        """测试内部属性绕过检查"""
-        class TestEntity(SecureEntityMixin):
-            def __init__(self):
-                self._private = "private"
-                self.public = "public"
-
-        obj = TestEntity()
-
-        # 内部属性应该正常工作
-        assert obj._private == "private"
-        obj._private = "updated"
-        assert obj._private == "updated"
 
 
 class TestGlobalInstance:

@@ -22,16 +22,19 @@ from core.ooda.intent import IntentRecognitionService, IntentRecognitionStrategy
 class MockIntentStrategy(IntentRecognitionStrategy):
     """测试用意图识别策略"""
 
-    def __init__(self, action_type: str = "test_action", confidence: float = 0.9, entities: dict = None):
+    def __init__(self, action_type: str = "test_action", confidence: float = 0.9,
+                 entities: dict = None, requires_confirmation: bool = False):
         self._action_type = action_type
         self._confidence = confidence
         self._entities = entities or {"test_param": "test_value"}
+        self._requires_confirmation = requires_confirmation
 
     def recognize(self, input: str, context: dict = None) -> IntentResult:
         return IntentResult(
             action_type=self._action_type,
             confidence=self._confidence,
             entities=self._entities,
+            requires_confirmation=self._requires_confirmation,
         )
 
 
@@ -129,9 +132,10 @@ class TestOodaLoop:
 
     def test_execute_with_skip_confirmation(self, sample_ooda_loop):
         """测试跳过确认"""
-        # 创建需要确认的意图（提供有效参数）
+        # 创建需要确认的意图（requires_confirmation=True signals confirmation needed）
         intent_service = IntentRecognitionService(
-            MockIntentStrategy("checkout", 0.9, ACTION_TEST_PARAMS["checkout"])
+            MockIntentStrategy("checkout", 0.9, ACTION_TEST_PARAMS["checkout"],
+                               requires_confirmation=True)
         )
         observe = ObservePhase()
         orient = OrientPhase(intent_service)
@@ -156,9 +160,10 @@ class TestOodaLoop:
 
     def test_execute_with_confirmation(self, sample_ooda_loop):
         """测试 execute_with_confirmation"""
-        # 创建需要确认的意图（提供有效参数）
+        # 创建需要确认的意图（requires_confirmation=True signals confirmation needed）
         intent_service = IntentRecognitionService(
-            MockIntentStrategy("checkout", 0.9, ACTION_TEST_PARAMS["checkout"])
+            MockIntentStrategy("checkout", 0.9, ACTION_TEST_PARAMS["checkout"],
+                               requires_confirmation=True)
         )
         observe = ObservePhase()
         orient = OrientPhase(intent_service)
@@ -179,9 +184,10 @@ class TestOodaLoop:
 
     def test_execute_with_confirmation_then_execute(self, sample_ooda_loop):
         """测试先确认后执行的流程"""
-        # 创建需要确认的意图（提供有效参数）
+        # 创建需要确认的意图（requires_confirmation=True signals confirmation needed）
         intent_service = IntentRecognitionService(
-            MockIntentStrategy("checkout", 0.9, ACTION_TEST_PARAMS["checkout"])
+            MockIntentStrategy("checkout", 0.9, ACTION_TEST_PARAMS["checkout"],
+                               requires_confirmation=True)
         )
         observe = ObservePhase()
         orient = OrientPhase(intent_service)

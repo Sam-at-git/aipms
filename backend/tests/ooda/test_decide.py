@@ -2,7 +2,9 @@
 测试 core.ooda.decide 模块 - Decide 阶段单元测试
 """
 import pytest
+from dataclasses import dataclass, field as dc_field
 from datetime import datetime
+from typing import List, Optional
 
 from core.ooda.decide import (
     Decision,
@@ -12,13 +14,59 @@ from core.ooda.decide import (
     DecidePhase,
     get_decide_phase,
     set_decide_phase,
-    HIGH_RISK_ACTIONS,
-    FINANCIAL_ACTIONS,
-    ACTION_REQUIRED_PARAMS,
 )
 from core.ooda.orient import Orientation
 from core.ooda.observe import Observation
 from core.ooda.intent import IntentResult
+
+
+# ============== Mock Registry for Tests ==============
+
+@dataclass
+class _MockActionMetadata:
+    """Mock action metadata for tests."""
+    action_type: str = ""
+    risk_level: str = ""
+    is_financial: bool = False
+    ui_required_fields: List[str] = dc_field(default_factory=list)
+
+
+class _MockRegistry:
+    """Mock OntologyRegistry for decide tests."""
+    def __init__(self, actions=None):
+        self._actions = {a.action_type: a for a in (actions or [])}
+
+    def get_action_by_name(self, action_name):
+        return self._actions.get(action_name)
+
+
+@pytest.fixture
+def mock_registry():
+    """Registry with sample action metadata."""
+    return _MockRegistry(actions=[
+        _MockActionMetadata(
+            action_type="checkin",
+            risk_level="medium",
+            ui_required_fields=["reservation_id", "room_id"],
+        ),
+        _MockActionMetadata(
+            action_type="checkout",
+            risk_level="high",
+            ui_required_fields=["stay_record_id"],
+        ),
+        _MockActionMetadata(
+            action_type="adjust_bill",
+            risk_level="critical",
+            is_financial=True,
+            ui_required_fields=["bill_id", "adjustment_amount", "reason"],
+        ),
+        _MockActionMetadata(
+            action_type="add_payment",
+            risk_level="high",
+            is_financial=True,
+            ui_required_fields=["bill_id", "amount", "method"],
+        ),
+    ])
 
 
 # ============== Fixtures ==============
@@ -147,8 +195,8 @@ class TestIntentBasedRule:
         assert decision.missing_fields[0]["field_name"] == "room_id"
         assert decision.requires_confirmation is True
 
-    def test_evaluate_requires_confirmation_for_high_risk(self, sample_observation):
-        """测试高风险操作需要确认"""
+    def test_evaluate_requires_confirmation_for_high_risk(self, sample_observation, mock_registry):
+        """测试高风险操作需要确认 (via registry)"""
         intent = IntentResult(
             action_type="checkout",
             confidence=0.9,
@@ -156,15 +204,15 @@ class TestIntentBasedRule:
         )
         orient = Orientation(observation=sample_observation, intent=intent, confidence=0.9)
 
-        rule = IntentBasedRule("checkout", ["stay_record_id"])
+        rule = IntentBasedRule("checkout", ["stay_record_id"], registry=mock_registry)
 
         decision = rule.evaluate(orient)
 
         assert decision is not None
         assert decision.requires_confirmation is True
 
-    def test_evaluate_requires_confirmation_for_financial(self, sample_observation):
-        """测试金融操作需要确认"""
+    def test_evaluate_requires_confirmation_for_financial(self, sample_observation, mock_registry):
+        """测试金融操作需要确认 (via registry)"""
         intent = IntentResult(
             action_type="adjust_bill",
             confidence=0.9,
@@ -172,12 +220,34 @@ class TestIntentBasedRule:
         )
         orient = Orientation(observation=sample_observation, intent=intent, confidence=0.9)
 
-        rule = IntentBasedRule("adjust_bill", ["bill_id", "adjustment_amount", "reason"])
+        rule = IntentBasedRule(
+            "adjust_bill",
+            ["bill_id", "adjustment_amount", "reason"],
+            registry=mock_registry,
+        )
 
         decision = rule.evaluate(orient)
 
         assert decision is not None
         assert decision.requires_confirmation is True
+
+    def test_no_registry_means_no_auto_confirmation(self, sample_observation):
+        """测试无 registry 时高风险/金融判断不触发"""
+        intent = IntentResult(
+            action_type="checkout",
+            confidence=0.9,
+            entities={"stay_record_id": 1},
+            requires_confirmation=False,
+        )
+        orient = Orientation(observation=sample_observation, intent=intent, confidence=0.9)
+
+        rule = IntentBasedRule("checkout", ["stay_record_id"])  # no registry
+
+        decision = rule.evaluate(orient)
+
+        assert decision is not None
+        # Without registry, risk/financial checks return False
+        assert decision.requires_confirmation is False
 
     def test_confidence_calculation(self, sample_observation):
         """测试置信度计算"""
@@ -213,8 +283,8 @@ class TestDefaultDecisionRule:
 
         assert rule.can_handle(orient) is False
 
-    def test_evaluate_known_action(self, sample_observation):
-        """测试评估已知动作类型"""
+    def test_evaluate_known_action_with_registry(self, sample_observation, mock_registry):
+        """测试评估已知动作类型 (with registry)"""
         intent = IntentResult(
             action_type="checkout",
             confidence=0.9,
@@ -222,7 +292,7 @@ class TestDefaultDecisionRule:
         )
         orient = Orientation(observation=sample_observation, intent=intent, confidence=0.9)
 
-        rule = DefaultDecisionRule()
+        rule = DefaultDecisionRule(registry=mock_registry)
 
         decision = rule.evaluate(orient)
 
@@ -230,6 +300,7 @@ class TestDefaultDecisionRule:
         assert decision.action_type == "checkout"
         assert decision.action_params == {"stay_record_id": 1}
         assert decision.is_valid is True
+        assert decision.requires_confirmation is True  # checkout is high risk
 
     def test_evaluate_unknown_action(self, sample_observation):
         """测试评估未知动作类型"""
@@ -249,8 +320,8 @@ class TestDefaultDecisionRule:
         assert decision.action_type == "unknown_action"
         assert decision.is_valid is True
 
-    def test_evaluate_with_missing_required_params(self, sample_observation):
-        """测试缺少必需参数"""
+    def test_evaluate_with_missing_required_params(self, sample_observation, mock_registry):
+        """测试缺少必需参数 (registry provides required fields)"""
         intent = IntentResult(
             action_type="checkin",
             confidence=0.9,
@@ -258,7 +329,7 @@ class TestDefaultDecisionRule:
         )
         orient = Orientation(observation=sample_observation, intent=intent, confidence=0.9)
 
-        rule = DefaultDecisionRule()
+        rule = DefaultDecisionRule(registry=mock_registry)
 
         decision = rule.evaluate(orient)
 
@@ -266,6 +337,24 @@ class TestDefaultDecisionRule:
         assert decision.is_valid is False
         assert len(decision.missing_fields) == 1
         assert decision.missing_fields[0]["field_name"] == "room_id"
+
+    def test_evaluate_no_registry_no_required_params(self, sample_observation):
+        """测试无 registry 时不验证必需参数"""
+        intent = IntentResult(
+            action_type="checkin",
+            confidence=0.9,
+            entities={"reservation_id": 1},  # 缺少 room_id but no registry
+        )
+        orient = Orientation(observation=sample_observation, intent=intent, confidence=0.9)
+
+        rule = DefaultDecisionRule()  # no registry
+
+        decision = rule.evaluate(orient)
+
+        # Without registry, no required params → valid
+        assert decision is not None
+        assert decision.is_valid is True
+        assert decision.missing_fields == []
 
 
 # ============== DecidePhase Tests ==============
@@ -335,6 +424,22 @@ class TestDecidePhase:
         assert decision.action_type == "custom_result"
         assert decision.action_params == {"custom": "value"}
 
+    def test_decide_with_registry(self, sample_observation, mock_registry):
+        """测试 DecidePhase 传递 registry 到 DefaultDecisionRule"""
+        intent = IntentResult(
+            action_type="checkout",
+            confidence=0.9,
+            entities={"stay_record_id": 1},
+        )
+        orient = Orientation(observation=sample_observation, intent=intent, confidence=0.9)
+
+        decide = DecidePhase(registry=mock_registry)
+
+        decision = decide.decide(orient)
+
+        assert decision.action_type == "checkout"
+        assert decision.requires_confirmation is True  # high risk via registry
+
     def test_add_rule(self):
         """测试添加规则"""
         decide = DecidePhase()
@@ -396,21 +501,32 @@ class TestGlobalInstance:
         assert result is custom
 
 
-class TestConstants:
-    def test_high_risk_actions(self):
-        """测试高风险操作常量"""
-        assert "checkout" in HIGH_RISK_ACTIONS
-        assert "cancel_reservation" in HIGH_RISK_ACTIONS
-        assert "adjust_bill" in HIGH_RISK_ACTIONS
+class TestRegistryHelpers:
+    """Test the registry-based helper functions used by decision rules."""
 
-    def test_financial_actions(self):
-        """测试金融操作常量"""
-        assert "adjust_bill" in FINANCIAL_ACTIONS
-        assert "add_payment" in FINANCIAL_ACTIONS
+    def test_high_risk_detected_from_registry(self, mock_registry):
+        """Registry returns high risk correctly"""
+        from core.ooda.decide import _is_high_risk
+        assert _is_high_risk("checkout", mock_registry) is True
+        assert _is_high_risk("adjust_bill", mock_registry) is True  # critical is also high
+        assert _is_high_risk("checkin", mock_registry) is False  # medium is not high
 
-    def test_action_required_params(self):
-        """测试动作必需参数常量"""
-        assert "checkin" in ACTION_REQUIRED_PARAMS
-        assert "checkout" in ACTION_REQUIRED_PARAMS
-        assert "reservation_id" in ACTION_REQUIRED_PARAMS["checkin"]
-        assert "room_id" in ACTION_REQUIRED_PARAMS["checkin"]
+    def test_financial_detected_from_registry(self, mock_registry):
+        """Registry returns is_financial correctly"""
+        from core.ooda.decide import _is_financial
+        assert _is_financial("adjust_bill", mock_registry) is True
+        assert _is_financial("add_payment", mock_registry) is True
+        assert _is_financial("checkout", mock_registry) is False
+
+    def test_required_params_from_registry(self, mock_registry):
+        """Registry returns ui_required_fields correctly"""
+        from core.ooda.decide import _get_required_params
+        assert _get_required_params("checkin", mock_registry) == ["reservation_id", "room_id"]
+        assert _get_required_params("unknown", mock_registry) == []
+
+    def test_helpers_with_no_registry(self):
+        """All helpers return safe defaults when registry is None"""
+        from core.ooda.decide import _is_high_risk, _is_financial, _get_required_params
+        assert _is_high_risk("checkout", None) is False
+        assert _is_financial("adjust_bill", None) is False
+        assert _get_required_params("checkin", None) == []

@@ -5,7 +5,7 @@ Domain adapter interface - Allows any business domain to integrate with the fram
 Part of the universal ontology-driven LLM reasoning framework
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, TYPE_CHECKING
+from typing import Dict, List, Any, Optional, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.ontology.registry import OntologyRegistry
@@ -168,6 +168,28 @@ class IDomainAdapter(ABC):
     def get_display_names(self) -> Dict[str, str]:
         """Get field name → display name mapping for follow-up messages."""
         return {}
+
+    # ========== SPEC-04: Classification & HITL Support ==========
+
+    def get_admin_roles(self) -> List[str]:
+        """Return list of role names considered admin/manager level."""
+        return []
+
+    def get_query_examples(self) -> List[Dict[str, Any]]:
+        """Return LLM prompt query examples for this domain."""
+        return []
+
+    def get_context_summary(self, db, additional_context: Dict[str, Any]) -> List[str]:
+        """Format business context as user message lines for the LLM."""
+        return []
+
+    def get_hitl_risk_overrides(self) -> Dict[str, Any]:
+        """Return action_name → ConfirmationLevel overrides for HITL."""
+        return {}
+
+    def get_hitl_custom_rules(self) -> List[Callable]:
+        """Return custom HITL rule functions for domain-specific confirmation logic."""
+        return []
 
 
 # Export

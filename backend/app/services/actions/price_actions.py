@@ -40,7 +40,9 @@ def register_price_actions(
         allowed_roles={"manager", "sysadmin"},
         undoable=True,
         side_effects=["updates_price"],
-        search_keywords=["更新价格", "调整价格", "修改价格", "update price", "adjust price"]
+        search_keywords=["更新价格", "调整价格", "修改价格", "update price", "adjust price"],
+        risk_level="medium",
+        is_financial=True,
     )
     def handle_update_price(
         params: UpdatePriceParams,
@@ -166,7 +168,9 @@ def register_price_actions(
         allowed_roles={"manager", "sysadmin"},
         undoable=True,
         side_effects=["creates_rate_plan"],
-        search_keywords=["创建价格策略", "新建价格", "create rate plan"]
+        search_keywords=["创建价格策略", "新建价格", "create rate plan"],
+        risk_level="medium",
+        is_financial=True,
     )
     def handle_create_rate_plan(
         params: CreateRatePlanParams,

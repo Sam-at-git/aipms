@@ -266,6 +266,8 @@ class VectorStore:
         """
         # Generate query embedding
         query_embedding = self.embedding_service.embed(query)
+        if query_embedding is None:
+            return []  # Embedding failed; return empty results gracefully
 
         # Build WHERE clause for filters
         where_conditions = []

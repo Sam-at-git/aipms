@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, Set
 from enum import Enum
 import json
+import threading
 
 
 class RuleType(Enum):
@@ -73,11 +74,14 @@ class BusinessRuleRegistry:
     与 OntologyRegistry 分离，专注于业务规则。
     """
     _instance: Optional['BusinessRuleRegistry'] = None
+    _lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):

@@ -7,6 +7,7 @@ core/security/attribute_acl.py
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 import logging
+import threading
 
 from core.security.context import SecurityContext, security_context_manager
 from core.ontology.security import SecurityLevel
@@ -71,13 +72,15 @@ class AttributeACL:
     """
 
     _instance: Optional["AttributeACL"] = None
-    _lock = object()
+    _lock = threading.Lock()
 
     def __new__(cls) -> "AttributeACL":
-        """单例模式"""
+        """单例模式（double-checked locking）"""
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):
@@ -271,60 +274,6 @@ class AttributeACL:
         return list(self._rules.get(entity_type, {}).keys())
 
 
-class SecureEntityMixin:
-    """
-    安全实体混入类
-
-    为实体类提供属性级访问控制。
-
-    Usage:
-        class Guest(Base, SecureEntityMixin):
-            __tablename__ = "guests"
-            ...
-    """
-
-    def __getattribute__(self, name: str) -> Any:
-        """拦截属性读取，检查权限"""
-        # 跳过内部属性和特殊方法
-        if name.startswith("_") or name in ("__class__", "__dict__"):
-            return object.__getattribute__(self, name)
-
-        # 获取实体类型名
-        entity_type = type(self).__name__
-
-        # 使用全局 ACL 单例检查权限
-        if not attribute_acl.can_read(entity_type, name):
-            raise AttributeAccessDenied(
-                f"Cannot read attribute '{name}' of {entity_type}",
-                entity_type=entity_type,
-                attribute=name,
-                operation="read",
-            )
-
-        return object.__getattribute__(self, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        """拦截属性写入，检查权限"""
-        # 跳过内部属性
-        if name.startswith("_"):
-            object.__setattr__(self, name, value)
-            return
-
-        # 获取实体类型名
-        entity_type = type(self).__name__
-
-        # 使用全局 ACL 单例检查权限
-        if not attribute_acl.can_write(entity_type, name):
-            raise AttributeAccessDenied(
-                f"Cannot write attribute '{name}' of {entity_type}",
-                entity_type=entity_type,
-                attribute=name,
-                operation="write",
-            )
-
-        object.__setattr__(self, name, value)
-
-
 # 全局属性 ACL 实例
 attribute_acl = AttributeACL()
 
@@ -334,6 +283,5 @@ __all__ = [
     "AttributePermission",
     "AttributeAccessDenied",
     "AttributeACL",
-    "SecureEntityMixin",
     "attribute_acl",
 ]

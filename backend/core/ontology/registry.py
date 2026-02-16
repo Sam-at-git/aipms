@@ -6,6 +6,7 @@ core/ontology/registry.py
 
 Enhanced for domain-agnostic LLM reasoning framework (Phase 0)
 """
+import threading
 from typing import Dict, List, Set, Optional, Any, TYPE_CHECKING
 
 from core.ontology.metadata import (
@@ -44,11 +45,14 @@ class OntologyRegistry:
     """
 
     _instance: Optional["OntologyRegistry"] = None
+    _lock = threading.Lock()
 
     def __new__(cls) -> "OntologyRegistry":
-        """单例模式 - 确保全局唯一实例"""
+        """单例模式 - 确保全局唯一实例（double-checked locking）"""
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
             cls._instance._entities: Dict[str, EntityMetadata] = {}
             cls._instance._actions: Dict[str, List[ActionMetadata]] = {}
             cls._instance._state_machines: Dict[str, StateMachine] = {}
@@ -266,6 +270,53 @@ class OntologyRegistry:
             result.extend(actions)
         return result
 
+    def get_action_by_name(self, action_name: str) -> Optional[ActionMetadata]:
+        """
+        Look up an ActionMetadata by its action_type name.
+
+        Args:
+            action_name: The action_type identifier (e.g. "checkout", "adjust_bill")
+
+        Returns:
+            ActionMetadata if found, None otherwise
+        """
+        for actions in self._actions.values():
+            for action in actions:
+                if action.action_type == action_name:
+                    return action
+        return None
+
+    def get_actions_by_risk(self, risk_level: str) -> List[ActionMetadata]:
+        """
+        Get all actions with a specific risk level.
+
+        Args:
+            risk_level: Risk level to filter by (e.g. "high", "critical")
+
+        Returns:
+            List of matching ActionMetadata
+        """
+        result = []
+        for actions in self._actions.values():
+            for action in actions:
+                if action.risk_level == risk_level:
+                    result.append(action)
+        return result
+
+    def get_financial_actions(self) -> List[ActionMetadata]:
+        """
+        Get all actions marked as financial operations.
+
+        Returns:
+            List of ActionMetadata where is_financial is True
+        """
+        result = []
+        for actions in self._actions.values():
+            for action in actions:
+                if action.is_financial:
+                    result.append(action)
+        return result
+
     def get_state_machine(self, entity: str) -> Optional[StateMachine]:
         """
         获取状态机
@@ -294,18 +345,6 @@ class OntologyRegistry:
         for rules in self._business_rules.values():
             result.extend(rules)
         return result
-
-    def get_constraint(self, constraint_id: str) -> Optional[ConstraintMetadata]:
-        """
-        获取约束元数据
-
-        Args:
-            constraint_id: 约束ID
-
-        Returns:
-            ConstraintMetadata 对象，如果不存在则返回 None
-        """
-        return self._constraints.get(constraint_id)
 
     def get_constraints(self, entity: str = None) -> List[ConstraintMetadata]:
         """
@@ -343,24 +382,6 @@ class OntologyRegistry:
             c for c in self._constraints.values()
             if (c.entity == entity or c.entity == "*") and
                (c.action == action or c.action == "" or c.action == "*")
-        ]
-
-    def get_constraints_by_severity(
-        self,
-        severity: ConstraintSeverity
-    ) -> List[ConstraintMetadata]:
-        """
-        按严重程度获取约束
-
-        Args:
-            severity: 约束严重程度
-
-        Returns:
-            约束元数据列表
-        """
-        return [
-            c for c in self._constraints.values()
-            if c.severity == severity
         ]
 
     def get_permissions(self) -> Dict[str, Set[str]]:
@@ -961,18 +982,38 @@ class OntologyRegistry:
                     target_entity = rel_info["entity"]
                     if target_entity in entity_models:
                         target_model = entity_models[target_entity]
-                        # 添加目标实体的关键字段
-                        for col in target_model.__table__.columns[:3]:  # 只取前3个字段
-                            if col.name in ["name", "phone", "room_number", "status"]:
-                                rel_field_name = f"{rel_name}.{col.name}"
-                                entity_info["fields"][rel_field_name] = {
-                                    "type": "relationship",
-                                    "path": rel_field_name,
-                                    "relationship": rel_name,
-                                    "target_entity": target_entity,
-                                    "target_field": col.name,
-                                    "filterable": True
-                                }
+                        # Dynamically select display-worthy fields from target entity
+                        target_meta = self._entities.get(target_entity)
+                        if target_meta and target_meta.properties:
+                            # Use registered properties: non-PK, non-FK, up to 4
+                            key_fields = [
+                                p.name for p in (
+                                    target_meta.properties.values()
+                                    if isinstance(target_meta.properties, dict)
+                                    else target_meta.properties
+                                )
+                                if isinstance(p, PropertyMetadata)
+                                and not p.is_primary_key
+                                and not p.is_foreign_key
+                                and p.type in ("string", "enum", "integer")
+                            ][:4]
+                        else:
+                            # Fallback: first 4 non-PK columns from ORM model
+                            key_fields = [
+                                col.name for col in target_model.__table__.columns
+                                if not col.primary_key and not col.foreign_keys
+                            ][:4]
+
+                        for field_name in key_fields:
+                            rel_field_name = f"{rel_name}.{field_name}"
+                            entity_info["fields"][rel_field_name] = {
+                                "type": "relationship",
+                                "path": rel_field_name,
+                                "relationship": rel_name,
+                                "target_entity": target_entity,
+                                "target_field": field_name,
+                                "filterable": True
+                            }
 
                 schema["entities"][entity_name] = entity_info
 

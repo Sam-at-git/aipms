@@ -1,7 +1,7 @@
 """
 core/engine/state_machine.py
 
-状态机引擎 - 支持状态转换和副作用
+State machine engine - supports state transitions and side effects.
 """
 from typing import Dict, List, Any, Optional, Callable
 from dataclasses import dataclass, field
@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class StateTransition:
     """
-    状态转换定义
+    State transition definition.
 
     Attributes:
-        from_state: 源状态
-        to_state: 目标状态
-        trigger: 触发动作
-        condition: 可选的转换条件
-        side_effects: 副作用函数列表
+        from_state: Source state
+        to_state: Target state
+        trigger: Trigger action
+        condition: Optional transition condition
+        side_effects: List of side-effect functions
     """
 
     from_state: str
@@ -31,7 +31,7 @@ class StateTransition:
     side_effects: List[Callable[[], None]] = field(default_factory=list)
 
     def is_allowed(self, context: Dict[str, Any]) -> bool:
-        """检查转换是否被允许"""
+        """Check whether the transition is allowed."""
         if self.condition is None:
             return True
         try:
@@ -40,25 +40,28 @@ class StateTransition:
             logger.error(f"Error checking transition condition: {e}")
             return False
 
-    def execute_side_effects(self) -> None:
-        """执行副作用"""
+    def execute_side_effects(self) -> List[Exception]:
+        """Execute side effects and return any errors encountered."""
+        errors = []
         for effect in self.side_effects:
             try:
                 effect()
             except Exception as e:
-                logger.error(f"Error executing side effect: {e}")
+                logger.error(f"Side effect failed: {e}", exc_info=True)
+                errors.append(e)
+        return errors
 
 
 @dataclass
 class StateMachineConfig:
     """
-    状态机配置
+    State machine configuration.
 
     Attributes:
-        name: 状态机名称
-        states: 所有状态的列表
-        transitions: 转换列表
-        initial_state: 初始状态
+        name: State machine name
+        states: List of all valid states
+        transitions: List of transitions
+        initial_state: Initial state
     """
 
     name: str
@@ -70,13 +73,13 @@ class StateMachineConfig:
 @dataclass
 class StateMachineSnapshot:
     """
-    状态机快照 - 用于撤销/重做
+    State machine snapshot - used for undo/redo.
 
     Attributes:
-        current_state: 当前状态
-        previous_state: 前一状态
-        transition: 触发的转换
-        timestamp: 快照时间
+        current_state: Current state
+        previous_state: Previous state
+        transition: The transition that was triggered
+        timestamp: Snapshot timestamp
     """
 
     current_state: str
@@ -87,13 +90,13 @@ class StateMachineSnapshot:
 
 class StateMachine:
     """
-    状态机引擎
+    State machine engine.
 
-    特性：
-    - 状态转换验证
-    - 副作用执行
-    - 历史记录（用于审计）
-    - 快照支持
+    Features:
+    - State transition validation
+    - Side-effect execution
+    - History tracking (for audit)
+    - Snapshot support
 
     Example:
         >>> machine = StateMachine(
@@ -114,7 +117,7 @@ class StateMachine:
         self._history: List[StateMachineSnapshot] = []
         self._transition_map: Dict[str, Dict[str, StateTransition]] = {}
 
-        # 构建转换映射: (from_state, trigger) -> transition
+        # Build transition map: (from_state, trigger) -> transition
         for t in config.transitions:
             if t.from_state not in self._transition_map:
                 self._transition_map[t.from_state] = {}
@@ -122,25 +125,25 @@ class StateMachine:
 
     @property
     def current_state(self) -> str:
-        """获取当前状态"""
+        """Get the current state."""
         return self._current_state
 
     @property
     def config(self) -> StateMachineConfig:
-        """获取状态机配置"""
+        """Get the state machine configuration."""
         return self._config
 
     def can_transition_to(self, target_state: str, trigger: str, context: Optional[Dict[str, Any]] = None) -> bool:
         """
-        检查是否可以转换到目标状态
+        Check whether a transition to the target state is allowed.
 
         Args:
-            target_state: 目标状态
-            trigger: 触发动作
-            context: 可选的上下文数据
+            target_state: Target state
+            trigger: Trigger action
+            context: Optional context data
 
         Returns:
-            True 如果转换被允许
+            True if the transition is allowed.
         """
         if target_state not in self._config.states:
             return False
@@ -158,15 +161,15 @@ class StateMachine:
 
     def transition_to(self, target_state: str, trigger: str, context: Optional[Dict[str, Any]] = None) -> bool:
         """
-        执行状态转换
+        Execute a state transition.
 
         Args:
-            target_state: 目标状态
-            trigger: 触发动作
-            context: 可选的上下文数据
+            target_state: Target state
+            trigger: Trigger action
+            context: Optional context data
 
         Returns:
-            True 如果转换成功
+            True if the transition succeeded.
         """
         if not self.can_transition_to(target_state, trigger, context):
             logger.warning(
@@ -177,7 +180,7 @@ class StateMachine:
         transitions = self._transition_map.get(self._current_state, {})
         transition = transitions.get(trigger)
 
-        # 记录快照
+        # Record snapshot
         snapshot = StateMachineSnapshot(
             current_state=self._current_state,
             previous_state=self._current_state,
@@ -185,15 +188,15 @@ class StateMachine:
             timestamp=__import__("time").time(),
         )
 
-        # 执行转换
+        # Execute transition
         previous_state = self._current_state
         self._current_state = target_state
 
-        # 执行副作用
+        # Execute side effects
         if transition:
             transition.execute_side_effects()
 
-        # 更新快照
+        # Update snapshot
         snapshot.previous_state = previous_state
         self._history.append(snapshot)
 
@@ -201,15 +204,15 @@ class StateMachine:
         return True
 
     def get_history(self) -> List[StateMachineSnapshot]:
-        """获取转换历史"""
+        """Get transition history."""
         return list(self._history)
 
     def reset(self, state: Optional[str] = None) -> None:
         """
-        重置状态机
+        Reset the state machine.
 
         Args:
-            state: 要重置到的状态，如果为 None 则使用初始状态
+            state: State to reset to; None uses the initial state.
         """
         self._current_state = state if state is not None else self._config.initial_state
         self._history.clear()
@@ -217,7 +220,7 @@ class StateMachine:
 
 class StateMachineEngine:
     """
-    状态机引擎管理器 - 管理多个状态机实例
+    State machine engine manager - manages multiple state machine instances.
 
     Example:
         >>> engine = StateMachineEngine()
@@ -230,28 +233,27 @@ class StateMachineEngine:
         self._machines: Dict[str, StateMachine] = {}
 
     def register(self, entity_type: str, machine: StateMachine) -> None:
-        """注册状态机"""
+        """Register a state machine for an entity type."""
         self._machines[entity_type] = machine
         logger.info(f"StateMachine registered for {entity_type}")
 
     def get(self, entity_type: str) -> Optional[StateMachine]:
-        """获取状态机"""
+        """Get the state machine for an entity type."""
         return self._machines.get(entity_type)
 
     def get_all(self) -> Dict[str, StateMachine]:
-        """获取所有状态机"""
+        """Get all registered state machines."""
         return self._machines.copy()
 
     def clear(self) -> None:
-        """清空所有状态机（用于测试）"""
+        """Clear all state machines (for testing)."""
         self._machines.clear()
 
 
-# 全局状态机引擎实例
+# Global state machine engine instance
 state_machine_engine = StateMachineEngine()
 
 
-# 导出
 __all__ = [
     "StateTransition",
     "StateMachineConfig",

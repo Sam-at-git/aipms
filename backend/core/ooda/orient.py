@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from datetime import datetime
 import logging
+import threading
 
 from core.ooda.observe import Observation
 from core.ooda.intent import IntentResult, IntentRecognitionService
@@ -253,13 +254,14 @@ class OrientPhase:
         return orientation
 
 
-# 全局 Orient 阶段实例（延迟初始化，需要传入 intent_service）
+# 全局 Orient 阶段实例（线程安全，延迟初始化）
 _orient_phase_instance: Optional[OrientPhase] = None
+_orient_phase_lock = threading.Lock()
 
 
 def get_orient_phase(intent_service: Optional[IntentRecognitionService] = None) -> OrientPhase:
     """
-    获取全局 Orient 阶段实例
+    获取全局 Orient 阶段实例（线程安全）
 
     Args:
         intent_service: 意图识别服务（首次调用时必须提供）
@@ -270,19 +272,21 @@ def get_orient_phase(intent_service: Optional[IntentRecognitionService] = None) 
     global _orient_phase_instance
 
     if _orient_phase_instance is None:
-        if intent_service is None:
-            raise ValueError("intent_service must be provided on first call")
-        _orient_phase_instance = OrientPhase(intent_service)
+        with _orient_phase_lock:
+            if _orient_phase_instance is None:
+                if intent_service is None:
+                    raise ValueError("intent_service must be provided on first call")
+                _orient_phase_instance = OrientPhase(intent_service)
 
     return _orient_phase_instance
 
 
-def set_orient_phase(orient_phase: OrientPhase) -> None:
+def set_orient_phase(orient_phase: Optional[OrientPhase]) -> None:
     """
     设置全局 Orient 阶段实例（用于测试）
 
     Args:
-        orient_phase: OrientPhase 实例
+        orient_phase: OrientPhase 实例，或 None 以重置
     """
     global _orient_phase_instance
     _orient_phase_instance = orient_phase

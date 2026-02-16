@@ -119,7 +119,7 @@ class TestPromptBuilder:
         assert "用户输入: 你好" in message
 
     def test_build_user_message_with_context(self):
-        """测试带上下文的用户消息构建"""
+        """测试带上下文的用户消息构建（generic fallback, no adapter）"""
         builder = PromptBuilder()
         context = {
             "room_summary": {"total": 100, "vacant_clean": 50, "occupied": 40},
@@ -130,7 +130,9 @@ class TestPromptBuilder:
         message = builder.build_user_message("你好", additional_context=context)
 
         assert "**当前状态:**" in message
-        assert "总房间: 100" in message
+        # Generic fallback outputs key-value pairs
+        assert "room_summary" in message
+        assert "room_types" in message
 
     def test_format_conversation_history(self):
         """测试对话历史格式化"""

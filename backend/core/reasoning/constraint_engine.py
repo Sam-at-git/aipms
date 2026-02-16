@@ -7,10 +7,11 @@ Part of the universal ontology-driven LLM reasoning framework
 OAG Enhancement: Adds property-level constraint validation with structured Decision results.
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, TYPE_CHECKING, Callable
-from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
+import ast
+import operator
 import re
+import logging
 
 if TYPE_CHECKING:
     from core.ontology.registry import OntologyRegistry
@@ -23,6 +24,99 @@ from core.ontology.metadata import (
     IConstraintValidator,
     ConstraintSeverity,
 )
+
+logger = logging.getLogger(__name__)
+
+
+# --- Safe expression evaluator (replaces eval()) ---
+
+_COMPARE_OPS = {
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+    ast.Is: operator.is_,
+    ast.IsNot: operator.is_not,
+    ast.In: lambda a, b: a in b,
+    ast.NotIn: lambda a, b: a not in b,
+}
+
+
+def _eval_node(node: ast.AST, ns: Dict[str, Any]) -> Any:
+    """Recursively evaluate an AST node against a namespace (whitelist-based)."""
+    if isinstance(node, ast.Expression):
+        return _eval_node(node.body, ns)
+
+    if isinstance(node, ast.Constant):
+        return node.value
+
+    if isinstance(node, ast.Name):
+        if node.id in ns:
+            return ns[node.id]
+        raise ValueError(f"Undefined name: {node.id}")
+
+    if isinstance(node, ast.Attribute):
+        obj = _eval_node(node.value, ns)
+        if obj is None:
+            return None
+        return getattr(obj, node.attr, None)
+
+    if isinstance(node, ast.List):
+        return [_eval_node(el, ns) for el in node.elts]
+
+    if isinstance(node, ast.Tuple):
+        return tuple(_eval_node(el, ns) for el in node.elts)
+
+    if isinstance(node, ast.Set):
+        return {_eval_node(el, ns) for el in node.elts}
+
+    if isinstance(node, ast.Compare):
+        left = _eval_node(node.left, ns)
+        for op_node, comparator in zip(node.ops, node.comparators):
+            right = _eval_node(comparator, ns)
+            op_func = _COMPARE_OPS.get(type(op_node))
+            if op_func is None:
+                raise ValueError(f"Unsupported comparison operator: {type(op_node).__name__}")
+            if not op_func(left, right):
+                return False
+            left = right
+        return True
+
+    if isinstance(node, ast.BoolOp):
+        if isinstance(node.op, ast.And):
+            return all(_eval_node(v, ns) for v in node.values)
+        if isinstance(node.op, ast.Or):
+            return any(_eval_node(v, ns) for v in node.values)
+
+    if isinstance(node, ast.UnaryOp):
+        operand = _eval_node(node.operand, ns)
+        if isinstance(node.op, ast.Not):
+            return not operand
+        if isinstance(node.op, ast.USub):
+            return -operand
+
+    if isinstance(node, ast.IfExp):
+        test = _eval_node(node.test, ns)
+        return _eval_node(node.body, ns) if test else _eval_node(node.orelse, ns)
+
+    if isinstance(node, ast.Subscript):
+        obj = _eval_node(node.value, ns)
+        key = _eval_node(node.slice, ns)
+        return obj[key]
+
+    raise ValueError(f"Unsupported expression node: {type(node).__name__}")
+
+
+def _safe_eval(expression: str, namespace: Dict[str, Any]) -> bool:
+    """Evaluate a constraint expression safely using AST whitelist.
+
+    Supports: comparisons, boolean ops, attribute access, list/tuple literals,
+    subscripts, unary not/neg, and ternary if/else.
+    """
+    tree = ast.parse(expression, mode='eval')
+    return bool(_eval_node(tree.body, namespace))
 
 
 class _DotDict:
@@ -63,8 +157,8 @@ class Decision:
     correction_prompt: Optional[str] = None  # 给用户的纠正提示
     metadata: Dict[str, Any] = field(default_factory=dict)  # 额外元数据
 
-    def to_response_dict(self) -> Dict[str, Any]:
-        """转换为API响应格式"""
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to API response format."""
         return {
             "success": self.allowed,
             "message": self.reason,
@@ -83,6 +177,9 @@ class Decision:
             "correction_prompt": self.correction_prompt,
             **self.metadata
         }
+
+    # Backward-compat alias
+    to_response_dict = to_dict
 
 
 @dataclass
@@ -376,8 +473,12 @@ class ConstraintEngine:
                     else:
                         result.add_warning(constraint, constraint.error_message or constraint.description)
                 return
-            except Exception:
-                pass  # Fall through to default behavior
+            except Exception as e:
+                logger.warning(
+                    f"Constraint expression evaluation failed: constraint={constraint.id}, "
+                    f"expression='{constraint.condition_code}', error={e}"
+                )
+                # Fall through to default behavior
 
         # 默认行为：无法求值时作为警告
         if hasattr(constraint, 'severity') and constraint.severity == ConstraintSeverity.ERROR:
@@ -410,7 +511,7 @@ class ConstraintEngine:
         }
 
         try:
-            return bool(eval(expression, {"__builtins__": {}}, namespace))
+            return _safe_eval(expression, namespace)
         except Exception:
             raise ValueError(f"Cannot evaluate expression: {expression}")
 
@@ -420,17 +521,38 @@ class ConstraintEngine:
         context: ConstraintEvaluationContext
     ) -> bool:
         """
-        检查触发条件
+        Check whether trigger conditions are met.
 
         Args:
-            conditions: 条件列表
-            context: 评估上下文
+            conditions: List of condition expressions
+            context: Evaluation context
 
         Returns:
-            是否满足触发条件
+            True if all conditions are met (constraint should fire)
         """
-        # TODO: 实现条件表达式评估
-        return True
+        if not conditions:
+            return True
+        namespace = {
+            "state": _DotDict(context.current_state),
+            "param": _DotDict(context.parameters),
+            "user": _DotDict(context.user_context),
+            "context": _DotDict({
+                "state": context.current_state,
+                "param": context.parameters,
+                "user": context.user_context,
+            }),
+            "True": True,
+            "False": False,
+            "None": None,
+        }
+        try:
+            for condition in conditions:
+                if not _safe_eval(condition, namespace):
+                    return False
+            return True
+        except Exception as e:
+            logger.warning(f"Trigger condition evaluation failed: {e}, conditions={conditions}")
+            return False
 
     def get_constraints_for_llm(
         self,

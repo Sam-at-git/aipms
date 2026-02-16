@@ -7,7 +7,7 @@ tests/core/test_prompt_builder_semantic.py
 - build_semantic_query_syntax() 输出格式
 - 实体路径生成
 - 操作符说明
-- 查询示例
+- 查询示例（via adapter injection）
 - 完整提示词集成
 """
 import pytest
@@ -40,6 +40,64 @@ SAMPLE_RELATIONSHIP_MAP = {
         "payments": ("Payment", "bill_id"),
     },
 }
+
+
+# Mock adapter that provides query examples for testing
+class _MockAdapter:
+    """Mock adapter providing query examples for semantic syntax tests."""
+
+    def get_query_examples(self):
+        return [
+            {
+                "description": "查询所有在住客人",
+                "query": {
+                    "root_object": "Guest",
+                    "fields": ["name", "phone"],
+                    "filters": [
+                        {"path": "stays.status", "operator": "eq", "value": "ACTIVE"}
+                    ],
+                },
+            },
+            {
+                "description": "查询特定房间的在住客人",
+                "query": {
+                    "root_object": "Guest",
+                    "fields": ["name", "phone"],
+                    "filters": [
+                        {"path": "stays.status", "operator": "eq", "value": "ACTIVE"},
+                        {"path": "stays.room.room_number", "operator": "eq", "value": "201"},
+                    ],
+                },
+            },
+            {
+                "description": "查询本月的入住记录",
+                "query": {
+                    "root_object": "StayRecord",
+                    "fields": ["guest.name", "check_in_time", "room.room_number"],
+                    "filters": [
+                        {"path": "check_in_time", "operator": "gte", "value": "2026-02-01"},
+                        {"path": "check_in_time", "operator": "lt", "value": "2026-03-01"},
+                    ],
+                    "order_by": ["check_in_time DESC"],
+                    "limit": 50,
+                },
+            },
+            {
+                "description": "查询 VIP 客人的入住历史",
+                "query": {
+                    "root_object": "StayRecord",
+                    "fields": ["guest.name", "check_in_time", "room.room_number", "room.room_type.name"],
+                    "filters": [
+                        {"path": "guest.tier", "operator": "eq", "value": "VIP"}
+                    ],
+                    "order_by": ["check_in_time DESC"],
+                    "limit": 20,
+                },
+            },
+        ]
+
+    def get_context_summary(self, db, additional_context):
+        return []
 
 
 class TestSemanticQuerySyntax:
@@ -97,9 +155,16 @@ class TestSemanticQuerySyntax:
         assert "`like` - 模糊匹配" in result
         assert "`between` - 在范围内" in result
 
-    def test_contains_query_examples(self):
-        """测试包含查询示例"""
+    def test_no_examples_without_adapter(self):
+        """测试无 adapter 时不包含查询示例"""
         builder = PromptBuilder()
+        result = builder._build_semantic_query_syntax()
+
+        assert "## 查询示例" not in result
+
+    def test_contains_query_examples_with_adapter(self):
+        """测试包含查询示例（via adapter）"""
+        builder = PromptBuilder(adapter=_MockAdapter())
         result = builder._build_semantic_query_syntax()
 
         assert "## 查询示例" in result
@@ -109,36 +174,34 @@ class TestSemanticQuerySyntax:
         assert "### 示例 4:" in result
 
     def test_example_1_active_guests(self):
-        """测试示例1：查询在住客人"""
-        builder = PromptBuilder()
+        """测试示例1：查询在住客人（via adapter）"""
+        builder = PromptBuilder(adapter=_MockAdapter())
         result = builder._build_semantic_query_syntax()
 
         assert '"root_object": "Guest"' in result
-        assert '"fields": ["name", "phone"]' in result
-        assert '{"path": "stays.status", "operator": "eq", "value": "ACTIVE"}' in result
+        assert '"name"' in result
+        assert '"phone"' in result
 
     def test_example_2_specific_room(self):
-        """测试示例2：查询特定房间的客人"""
-        builder = PromptBuilder()
+        """测试示例2：查询特定房间的客人（via adapter）"""
+        builder = PromptBuilder(adapter=_MockAdapter())
         result = builder._build_semantic_query_syntax()
 
-        assert '{"path": "stays.room.room_number", "operator": "eq", "value": "201"}' in result
+        assert '"stays.room.room_number"' in result
 
     def test_example_3_date_range(self):
-        """测试示例3：日期范围查询"""
-        builder = PromptBuilder()
+        """测试示例3：日期范围查询（via adapter）"""
+        builder = PromptBuilder(adapter=_MockAdapter())
         result = builder._build_semantic_query_syntax()
 
         assert '"root_object": "StayRecord"' in result
-        assert '{"path": "check_in_time", "operator": "gte", "value": "2026-02-01"}' in result
-        assert '{"path": "check_in_time", "operator": "lt", "value": "2026-03-01"}' in result
 
     def test_example_4_vip_guests(self):
-        """测试示例4：VIP客人查询"""
-        builder = PromptBuilder()
+        """测试示例4：VIP客人查询（via adapter）"""
+        builder = PromptBuilder(adapter=_MockAdapter())
         result = builder._build_semantic_query_syntax()
 
-        assert '{"path": "guest.tier", "operator": "eq", "value": "VIP"}' in result
+        assert '"guest.tier"' in result
         assert '"room.room_type.name"' in result
 
     def test_contains_important_rules(self):
@@ -289,8 +352,8 @@ class TestPromptContent:
     """测试提示词内容质量"""
 
     def test_prompt_is_well_formatted(self):
-        """测试提示词格式良好"""
-        builder = PromptBuilder()
+        """测试提示词格式良好（with adapter for examples）"""
+        builder = PromptBuilder(adapter=_MockAdapter())
         result = builder._build_semantic_query_syntax()
 
         # 检查Markdown格式
@@ -300,9 +363,20 @@ class TestPromptContent:
         assert "```json" in result
         assert "```" in result
 
-    def test_prompt_not_empty(self):
-        """测试提示词不为空"""
+    def test_prompt_not_empty_without_adapter(self):
+        """测试无 adapter 时提示词仍包含语法规则"""
         builder = PromptBuilder()
+        result = builder._build_semantic_query_syntax()
+
+        lines = result.strip().split("\n")
+        non_empty_lines = [l for l in lines if l.strip()]
+
+        # Without adapter: syntax rules + operators + important rules, ~30+ lines
+        assert len(non_empty_lines) > 20
+
+    def test_prompt_not_empty_with_adapter(self):
+        """测试有 adapter 时提示词内容丰富"""
+        builder = PromptBuilder(adapter=_MockAdapter())
         result = builder._build_semantic_query_syntax()
 
         lines = result.strip().split("\n")
@@ -311,8 +385,8 @@ class TestPromptContent:
         assert len(non_empty_lines) > 50  # 至少50行非空内容
 
     def test_json_examples_are_valid(self):
-        """测试JSON示例格式正确"""
-        builder = PromptBuilder()
+        """测试JSON示例格式正确（via adapter）"""
+        builder = PromptBuilder(adapter=_MockAdapter())
         result = builder._build_semantic_query_syntax()
 
         # 检查基本的JSON语法

@@ -52,7 +52,6 @@ from core.ontology.semantic_path_resolver import (
     PathResolutionError,
 )
 from core.ontology.business_rules import (
-    BusinessRule as QueryBusinessRule,
     BusinessRuleRegistry,
     RuleType,
     business_rules,

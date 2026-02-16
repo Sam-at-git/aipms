@@ -1,8 +1,8 @@
 """
 core/engine/snapshot.py
 
-快照/撤销引擎 - 支持操作回滚
-从 app/services/undo_service.py 增强迁移
+Snapshot/undo engine - supports operation rollback.
+Enhanced migration from app/services/undo_service.py.
 """
 from typing import Dict, Any, Optional, List, Callable
 from dataclasses import dataclass, field
@@ -16,18 +16,18 @@ logger = logging.getLogger(__name__)
 @dataclass
 class OperationSnapshot:
     """
-    操作快照 - 记录操作前后的状态
+    Operation snapshot - records state before and after an operation.
 
     Attributes:
-        snapshot_id: 快照唯一标识
-        operation_type: 操作类型
-        entity_type: 实体类型
-        entity_id: 实体ID
-        before_state: 操作前的状态（JSON序列化）
-        after_state: 操作后的状态（JSON序列化）
-        rollback_func: 回滚函数
-        timestamp: 快照时间
-        expires_at: 过期时间
+        snapshot_id: Unique snapshot identifier
+        operation_type: Type of operation
+        entity_type: Entity type name
+        entity_id: Entity identifier
+        before_state: State before the operation (JSON-serializable)
+        after_state: State after the operation (JSON-serializable)
+        rollback_func: Rollback function
+        timestamp: Snapshot creation time
+        expires_at: Expiration time
     """
 
     snapshot_id: str
@@ -41,25 +41,25 @@ class OperationSnapshot:
     expires_at: Optional[datetime] = None
 
     def is_expired(self) -> bool:
-        """检查快照是否过期"""
+        """Check whether the snapshot has expired."""
         if self.expires_at is None:
             return False
         return datetime.utcnow() > self.expires_at
 
     def mark_executed(self, after_state: Dict[str, Any]) -> None:
-        """标记操作已执行，记录后状态"""
+        """Mark the operation as executed and record the after-state."""
         self.after_state = after_state
 
 
 class SnapshotEngine:
     """
-    快照引擎 - 管理操作快照和撤销
+    Snapshot engine - manages operation snapshots and undo.
 
-    特性：
-    - 快照创建和管理
-    - 操作撤销
-    - 自动过期清理
-    - 线程安全（简化版）
+    Features:
+    - Snapshot creation and management
+    - Operation undo
+    - Automatic expiration cleanup
+    - Thread-safe (simplified)
 
     Example:
         >>> engine = SnapshotEngine()
@@ -75,10 +75,10 @@ class SnapshotEngine:
 
     def __init__(self, ttl_hours: int = 24):
         """
-        初始化快照引擎
+        Initialize the snapshot engine.
 
         Args:
-            ttl_hours: 快照默认有效期（小时）
+            ttl_hours: Default snapshot TTL in hours.
         """
         self._snapshots: Dict[str, OperationSnapshot] = {}
         self._ttl_hours = ttl_hours
@@ -94,22 +94,22 @@ class SnapshotEngine:
         ttl_hours: Optional[int] = None,
     ) -> OperationSnapshot:
         """
-        创建操作快照
+        Create an operation snapshot.
 
         Args:
-            operation_type: 操作类型
-            entity_type: 实体类型
-            entity_id: 实体ID
-            before_state: 操作前状态
-            rollback_func: 回滚函数
-            ttl_hours: 有效期（小时），None 表示使用默认值
+            operation_type: Type of operation
+            entity_type: Entity type name
+            entity_id: Entity identifier
+            before_state: State before the operation
+            rollback_func: Rollback function
+            ttl_hours: TTL in hours; None uses the default
 
         Returns:
-            创建的快照对象
+            The created snapshot object.
         """
         snapshot_id = str(uuid.uuid4())
 
-        # 计算过期时间
+        # Calculate expiration time
         expires_at = None
         if ttl_hours is not None:
             expires_at = datetime.utcnow() + timedelta(hours=ttl_hours)
@@ -128,7 +128,7 @@ class SnapshotEngine:
 
         self._snapshots[snapshot_id] = snapshot
 
-        # 按实体索引
+        # Index by entity
         if entity_id not in self._entity_snapshots:
             self._entity_snapshots[entity_id] = []
         self._entity_snapshots[entity_id].append(snapshot_id)
@@ -137,23 +137,23 @@ class SnapshotEngine:
         return snapshot
 
     def get_snapshot(self, snapshot_id: str) -> Optional[OperationSnapshot]:
-        """获取快照"""
+        """Get a snapshot by ID."""
         return self._snapshots.get(snapshot_id)
 
     def get_undoable_snapshots(
         self, entity_id: Optional[Any] = None, limit: int = 50
     ) -> List[OperationSnapshot]:
         """
-        获取可撤销的快照列表
+        Get a list of undoable snapshots.
 
         Args:
-            entity_id: 实体ID，None 表示获取所有
-            limit: 返回数量限制
+            entity_id: Entity ID filter; None returns all.
+            limit: Maximum number of results.
 
         Returns:
-            快照列表（最新的在前）
+            List of snapshots, newest first.
         """
-        # 清理过期快照
+        # Clean up expired snapshots
         self._cleanup_expired()
 
         snapshots = list(self._snapshots.values())
@@ -162,23 +162,23 @@ class SnapshotEngine:
             snapshot_ids = self._entity_snapshots.get(entity_id, [])
             snapshots = [s for s in snapshots if s.snapshot_id in snapshot_ids]
 
-        # 过滤未执行的和过期的
+        # Filter out unexecuted and expired
         valid_snapshots = [s for s in snapshots if s.after_state is not None and not s.is_expired()]
 
-        # 按时间倒序排序
+        # Sort by time descending
         valid_snapshots.sort(key=lambda s: s.timestamp, reverse=True)
 
         return valid_snapshots[:limit]
 
     def undo(self, snapshot_id: str) -> bool:
         """
-        撤销操作
+        Undo an operation.
 
         Args:
-            snapshot_id: 快照ID
+            snapshot_id: Snapshot ID.
 
         Returns:
-            True 如果撤销成功
+            True if undo succeeded.
         """
         snapshot = self._snapshots.get(snapshot_id)
         if snapshot is None:
@@ -203,14 +203,14 @@ class SnapshotEngine:
 
     def mark_executed(self, snapshot_id: str, after_state: Dict[str, Any]) -> bool:
         """
-        标记操作已执行
+        Mark an operation as executed.
 
         Args:
-            snapshot_id: 快照ID
-            after_state: 操作后状态
+            snapshot_id: Snapshot ID.
+            after_state: State after the operation.
 
         Returns:
-            True 如果成功
+            True if successful.
         """
         snapshot = self._snapshots.get(snapshot_id)
         if snapshot is None:
@@ -220,7 +220,7 @@ class SnapshotEngine:
         return True
 
     def _cleanup_expired(self) -> None:
-        """清理过期快照"""
+        """Clean up expired snapshots."""
         expired_ids = [
             s.snapshot_id for s in self._snapshots.values() if s.is_expired()
         ]
@@ -228,7 +228,7 @@ class SnapshotEngine:
         for snapshot_id in expired_ids:
             snapshot = self._snapshots.pop(snapshot_id, None)
             if snapshot:
-                # 从实体索引中移除
+                # Remove from entity index
                 if snapshot.entity_id in self._entity_snapshots:
                     try:
                         self._entity_snapshots[snapshot.entity_id].remove(snapshot_id)
@@ -239,16 +239,15 @@ class SnapshotEngine:
             logger.debug(f"Cleaned up {len(expired_ids)} expired snapshots")
 
     def clear(self) -> None:
-        """清空所有快照（用于测试）"""
+        """Clear all snapshots (for testing)."""
         self._snapshots.clear()
         self._entity_snapshots.clear()
 
 
-# 全局快照引擎实例
+# Global snapshot engine instance
 snapshot_engine = SnapshotEngine()
 
 
-# 导出
 __all__ = [
     "OperationSnapshot",
     "SnapshotEngine",

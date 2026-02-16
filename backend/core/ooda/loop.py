@@ -7,11 +7,12 @@ from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
+import threading
 
 from core.ooda.observe import ObservePhase, Observation
 from core.ooda.orient import OrientPhase, Orientation
-from core.ooda.decide import DecidePhase, Decision
-from core.ooda.act import ActPhase, ActionResult
+from core.ooda.decide import DecidePhase, OodaDecision as Decision
+from core.ooda.act import ActPhase, OodaActionResult as ActionResult
 
 logger = logging.getLogger(__name__)
 
@@ -304,8 +305,9 @@ class OodaLoop:
         return result
 
 
-# 全局 OODA Loop 实例
+# 全局 OODA Loop 实例（线程安全）
 _ooda_loop_instance: Optional[OodaLoop] = None
+_ooda_loop_lock = threading.Lock()
 
 
 def get_ooda_loop() -> Optional[OodaLoop]:
@@ -318,12 +320,12 @@ def get_ooda_loop() -> Optional[OodaLoop]:
     return _ooda_loop_instance
 
 
-def set_ooda_loop(loop: OodaLoop) -> None:
+def set_ooda_loop(loop: Optional[OodaLoop]) -> None:
     """
-    设置全局 OODA Loop 实例
+    设置全局 OODA Loop 实例（线程安全）
 
     Args:
-        loop: OodaLoop 实例
+        loop: OodaLoop 实例，或 None 以重置
     """
     global _ooda_loop_instance
     _ooda_loop_instance = loop

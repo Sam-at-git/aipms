@@ -1,8 +1,8 @@
 """
 core/engine/audit.py
 
-审计日志引擎 - 记录系统关键操作
-从 app/services/audit_service.py 增强迁移
+Audit log engine - records critical system operations.
+Enhanced migration from app/services/audit_service.py.
 """
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class AuditSeverity(str, Enum):
-    """审计日志严重程度"""
+    """Audit log severity levels."""
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
@@ -24,21 +24,21 @@ class AuditSeverity(str, Enum):
 @dataclass
 class AuditLog:
     """
-    审计日志条目
+    Audit log entry.
 
     Attributes:
-        log_id: 日志唯一标识
-        timestamp: 日志时间戳
-        operator_id: 操作人ID
-        action: 操作类型
-        entity_type: 实体类型
-        entity_id: 实体ID
-        old_value: 旧值（JSON）
-        new_value: 新值（JSON）
-        severity: 严重程度
-        ip_address: IP地址
-        user_agent: 用户代理
-        extra: 额外信息
+        log_id: Unique log identifier
+        timestamp: Log timestamp
+        operator_id: Operator (user) ID
+        action: Action type
+        entity_type: Entity type name
+        entity_id: Entity identifier
+        old_value: Previous value (JSON string)
+        new_value: New value (JSON string)
+        severity: Severity level
+        ip_address: Client IP address
+        user_agent: Client user agent
+        extra: Additional metadata
     """
 
     log_id: str
@@ -55,7 +55,7 @@ class AuditLog:
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
+        """Convert to dictionary."""
         return {
             "log_id": self.log_id,
             "timestamp": self.timestamp.isoformat(),
@@ -74,13 +74,13 @@ class AuditLog:
 
 class AuditEngine:
     """
-    审计日志引擎
+    Audit log engine.
 
-    特性：
-    - 日志记录
-    - 日志查询
-    - 按实体/操作人筛选
-    - 内存存储（可扩展为持久化）
+    Features:
+    - Log recording
+    - Log querying
+    - Filtering by entity or operator
+    - In-memory storage (extensible to persistent)
 
     Example:
         >>> engine = AuditEngine()
@@ -97,10 +97,10 @@ class AuditEngine:
 
     def __init__(self, max_logs: int = 10000):
         """
-        初始化审计引擎
+        Initialize the audit engine.
 
         Args:
-            max_logs: 最大日志条数（内存存储）
+            max_logs: Maximum log entries (in-memory storage).
         """
         self._logs: List[AuditLog] = []
         self._max_logs = max_logs
@@ -121,22 +121,22 @@ class AuditEngine:
         extra: Optional[Dict[str, Any]] = None,
     ) -> AuditLog:
         """
-        记录审计日志
+        Record an audit log entry.
 
         Args:
-            operator_id: 操作人ID
-            action: 操作类型
-            entity_type: 实体类型
-            entity_id: 实体ID
-            old_value: 旧值（JSON字符串）
-            new_value: 新值（JSON字符串）
-            severity: 严重程度
-            ip_address: IP地址
-            user_agent: 用户代理
-            extra: 额外信息
+            operator_id: Operator (user) ID
+            action: Action type
+            entity_type: Entity type name
+            entity_id: Entity identifier
+            old_value: Previous value (JSON string)
+            new_value: New value (JSON string)
+            severity: Severity level
+            ip_address: Client IP address
+            user_agent: Client user agent
+            extra: Additional metadata
 
         Returns:
-            创建的审计日志
+            The created audit log entry.
         """
         import uuid
 
@@ -155,34 +155,34 @@ class AuditEngine:
             extra=extra or {},
         )
 
-        # 添加到日志列表
+        # Add to log list
         log_index = len(self._logs)
         self._logs.append(log)
 
-        # 按操作人索引
+        # Index by operator
         if operator_id is not None:
             if operator_id not in self._operator_logs:
                 self._operator_logs[operator_id] = []
             self._operator_logs[operator_id].append(log_index)
 
-        # 按实体索引
+        # Index by entity
         if entity_type is not None and entity_id is not None:
             key = f"{entity_type}:{entity_id}"
             if key not in self._entity_logs:
                 self._entity_logs[key] = []
             self._entity_logs[key].append(log_index)
 
-        # 限制日志数量
+        # Limit log count
         if len(self._logs) > self._max_logs:
             self._logs.pop(0)
-            # 更新索引
+            # Rebuild indices
             self._rebuild_indices()
 
         logger.info(f"Audit log: {action} by {operator_id} on {entity_type}:{entity_id}")
         return log
 
     def get_by_id(self, log_id: str) -> Optional[AuditLog]:
-        """根据ID获取日志"""
+        """Get a log entry by ID."""
         for log in self._logs:
             if log.log_id == log_id:
                 return log
@@ -191,20 +191,20 @@ class AuditEngine:
     def get_by_operator(
         self, operator_id: int, limit: int = 100
     ) -> List[AuditLog]:
-        """获取操作人的日志"""
+        """Get log entries for a specific operator."""
         indices = self._operator_logs.get(operator_id, [])
         return [self._logs[i] for i in indices if i < len(self._logs)][:limit]
 
     def get_by_entity(
         self, entity_type: str, entity_id: int, limit: int = 100
     ) -> List[AuditLog]:
-        """获取实体的日志"""
+        """Get log entries for a specific entity."""
         key = f"{entity_type}:{entity_id}"
         indices = self._entity_logs.get(key, [])
         return [self._logs[i] for i in indices if i < len(self._logs)][:limit]
 
     def get_by_action(self, action: str, limit: int = 100) -> List[AuditLog]:
-        """获取指定操作的日志"""
+        """Get log entries for a specific action type."""
         return [log for log in self._logs if log.action == action][:limit]
 
     def get_all(
@@ -214,15 +214,15 @@ class AuditEngine:
         severity: Optional[AuditSeverity] = None,
     ) -> List[AuditLog]:
         """
-        获取所有日志（分页）
+        Get all log entries (paginated).
 
         Args:
-            limit: 返回数量限制
-            offset: 偏移量
-            severity: 筛选严重程度
+            limit: Maximum number of results.
+            offset: Pagination offset.
+            severity: Filter by severity level.
 
         Returns:
-            日志列表
+            List of audit log entries.
         """
         logs = self._logs
 
@@ -232,7 +232,7 @@ class AuditEngine:
         return logs[offset : offset + limit]
 
     def get_statistics(self) -> Dict[str, Any]:
-        """获取审计统计"""
+        """Get audit statistics."""
         return {
             "total_logs": len(self._logs),
             "by_severity": {
@@ -243,14 +243,14 @@ class AuditEngine:
         }
 
     def _get_action_counts(self) -> Dict[str, int]:
-        """获取操作计数"""
+        """Get action counts."""
         counts: Dict[str, int] = {}
         for log in self._logs:
             counts[log.action] = counts.get(log.action, 0) + 1
         return counts
 
     def _rebuild_indices(self) -> None:
-        """重建索引（在删除旧日志后）"""
+        """Rebuild indices (after removing old logs)."""
         self._operator_logs.clear()
         self._entity_logs.clear()
 
@@ -267,17 +267,16 @@ class AuditEngine:
                 self._entity_logs[key].append(i)
 
     def clear(self) -> None:
-        """清空所有日志（用于测试）"""
+        """Clear all logs (for testing)."""
         self._logs.clear()
         self._operator_logs.clear()
         self._entity_logs.clear()
 
 
-# 全局审计引擎实例
+# Global audit engine instance
 audit_engine = AuditEngine()
 
 
-# 导出
 __all__ = [
     "AuditSeverity",
     "AuditLog",

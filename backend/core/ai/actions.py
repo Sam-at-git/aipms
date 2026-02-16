@@ -72,6 +72,10 @@ class ActionDefinition:
     undoable: bool = False
     side_effects: List[str] = field(default_factory=list)
 
+    # Risk classification (SPEC-04)
+    risk_level: str = ""  # "none" | "low" | "medium" | "high" | "critical"
+    is_financial: bool = False
+
     # Effects declarations (SPEC-4: state changes this action produces)
     effects: List[str] = field(default_factory=list)
 
@@ -254,6 +258,8 @@ class ActionRegistry:
         glossary_examples: Optional[List[Dict[str, str]]] = None,
         ui_required_fields: Optional[List[str]] = None,
         param_enhancer: Optional[Callable[[Dict[str, Any], Any], Dict[str, Any]]] = None,
+        risk_level: str = "",
+        is_financial: bool = False,
     ) -> Callable:
         """
         Decorator for registering actions.
@@ -310,6 +316,8 @@ class ActionRegistry:
                 glossary_examples=glossary_examples or [],
                 ui_required_fields=ui_required_fields,
                 param_enhancer=param_enhancer,
+                risk_level=risk_level,
+                is_financial=is_financial,
             )
 
             # Register
@@ -411,6 +419,10 @@ class ActionRegistry:
                 side_effects=definition.side_effects,
                 post_conditions=definition.effects,
                 allowed_roles=definition.allowed_roles,
+                category=definition.category,
+                risk_level=definition.risk_level,
+                is_financial=definition.is_financial,
+                ui_required_fields=definition.ui_required_fields or [],
             )
 
             self._ontology_registry.register_action(definition.entity, metadata)

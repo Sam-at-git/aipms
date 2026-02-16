@@ -1,8 +1,8 @@
 """
 core/engine/rule_engine.py
 
-规则引擎 - 装饰器注册的业务规则执行
-支持运行时规则定义、条件评估和副作用触发
+Rule engine - decorator-registered business rule execution.
+Supports runtime rule definitions, condition evaluation, and side-effect triggers.
 """
 from typing import Callable, Dict, List, Any, Optional
 from dataclasses import dataclass, field
@@ -15,14 +15,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RuleContext:
     """
-    规则执行上下文
+    Rule execution context.
 
     Attributes:
-        entity: 当前实体对象
-        entity_type: 实体类型名称
-        action: 正在执行的动作
-        parameters: 动作参数
-        metadata: 额外的元数据
+        entity: Current entity object
+        entity_type: Entity type name
+        action: Action being executed
+        parameters: Action parameters
+        metadata: Additional metadata
     """
 
     entity: Any
@@ -32,33 +32,33 @@ class RuleContext:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def get_parameter(self, name: str, default: Any = None) -> Any:
-        """获取参数值"""
+        """Get a parameter value."""
         return self.parameters.get(name, default)
 
     def has_parameter(self, name: str) -> bool:
-        """检查参数是否存在"""
+        """Check whether a parameter exists."""
         return name in self.parameters
 
 
 class RuleCondition(ABC):
-    """规则条件接口"""
+    """Rule condition interface."""
 
     @abstractmethod
     def evaluate(self, context: RuleContext) -> bool:
         """
-        评估条件是否满足
+        Evaluate whether the condition is satisfied.
 
         Args:
-            context: 规则执行上下文
+            context: Rule execution context.
 
         Returns:
-            True 如果条件满足
+            True if the condition is met.
         """
         raise NotImplementedError
 
 
 class FunctionCondition(RuleCondition):
-    """函数条件 - 使用可调用对象评估"""
+    """Function condition - evaluates using a callable."""
 
     def __init__(self, func: Callable[[RuleContext], bool], description: str = ""):
         self._func = func
@@ -72,23 +72,23 @@ class FunctionCondition(RuleCondition):
 
 
 class ExpressionCondition(RuleCondition):
-    """表达式条件 - 使用字符串表达式评估（简化版，不使用 eval）"""
+    """Expression condition - evaluates using string expressions (simplified, no eval)."""
 
     def __init__(self, expression: str):
         self._expression = expression
 
     def evaluate(self, context: RuleContext) -> bool:
-        # 简化的表达式解析：只支持简单的 == 检查
-        # 例如: "status == 'active'" 或 "count > 5"
-        # 完整实现应该使用安全的表达式解析器
+        # Simplified expression parsing: only supports simple == / != checks
+        # e.g. "status == 'active'" or "count > 5"
+        # A full implementation should use a safe expression parser
 
-        # 获取属性值的辅助函数（支持 dict 和对象）
+        # Helper to get attribute value (supports both dict and object)
         def get_attr_value(entity, attr_name):
             if isinstance(entity, dict):
                 return entity.get(attr_name)
             return getattr(entity, attr_name, None)
 
-        # 对于当前实现，我们只支持简单的属性检查
+        # Currently only supports simple attribute checks
         if " == " in self._expression:
             attr, value = self._expression.split(" == ", 1)
             attr_value = get_attr_value(context.entity, attr.strip())
@@ -111,16 +111,16 @@ class ExpressionCondition(RuleCondition):
 @dataclass
 class Rule:
     """
-    业务规则定义
+    Business rule definition.
 
     Attributes:
-        rule_id: 规则唯一标识
-        name: 规则名称
-        description: 规则描述
-        condition: 规则条件
-        action: 触发的动作（函数或描述）
-        priority: 优先级（数字越大优先级越高）
-        enabled: 是否启用
+        rule_id: Unique rule identifier
+        name: Rule name
+        description: Rule description
+        condition: Rule condition
+        action: Triggered action (callable)
+        priority: Priority (higher number = higher priority)
+        enabled: Whether the rule is enabled
     """
 
     rule_id: str
@@ -134,13 +134,13 @@ class Rule:
 
 class RuleEngine:
     """
-    规则引擎 - 管理和执行业务规则
+    Rule engine - manages and executes business rules.
 
-    特性：
-    - 规则注册和注销
-    - 条件评估
-    - 动作执行
-    - 优先级排序
+    Features:
+    - Rule registration and unregistration
+    - Condition evaluation
+    - Action execution
+    - Priority-based ordering
 
     Example:
         >>> engine = RuleEngine()
@@ -164,20 +164,20 @@ class RuleEngine:
 
     def register_rule(self, rule: Rule) -> None:
         """
-        注册规则
+        Register a rule.
 
         Args:
-            rule: 要注册的规则
+            rule: The rule to register.
 
         Raises:
-            ValueError: 如果 rule_id 已存在
+            ValueError: If the rule_id already exists.
         """
         if rule.rule_id in self._rules:
             raise ValueError(f"Rule {rule.rule_id} already exists")
 
         self._rules[rule.rule_id] = rule
 
-        # 按实体类型索引规则（从 rule_id 提取）
+        # Index rules by entity type (extracted from rule_id prefix)
         entity_type = rule.rule_id.split("_")[0] if "_" in rule.rule_id else None
         if entity_type:
             if entity_type not in self._entity_rules:
@@ -188,15 +188,15 @@ class RuleEngine:
 
     def unregister_rule(self, rule_id: str) -> None:
         """
-        注销规则
+        Unregister a rule.
 
         Args:
-            rule_id: 规则ID
+            rule_id: Rule ID.
         """
         if rule_id in self._rules:
             rule = self._rules[rule_id]
 
-            # 从实体索引中移除
+            # Remove from entity index
             for entity_type, rule_ids in self._entity_rules.items():
                 if rule_id in rule_ids:
                     rule_ids.remove(rule_id)
@@ -205,18 +205,18 @@ class RuleEngine:
             logger.info(f"Rule {rule_id} unregistered")
 
     def get_rule(self, rule_id: str) -> Optional[Rule]:
-        """获取规则"""
+        """Get a rule by ID."""
         return self._rules.get(rule_id)
 
     def get_rules_for_entity(self, entity_type: str) -> List[Rule]:
         """
-        获取实体的所有规则
+        Get all rules for an entity type.
 
         Args:
-            entity_type: 实体类型
+            entity_type: Entity type name.
 
         Returns:
-            规则列表（按优先级排序）
+            List of rules sorted by priority (highest first).
         """
         rule_ids = self._entity_rules.get(entity_type, [])
         rules = [self._rules[rid] for rid in rule_ids if rid in self._rules and self._rules[rid].enabled]
@@ -224,13 +224,13 @@ class RuleEngine:
 
     def evaluate(self, context: RuleContext) -> List[Rule]:
         """
-        评估规则并执行匹配的规则动作
+        Evaluate rules and execute matching rule actions.
 
         Args:
-            context: 规则执行上下文
+            context: Rule execution context.
 
         Returns:
-            触发的规则列表
+            List of triggered rules.
         """
         triggered = []
 
@@ -246,26 +246,25 @@ class RuleEngine:
         return triggered
 
     def enable_rule(self, rule_id: str) -> None:
-        """启用规则"""
+        """Enable a rule."""
         if rule_id in self._rules:
             self._rules[rule_id].enabled = True
 
     def disable_rule(self, rule_id: str) -> None:
-        """禁用规则"""
+        """Disable a rule."""
         if rule_id in self._rules:
             self._rules[rule_id].enabled = False
 
     def clear(self) -> None:
-        """清空所有规则（用于测试）"""
+        """Clear all rules (for testing)."""
         self._rules.clear()
         self._entity_rules.clear()
 
 
-# 全局规则引擎实例
+# Global rule engine instance
 rule_engine = RuleEngine()
 
 
-# 导出
 __all__ = [
     "RuleContext",
     "RuleCondition",

@@ -41,7 +41,7 @@ class _SystemCommandHandlerStub:
     """Stub — real SystemCommandHandler is injected from app layer."""
     def is_system_command(self, message: str) -> bool:
         return False
-    def execute(self, command, user, db) -> dict:
+    def execute(self, command, user, db) -> Dict[str, Any]:
         return {'message': 'System commands not available', 'suggested_actions': [], 'context': {}}
 
 
@@ -116,9 +116,10 @@ class OodaOrchestrator:
 
         # Core AI client
         if self.use_core_ai:
+            from core.ontology.registry import OntologyRegistry
             self.llm_client = OpenAICompatibleClient()
             self.prompt_builder = PromptBuilder()
-            self.hitl_strategy = ConfirmByRiskStrategy()
+            self.hitl_strategy = ConfirmByRiskStrategy(registry=OntologyRegistry())
         else:
             self.llm_client = None
             self.prompt_builder = None
@@ -217,7 +218,7 @@ class OodaOrchestrator:
                 self._response_generator = False
         return self._response_generator if self._response_generator is not False else None
 
-    def _try_oag_path(self, message: str, user: Any) -> dict:
+    def _try_oag_path(self, message: str, user: Any) -> Dict[str, Any]:
         """
         Try the OAG (Ontology Action Graph) fast path (SPEC-19/20/21)
 
@@ -277,7 +278,7 @@ class OodaOrchestrator:
 
         return None
 
-    def _oag_handle_query(self, intent, routing, user) -> dict:
+    def _oag_handle_query(self, intent, routing, user) -> Dict[str, Any]:
         """Handle query intent via OAG path (SPEC-20)"""
         compiler = self._get_query_compiler()
         if not compiler:
@@ -329,7 +330,7 @@ class OodaOrchestrator:
 
         return None
 
-    def _oag_handle_mutation(self, intent, routing, message, user) -> dict:
+    def _oag_handle_mutation(self, intent, routing, message, user) -> Dict[str, Any]:
         """Handle mutation intent via OAG path (SPEC-19)"""
         registry = self.get_action_registry()
         if not registry:
@@ -414,9 +415,9 @@ class OodaOrchestrator:
     def dispatch_via_registry(
         self,
         action_name: str,
-        params: dict,
+        params: Dict[str, Any],
         user: Any
-    ) -> dict:
+    ) -> Dict[str, Any]:
         """
         通过 ActionRegistry 分发动作。
 
@@ -624,7 +625,7 @@ class OodaOrchestrator:
     def _validate_action_params(
         self,
         action_type: str,
-        params: dict,
+        params: Dict[str, Any],
         user: Any
     ) -> tuple[bool, list, str]:
         """
@@ -665,7 +666,7 @@ class OodaOrchestrator:
         self,
         action_type: str,
         param_name: str,
-        current_params: dict
+        current_params: Dict[str, Any]
     ) -> Optional[Any]:
         """获取字段定义 — delegates to adapter"""
         return self.adapter.get_field_definition(param_name, action_type, current_params, self.db)
@@ -674,10 +675,10 @@ class OodaOrchestrator:
         self,
         action_type: str,
         action_description: str,
-        params: dict,
+        params: Dict[str, Any],
         missing_fields: list,
         entity_type: str = "unknown"
-    ) -> dict:
+    ) -> Dict[str, Any]:
         """
         生成追问响应
 
@@ -731,9 +732,9 @@ class OodaOrchestrator:
     def _process_followup_input(
         self,
         message: str,
-        follow_up_context: dict,
+        follow_up_context: Dict[str, Any],
         user: Any
-    ) -> dict:
+    ) -> Dict[str, Any]:
         """
         处理追问模式的用户输入
 
@@ -832,9 +833,9 @@ class OodaOrchestrator:
     def _enhance_single_action_params(
         self,
         action_type: str,
-        params: dict,
+        params: Dict[str, Any],
         user: Any
-    ) -> dict:
+    ) -> Dict[str, Any]:
         """增强单个操作的参数 — delegates to adapter"""
         return self.adapter.enhance_single_action_params(action_type, params, self.db)
 
@@ -844,9 +845,9 @@ class OodaOrchestrator:
         user: Any,
         conversation_history: list = None,
         topic_id: str = None,
-        follow_up_context: dict = None,
+        follow_up_context: Dict[str, Any] = None,
         language: str = None
-    ) -> dict:
+    ) -> Dict[str, Any]:
         """
         处理用户消息 - OODA 循环入口
 
@@ -863,13 +864,7 @@ class OodaOrchestrator:
             包含 message, suggested_actions, context, topic_id 的字典
         """
         message = message.strip()
-        new_topic_id = topic_id
-        include_context = False
         start_time = datetime.now()
-
-        # ========== OODA Phase Timing (SPEC-25) ==========
-        ooda_phases = {}
-        t_observe_start = start_time
 
         # ========== DebugLogger: 创建会话 ==========
         debug_session_id = None
@@ -878,6 +873,52 @@ class OodaOrchestrator:
                 input_message=message,
                 user=user
             )
+
+        # ========== LLMCallContext: 开始会话 ==========
+        if debug_session_id and self.debug_logger:
+            try:
+                from core.ai.llm_call_context import LLMCallContext
+                LLMCallContext.begin_session(debug_session_id, self.debug_logger)
+            except ImportError:
+                pass
+
+        try:
+            return self._process_message_inner(
+                message=message,
+                user=user,
+                conversation_history=conversation_history,
+                topic_id=topic_id,
+                follow_up_context=follow_up_context,
+                language=language,
+                debug_session_id=debug_session_id,
+                start_time=start_time,
+            )
+        finally:
+            # ========== LLMCallContext: 结束会话 ==========
+            try:
+                from core.ai.llm_call_context import LLMCallContext
+                LLMCallContext.end_session()
+            except ImportError:
+                pass
+
+    def _process_message_inner(
+        self,
+        message: str,
+        user: Any,
+        conversation_history: list,
+        topic_id: str,
+        follow_up_context: Dict[str, Any],
+        language: str,
+        debug_session_id: str,
+        start_time: datetime,
+    ) -> Dict[str, Any]:
+        """Inner implementation of process_message (separated for try/finally in caller)."""
+        new_topic_id = topic_id
+        include_context = False
+
+        # ========== OODA Phase Timing (SPEC-25) ==========
+        ooda_phases = {}
+        t_observe_start = start_time
 
         # ========== 系统指令处理 ==========
         if self.system_command_handler.is_system_command(message):
@@ -933,7 +974,7 @@ class OodaOrchestrator:
                     new_topic_id = None
                     orient_output["topic_relevance"] = "new_topic"
             except Exception as e:
-                print(f"Topic relevance check failed: {e}")
+                logger.warning(f"Topic relevance check failed: {e}")
                 include_context = bool(conversation_history)
 
         t_orient_end = datetime.now()
@@ -1034,7 +1075,15 @@ class OodaOrchestrator:
                     if is_query_action:
                         response = self._handle_query_action(result, user)
                         response['topic_id'] = new_topic_id
-                        return response
+                        t_act_end = datetime.now()
+                        ooda_phases["act"] = {
+                            "duration_ms": int((t_act_end - t_act_start).total_seconds() * 1000),
+                            "output": {"result": "query_executed"},
+                        }
+                        return self._complete_debug_session(
+                            debug_session_id, response, start_time, "success",
+                            metadata={"ooda_phases": ooda_phases}
+                        )
 
                     # 增强参数（添加数据库验证后的值）
                     result = self._enhance_actions_with_db_data(result)
@@ -1078,7 +1127,7 @@ class OodaOrchestrator:
                                 # 确保 params 存在
                                 if "params" not in act:
                                     act["params"] = action_params
-                            print(f"DEBUG: Complete action set, actions count: {len(result['suggested_actions'])}")
+                            logger.debug(f"Complete action set, actions count: {len(result['suggested_actions'])}")
 
                     # ========== OODA Act Phase End (SPEC-25) ==========
                     t_act_end = datetime.now()
@@ -1096,7 +1145,7 @@ class OodaOrchestrator:
                 # 其他情况回退到规则模式
             except Exception as e:
                 # LLM 出错，回退到规则模式
-                print(f"LLM error, falling back to rule-based: {e}")
+                logger.warning(f"LLM error, falling back to rule-based: {e}")
 
         # 规则模式（后备）
         result = self._process_with_rules(message, user)
@@ -1112,9 +1161,9 @@ class OodaOrchestrator:
         )
 
     def _complete_debug_session(
-        self, session_id: str, result: dict, start_time: datetime,
-        status: str, metadata: dict = None
-    ) -> dict:
+        self, session_id: str, result: Dict[str, Any], start_time: datetime,
+        status: str, metadata: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
         """完成 DebugLogger 会话并返回结果"""
         if session_id and self.debug_logger:
             execution_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
@@ -1367,6 +1416,12 @@ class OodaOrchestrator:
 请直接给出回答："""
 
         try:
+            try:
+                from core.ai.llm_call_context import LLMCallContext
+                LLMCallContext.before_call("act", "format_result")
+            except ImportError:
+                pass
+
             llm_response = self.llm_service.chat(
                 format_prompt,
                 {"user_role": user.role.value, "user_name": user.name},
@@ -1425,7 +1480,7 @@ class OodaOrchestrator:
 
         return "\n".join(lines)
 
-    def _process_with_rules(self, message: str, user: Any) -> dict:
+    def _process_with_rules(self, message: str, user: Any) -> Dict[str, Any]:
         """
         使用规则模式处理消息（后备方案）
         """
@@ -1491,7 +1546,7 @@ class OodaOrchestrator:
 
         return 'unknown'
 
-    def _generate_response(self, intent: str, entities: dict, user: Any, original_message: str = "") -> dict:
+    def _generate_response(self, intent: str, entities: Dict[str, Any], user: Any, original_message: str = "") -> Dict[str, Any]:
         """
         生成响应和建议动作 — 通用分发，由 registry 元数据驱动
         """
@@ -1555,14 +1610,14 @@ class OodaOrchestrator:
             'context': {'intent': intent, 'entities': entities}
         }
 
-    def _help_response(self) -> dict:
+    def _help_response(self) -> Dict[str, Any]:
         return {
             'message': self.adapter.get_help_text(),
             'suggested_actions': [],
             'context': {}
         }
 
-    def _query_reports_response(self) -> dict:
+    def _query_reports_response(self) -> Dict[str, Any]:
         report_data = self.adapter.get_report_data(self.db)
         return {
             'message': report_data.get('message', ''),
@@ -1572,9 +1627,9 @@ class OodaOrchestrator:
 
     def _execute_ontology_query(
         self,
-        structured_query_dict: dict,
+        structured_query_dict: Dict[str, Any],
         user: Any
-    ) -> dict:
+    ) -> Dict[str, Any]:
         """
         执行 Ontology 查询 (NL2OntologyQuery)
 
@@ -1683,7 +1738,7 @@ class OodaOrchestrator:
                 }
             }
 
-    def _validate_and_correct_fields(self, query_dict: dict) -> dict:
+    def _validate_and_correct_fields(self, query_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
         验证和纠正 LLM 返回的字段名
 
@@ -1780,8 +1835,8 @@ class OodaOrchestrator:
         return corrected
 
     def _build_dynamic_field_mappings(
-        self, entity_name: str, valid_fields: set, entity_schema: dict
-    ) -> dict:
+        self, entity_name: str, valid_fields: set, entity_schema: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         从 registry 关系元数据动态构建字段名映射。
 
@@ -1838,7 +1893,7 @@ class OodaOrchestrator:
 
         return ""
 
-    def execute_action(self, action: dict, user: Any) -> dict:
+    def execute_action(self, action: Dict[str, Any], user: Any) -> Dict[str, Any]:
         """
         执行动作 - OODA 循环的 Act 阶段
         所有操作通过 ActionRegistry 分发执行
@@ -1861,3 +1916,6 @@ class OodaOrchestrator:
             'success': False,
             'message': f'不支持的操作类型：{action_type}'
         }
+
+
+__all__ = ["OodaOrchestrator"]

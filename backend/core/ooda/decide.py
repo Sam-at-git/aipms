@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from datetime import datetime
 import logging
+import threading
 
 from core.ooda.orient import Orientation
 from core.ooda.intent import IntentResult
@@ -17,43 +18,36 @@ from core.security.checker import permission_checker, Permission
 logger = logging.getLogger(__name__)
 
 
-# 高风险操作类型（需要确认）
-HIGH_RISK_ACTIONS = {
-    "checkout",
-    "cancel_reservation",
-    "adjust_bill",
-    "delete_guest",
-    "delete_room",
-    "delete_task",
-}
+# ========== Registry-based helpers (replacing hardcoded constants) ==========
 
-# 涉及金额的操作类型（需要确认）
-FINANCIAL_ACTIONS = {
-    "adjust_bill",
-    "add_payment",
-}
+def _is_high_risk(action_type: str, registry) -> bool:
+    """Check if action is high-risk via OntologyRegistry metadata."""
+    if not registry:
+        return False
+    action = registry.get_action_by_name(action_type)
+    if not action:
+        return False
+    return action.risk_level in ("high", "critical")
 
-# 所有动作类型及其必需参数
-ACTION_REQUIRED_PARAMS = {
-    "walkin_checkin": ["room_id", "guest_name", "guest_phone", "expected_check_out"],
-    "checkin": ["reservation_id", "room_id"],
-    "checkout": ["stay_record_id"],
-    "update_room_status": ["room_id", "status"],
-    "create_reservation": ["guest_name", "guest_phone", "room_type_id", "check_in_date", "check_out_date", "adult_count"],
-    "cancel_reservation": ["reservation_id", "cancel_reason"],
-    "create_task": ["room_id", "task_type"],
-    "assign_task": ["task_id", "assignee_id"],
-    "start_task": ["task_id"],
-    "complete_task": ["task_id"],
-    "add_payment": ["bill_id", "amount", "method"],
-    "adjust_bill": ["bill_id", "adjustment_amount", "reason"],
-    "extend_stay": ["stay_record_id", "new_check_out_date"],
-    "change_room": ["stay_record_id", "new_room_id"],
-}
+
+def _is_financial(action_type: str, registry) -> bool:
+    """Check if action involves financial operations via OntologyRegistry metadata."""
+    if not registry:
+        return False
+    action = registry.get_action_by_name(action_type)
+    return action.is_financial if action else False
+
+
+def _get_required_params(action_type: str, registry) -> List[str]:
+    """Get required parameters for an action from OntologyRegistry metadata."""
+    if not registry:
+        return []
+    action = registry.get_action_by_name(action_type)
+    return list(action.ui_required_fields) if action and action.ui_required_fields else []
 
 
 @dataclass
-class Decision:
+class OodaDecision:
     """
     决策结果 - Decide 阶段的输出
 
@@ -100,7 +94,7 @@ class DecisionRule(ABC):
     """决策规则接口"""
 
     @abstractmethod
-    def evaluate(self, orientation: Orientation) -> Optional[Decision]:
+    def evaluate(self, orientation: Orientation) -> Optional[OodaDecision]:
         """
         评估导向并生成决策
 
@@ -133,16 +127,18 @@ class IntentBasedRule(DecisionRule):
     使用意图识别结果生成决策
     """
 
-    def __init__(self, action_type: str, required_params: Optional[List[str]] = None):
+    def __init__(self, action_type: str, required_params: Optional[List[str]] = None, registry=None):
         """
         初始化基于意图的规则
 
         Args:
             action_type: 动作类型
             required_params: 必需参数列表
+            registry: OntologyRegistry instance for risk/financial lookups
         """
         self._action_type = action_type
         self._required_params = required_params or []
+        self._registry = registry
 
     def can_handle(self, orientation: Orientation) -> bool:
         """检查是否能处理该导向"""
@@ -150,7 +146,7 @@ class IntentBasedRule(DecisionRule):
             return False
         return orientation.intent.action_type == self._action_type
 
-    def evaluate(self, orientation: Orientation) -> Optional[Decision]:
+    def evaluate(self, orientation: Orientation) -> Optional[OodaDecision]:
         """评估导向并生成决策"""
         if not self.can_handle(orientation):
             return None
@@ -175,8 +171,8 @@ class IntentBasedRule(DecisionRule):
 
         # 检查是否需要确认
         requires_confirmation = (
-            self._action_type in HIGH_RISK_ACTIONS or
-            self._action_type in FINANCIAL_ACTIONS or
+            _is_high_risk(self._action_type, self._registry) or
+            _is_financial(self._action_type, self._registry) or
             intent.requires_confirmation
         )
 
@@ -188,7 +184,7 @@ class IntentBasedRule(DecisionRule):
 
         confidence = intent.confidence * param_completeness
 
-        return Decision(
+        return OodaDecision(
             orientation=orientation,
             action_type=self._action_type,
             action_params=action_params,
@@ -203,14 +199,21 @@ class DefaultDecisionRule(DecisionRule):
     """
     默认决策规则
 
-    处理任何有意图的导向，从 ACTION_REQUIRED_PARAMS 获取参数定义
+    处理任何有意图的导向，从 OntologyRegistry 获取参数定义
     """
+
+    def __init__(self, registry=None):
+        """
+        Args:
+            registry: OntologyRegistry instance for action metadata lookups
+        """
+        self._registry = registry
 
     def can_handle(self, orientation: Orientation) -> bool:
         """检查是否能处理该导向"""
         return orientation.intent is not None
 
-    def evaluate(self, orientation: Orientation) -> Optional[Decision]:
+    def evaluate(self, orientation: Orientation) -> Optional[OodaDecision]:
         """评估导向并生成决策"""
         if not self.can_handle(orientation):
             return None
@@ -222,8 +225,8 @@ class DefaultDecisionRule(DecisionRule):
         action_type = intent.action_type
         action_params = intent.entities.copy()
 
-        # 获取必需参数
-        required_params = ACTION_REQUIRED_PARAMS.get(action_type, [])
+        # 获取必需参数（from OntologyRegistry）
+        required_params = _get_required_params(action_type, self._registry)
 
         # 验证必需参数
         missing_fields = []
@@ -236,10 +239,10 @@ class DefaultDecisionRule(DecisionRule):
                     "required": True,
                 })
 
-        # 检查是否需要确认
+        # 检查是否需要确认（from OntologyRegistry）
         requires_confirmation = (
-            action_type in HIGH_RISK_ACTIONS or
-            action_type in FINANCIAL_ACTIONS or
+            _is_high_risk(action_type, self._registry) or
+            _is_financial(action_type, self._registry) or
             intent.requires_confirmation
         )
 
@@ -251,7 +254,7 @@ class DefaultDecisionRule(DecisionRule):
 
         confidence = intent.confidence * param_completeness
 
-        return Decision(
+        return OodaDecision(
             orientation=orientation,
             action_type=action_type,
             action_params=action_params,
@@ -280,9 +283,15 @@ class DecidePhase:
         >>> print(decision.action_type)
     """
 
-    def __init__(self):
-        """初始化 Decide 阶段"""
+    def __init__(self, registry=None):
+        """
+        初始化 Decide 阶段
+
+        Args:
+            registry: OntologyRegistry instance for action metadata lookups
+        """
         self._rules: List[DecisionRule] = []
+        self._registry = registry
 
         # 默认规则
         self._setup_defaults()
@@ -290,7 +299,7 @@ class DecidePhase:
     def _setup_defaults(self) -> None:
         """设置默认规则"""
         # 添加默认规则作为后备
-        self.add_rule(DefaultDecisionRule())
+        self.add_rule(DefaultDecisionRule(registry=self._registry))
 
     def add_rule(self, rule: DecisionRule) -> None:
         """
@@ -318,7 +327,7 @@ class DecidePhase:
         self._rules.clear()
         logger.debug("Cleared all decision rules")
 
-    def decide(self, orientation: Orientation) -> Decision:
+    def decide(self, orientation: Orientation) -> OodaDecision:
         """
         执行决策阶段
 
@@ -365,7 +374,7 @@ class DecidePhase:
             errors.append("No decision rule matched")
             is_valid = False
 
-            decision = Decision(
+            decision = OodaDecision(
                 orientation=orientation,
                 action_type="unknown",
                 is_valid=False,
@@ -387,13 +396,14 @@ class DecidePhase:
         return decision
 
 
-# 全局 Decide 阶段实例（单例）
+# 全局 Decide 阶段实例（线程安全）
 _decide_phase_instance: Optional[DecidePhase] = None
+_decide_phase_lock = threading.Lock()
 
 
 def get_decide_phase() -> DecidePhase:
     """
-    获取全局 Decide 阶段实例
+    获取全局 Decide 阶段实例（线程安全）
 
     Returns:
         DecidePhase 单例
@@ -401,32 +411,35 @@ def get_decide_phase() -> DecidePhase:
     global _decide_phase_instance
 
     if _decide_phase_instance is None:
-        _decide_phase_instance = DecidePhase()
+        with _decide_phase_lock:
+            if _decide_phase_instance is None:
+                _decide_phase_instance = DecidePhase()
 
     return _decide_phase_instance
 
 
-def set_decide_phase(decide_phase: DecidePhase) -> None:
+def set_decide_phase(decide_phase: Optional[DecidePhase]) -> None:
     """
     设置全局 Decide 阶段实例（用于测试）
 
     Args:
-        decide_phase: DecidePhase 实例
+        decide_phase: DecidePhase 实例，或 None 以重置
     """
     global _decide_phase_instance
     _decide_phase_instance = decide_phase
 
 
+# Backward-compat alias
+Decision = OodaDecision
+
 # 导出
 __all__ = [
-    "Decision",
+    "OodaDecision",
+    "Decision",  # backward-compat alias
     "DecisionRule",
     "IntentBasedRule",
     "DefaultDecisionRule",
     "DecidePhase",
     "get_decide_phase",
     "set_decide_phase",
-    "HIGH_RISK_ACTIONS",
-    "FINANCIAL_ACTIONS",
-    "ACTION_REQUIRED_PARAMS",
 ]

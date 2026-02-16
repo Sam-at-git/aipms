@@ -46,6 +46,32 @@ class TestSecurityContext:
         )
         assert not user_ctx.is_admin()
 
+    def test_set_admin_roles(self):
+        """测试可配置的管理员角色"""
+        original = SecurityContext._admin_roles.copy()
+        try:
+            SecurityContext.set_admin_roles({"sysadmin", "manager"})
+
+            sysadmin_ctx = SecurityContext(
+                user_id=1, username="sysadmin", role="sysadmin",
+                security_level=SecurityLevel.RESTRICTED,
+            )
+            assert sysadmin_ctx.is_admin()
+
+            manager_ctx = SecurityContext(
+                user_id=2, username="mgr", role="manager",
+                security_level=SecurityLevel.RESTRICTED,
+            )
+            assert manager_ctx.is_admin()
+
+            receptionist_ctx = SecurityContext(
+                user_id=3, username="front", role="receptionist",
+                security_level=SecurityLevel.INTERNAL,
+            )
+            assert not receptionist_ctx.is_admin()
+        finally:
+            SecurityContext._admin_roles = original
+
     def test_has_role(self):
         """测试角色检查"""
         ctx = SecurityContext(

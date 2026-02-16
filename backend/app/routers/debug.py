@@ -155,9 +155,14 @@ def get_session_detail(
     # Format attempts
     formatted_attempts = [attempt.to_dict() for attempt in attempts]
 
+    # Get LLM interactions (SPEC-30)
+    llm_interactions = debug_logger.get_llm_interactions(session_id)
+    formatted_interactions = [interaction.to_dict() for interaction in llm_interactions]
+
     return {
         "session": formatted_session,
         "attempts": formatted_attempts,
+        "llm_interactions": formatted_interactions,
     }
 
 

@@ -239,14 +239,6 @@ class StructuredQuery:
             not self.aggregate
         )
 
-    def has_join(self) -> bool:
-        """是否有关联查询"""
-        return len(self.joins) > 0
-
-    def has_complex_filter(self) -> bool:
-        """是否有复杂过滤条件"""
-        complex_ops = {FilterOperator.IN, FilterOperator.NOT_IN, FilterOperator.BETWEEN, FilterOperator.LIKE}
-        return any(f.operator in complex_ops for f in self.filters)
 
 
 # 导出

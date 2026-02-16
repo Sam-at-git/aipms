@@ -109,49 +109,35 @@ class ConfirmByRiskStrategy(HITLStrategy):
     基于风险等级的确认策略
 
     根据操作类型和参数评估风险等级，决定是否需要确认。
+    Risk levels are resolved in order: override mapping → custom rules → registry → default.
     """
 
-    # 默认风险配置
-    DEFAULT_RISK_MAPPING: Dict[str, ConfirmationLevel] = {
-        # 查询类 - 不需要确认
-        "view": ConfirmationLevel.NONE,
-        "query_rooms": ConfirmationLevel.NONE,
-        "query_reservations": ConfirmationLevel.NONE,
-        "query_guests": ConfirmationLevel.NONE,
-        "query_tasks": ConfirmationLevel.NONE,
-        "query_reports": ConfirmationLevel.NONE,
-
-        # 低风险操作 - 不需要确认
-        "start_task": ConfirmationLevel.NONE,
-
-        # 中风险操作 - 需要确认
-        "create_task": ConfirmationLevel.LOW,
-        "assign_task": ConfirmationLevel.LOW,
-        "complete_task": ConfirmationLevel.LOW,
-        "checkin": ConfirmationLevel.MEDIUM,
-        "walkin_checkin": ConfirmationLevel.MEDIUM,
-        "create_reservation": ConfirmationLevel.MEDIUM,
-
-        # 高风险操作 - 需要确认
-        "extend_stay": ConfirmationLevel.HIGH,
-        "change_room": ConfirmationLevel.HIGH,
-        "checkout": ConfirmationLevel.MEDIUM,
-        "cancel_reservation": ConfirmationLevel.HIGH,
-
-        # 关键操作 - 需要确认
-        "add_payment": ConfirmationLevel.HIGH,
-        "adjust_bill": ConfirmationLevel.CRITICAL,
-        "update_room_status": ConfirmationLevel.MEDIUM,
+    # Risk level string → ConfirmationLevel mapping
+    _RISK_LEVEL_MAP: Dict[str, ConfirmationLevel] = {
+        "none": ConfirmationLevel.NONE,
+        "low": ConfirmationLevel.LOW,
+        "medium": ConfirmationLevel.MEDIUM,
+        "high": ConfirmationLevel.HIGH,
+        "critical": ConfirmationLevel.CRITICAL,
     }
 
-    def __init__(self, risk_mapping: Optional[Dict[str, ConfirmationLevel]] = None):
+    def __init__(
+        self,
+        risk_mapping: Optional[Dict[str, ConfirmationLevel]] = None,
+        registry=None,
+        custom_rules: Optional[List] = None,
+    ):
         """
         初始化基于风险的确认策略
 
         Args:
-            risk_mapping: 自定义风险映射，默认使用 DEFAULT_RISK_MAPPING
+            risk_mapping: Override mapping of action_type → ConfirmationLevel
+            registry: OntologyRegistry instance for action metadata lookups
+            custom_rules: List of callables (action_type, params) → Optional[ConfirmationLevel]
         """
-        self.risk_mapping = risk_mapping or self.DEFAULT_RISK_MAPPING.copy()
+        self.risk_mapping = risk_mapping or {}
+        self._registry = registry
+        self._custom_rules = custom_rules or []
 
     def requires_confirmation(
         self,
@@ -181,72 +167,45 @@ class ConfirmByRiskStrategy(HITLStrategy):
         action_type: str,
         params: Dict[str, Any]
     ) -> ConfirmationLevel:
-        """获取操作的风险等级"""
-        # 先检查映射表
+        """获取操作的风险等级 (override → custom_rules → registry → default)"""
+        # 1. Check override mapping
         if action_type in self.risk_mapping:
-            base_risk = self.risk_mapping[action_type]
-        else:
-            # 未定义的操作默认为 MEDIUM
-            base_risk = ConfirmationLevel.MEDIUM
+            return self.risk_mapping[action_type]
 
-        # 特殊情况调整
-        # 调整账单金额过大时提升风险
-        if action_type == "adjust_bill":
-            amount = params.get("adjustment_amount", 0)
-            if abs(float(amount)) > 1000:
-                return ConfirmationLevel.CRITICAL
+        # 2. Check custom rules (injected by domain adapter)
+        for rule in self._custom_rules:
+            result = rule(action_type, params)
+            if result is not None:
+                return result
 
-        # 取消预订根据原因判断
-        if action_type == "cancel_reservation":
-            reason = params.get("cancel_reason", "")
-            if "系统" in reason or "强制" in reason:
-                return ConfirmationLevel.CRITICAL
+        # 3. Check registry metadata
+        if self._registry:
+            action = self._registry.get_action_by_name(action_type)
+            if action and action.risk_level:
+                return self._RISK_LEVEL_MAP.get(
+                    action.risk_level, ConfirmationLevel.MEDIUM
+                )
 
-        return base_risk
+        # 4. Default
+        return ConfirmationLevel.MEDIUM
 
 
 class ConfirmByPolicyStrategy(HITLStrategy):
     """
     基于配置策略的确认策略
 
-    从配置文件读取确认策略，支持动态配置。
+    从配置或域适配器注入确认策略，支持动态配置。
+    Policies are fully injected via constructor; no domain-specific defaults.
     """
-
-    # 默认策略配置
-    DEFAULT_POLICIES: Dict[str, Dict[str, Any]] = {
-        "high_risk_actions": {
-            "actions": ["adjust_bill", "delete_guest"],
-            "confirm": True,
-            "require_reason": True
-        },
-        "medium_risk_actions": {
-            "actions": ["change_room", "extend_stay", "cancel_reservation"],
-            "confirm": True,
-            "require_reason": False
-        },
-        "low_risk_actions": {
-            "actions": ["create_task", "assign_task", "complete_task"],
-            "confirm": False,
-            "require_reason": False
-        },
-        "role_based": {
-            "manager": {
-                "skip_confirmation": ["add_payment", "create_reservation", "checkout"]
-            },
-            "receptionist": {
-                "skip_confirmation": ["query_rooms", "query_reservations"]
-            }
-        }
-    }
 
     def __init__(self, policies: Optional[Dict[str, Dict[str, Any]]] = None):
         """
         初始化基于策略的确认
 
         Args:
-            policies: 策略配置，默认使用 DEFAULT_POLICIES
+            policies: 策略配置 (action tiers + role-based exemptions)
         """
-        self.policies = policies or self.DEFAULT_POLICIES.copy()
+        self.policies = policies or {}
 
         # 构建动作到策略的映射
         self._action_policy_map: Dict[str, str] = {}
@@ -343,25 +302,29 @@ class ConfirmByThresholdStrategy(HITLStrategy):
     基于阈值的确认策略
 
     根据操作参数的值（如金额、数量）判断是否需要确认。
+    Uses is_financial from registry instead of hardcoded action names.
     """
 
     def __init__(
         self,
-        payment_threshold: float = 1000.0,
+        amount_threshold: float = 1000.0,
         adjustment_threshold: float = 500.0,
-        quantity_threshold: int = 10
+        quantity_threshold: int = 10,
+        registry=None,
     ):
         """
         初始化基于阈值的确认策略
 
         Args:
-            payment_threshold: 支付金额阈值
-            adjustment_threshold: 调整金额阈值
-            quantity_threshold: 数量阈值
+            amount_threshold: 金额阈值 (for financial actions with 'amount' param)
+            adjustment_threshold: 调整金额阈值 (for financial actions with 'adjustment_amount' param)
+            quantity_threshold: 批量操作数量阈值
+            registry: OntologyRegistry instance for is_financial lookups
         """
-        self.payment_threshold = payment_threshold
+        self.amount_threshold = amount_threshold
         self.adjustment_threshold = adjustment_threshold
         self.quantity_threshold = quantity_threshold
+        self._registry = registry
 
     def requires_confirmation(
         self,
@@ -371,22 +334,30 @@ class ConfirmByThresholdStrategy(HITLStrategy):
         context: Optional[Dict[str, Any]] = None
     ) -> bool:
         """根据阈值判断是否需要确认"""
-        # 支付金额阈值
-        if action_type == "add_payment":
-            amount = float(params.get("amount", 0))
-            return amount >= self.payment_threshold
+        # Check if financial action via registry
+        is_financial = False
+        if self._registry:
+            action = self._registry.get_action_by_name(action_type)
+            if action:
+                is_financial = action.is_financial
 
-        # 账单调整阈值
-        if action_type == "adjust_bill":
-            amount = abs(float(params.get("adjustment_amount", 0)))
-            return amount >= self.adjustment_threshold
+        if is_financial:
+            # Check amount-related params against thresholds
+            if "amount" in params:
+                amount = float(params.get("amount", 0))
+                if amount >= self.amount_threshold:
+                    return True
+            if "adjustment_amount" in params:
+                amount = abs(float(params.get("adjustment_amount", 0)))
+                if amount >= self.adjustment_threshold:
+                    return True
 
-        # 批量操作阈值
-        if action_type in ["create_task", "assign_task"]:
-            # 检查是否批量操作
-            if "room_ids" in params or "task_ids" in params:
-                count = len(params.get("room_ids", params.get("task_ids", [])))
-                return count >= self.quantity_threshold
+        # Batch operation quantity threshold (generic)
+        for batch_key in ("room_ids", "task_ids"):
+            if batch_key in params:
+                count = len(params[batch_key])
+                if count >= self.quantity_threshold:
+                    return True
 
         return False
 
@@ -455,15 +426,20 @@ class CompositeHITLStrategy(HITLStrategy):
 
 # ==================== 便捷函数 ====================
 
-def create_default_hitl_strategy() -> HITLStrategy:
+def create_default_hitl_strategy(registry=None, custom_rules=None, policies=None) -> HITLStrategy:
     """
     创建默认的 HITL 策略
 
     组合基于风险和基于策略的确认方式。
+
+    Args:
+        registry: OntologyRegistry instance for action metadata lookups
+        custom_rules: List of custom rule callables for ConfirmByRiskStrategy
+        policies: Policy configuration for ConfirmByPolicyStrategy
     """
     return CompositeHITLStrategy([
-        ConfirmByRiskStrategy(),
-        ConfirmByPolicyStrategy(),
+        ConfirmByRiskStrategy(registry=registry, custom_rules=custom_rules),
+        ConfirmByPolicyStrategy(policies=policies),
     ])
 
 

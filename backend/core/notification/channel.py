@@ -1,14 +1,16 @@
 """
-通知渠道接口 — 域无关的通知抽象
+Notification channel interface - domain-agnostic notification abstraction.
 
-app 层通过实现 INotificationChannel 来对接具体通知渠道（站内信、邮件、Webhook 等）。
+The app layer implements INotificationChannel to connect to specific
+channels (in-app messages, email, webhooks, etc.).
 """
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional
+import threading
 
 
 class INotificationChannel(ABC):
-    """通知渠道接口"""
+    """Notification channel interface."""
 
     @abstractmethod
     def send(
@@ -18,50 +20,53 @@ class INotificationChannel(ABC):
         content: str,
         extra: Optional[Dict] = None,
     ) -> bool:
-        """发送通知
+        """Send a notification.
 
         Args:
-            recipient: 接收方标识（用户ID、邮箱、手机号等，由渠道实现决定）
-            subject: 通知标题
-            content: 通知内容
-            extra: 扩展参数（如模板变量、优先级等）
+            recipient: Recipient identifier (user ID, email, phone, etc.)
+            subject: Notification subject
+            content: Notification content
+            extra: Extra parameters (e.g., template variables, priority)
 
         Returns:
-            是否发送成功
+            True if the notification was sent successfully.
         """
 
     @abstractmethod
     def get_channel_type(self) -> str:
-        """返回渠道类型标识，如 'internal', 'email', 'sms', 'webhook'"""
+        """Return the channel type identifier, e.g. 'internal', 'email', 'sms', 'webhook'."""
 
 
 class NotificationChannelRegistry:
-    """通知渠道注册表 — 单例模式
+    """Notification channel registry - singleton.
 
-    app 层在 lifespan 中注册实现：
+    The app layer registers implementations at startup:
         registry = NotificationChannelRegistry()
         registry.register(InternalChannel(db))
         registry.register(EmailChannel(smtp_config))
     """
 
     _instance: Optional["NotificationChannelRegistry"] = None
+    _lock = threading.Lock()
 
     def __new__(cls) -> "NotificationChannelRegistry":
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._channels: Dict[str, INotificationChannel] = {}
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._channels: Dict[str, INotificationChannel] = {}
         return cls._instance
 
     def register(self, channel: INotificationChannel) -> None:
-        """注册通知渠道"""
+        """Register a notification channel."""
         self._channels[channel.get_channel_type()] = channel
 
     def get_channel(self, channel_type: str) -> Optional[INotificationChannel]:
-        """获取指定类型的渠道"""
+        """Get a channel by type."""
         return self._channels.get(channel_type)
 
     def get_all_channels(self) -> List[INotificationChannel]:
-        """获取所有已注册渠道"""
+        """Get all registered channels."""
         return list(self._channels.values())
 
     def send(
@@ -72,12 +77,18 @@ class NotificationChannelRegistry:
         content: str,
         extra: Optional[Dict] = None,
     ) -> bool:
-        """通过指定渠道发送通知"""
+        """Send a notification via the specified channel."""
         channel = self.get_channel(channel_type)
         if channel is None:
             return False
         return channel.send(recipient, subject, content, extra)
 
     def clear(self) -> None:
-        """清除所有渠道（用于测试）"""
+        """Clear all channels (for testing)."""
         self._channels.clear()
+
+
+__all__ = [
+    "INotificationChannel",
+    "NotificationChannelRegistry",
+]

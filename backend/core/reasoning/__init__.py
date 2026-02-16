@@ -10,7 +10,7 @@ from core.reasoning.constraint_engine import (
 )
 
 from core.reasoning.relationship_graph import (
-    RelationType,
+    RelationType,  # backward-compat alias for LinkType
     RelationshipEdge,
     EntityNode,
     RelationshipGraph,

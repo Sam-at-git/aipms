@@ -29,34 +29,6 @@ class SchemaRetriever:
         >>> print(result["entities"])  # ["Guest", "StayRecord"]
     """
 
-    # Manual relationship map for entities (copied from SchemaIndexService to avoid circular import)
-    _RELATIONSHIP_MAP = {
-        "Guest": {
-            "stay_records": ("StayRecord", "one_to_many"),
-        },
-        "StayRecord": {
-            "guest": ("Guest", "many_to_one"),
-            "room": ("Room", "many_to_one"),
-            "bill": ("Bill", "one_to_one"),
-        },
-        "Room": {
-            "stay_records": ("StayRecord", "one_to_many"),
-            "tasks": ("Task", "one_to_many"),
-            "room_type": ("RoomType", "many_to_one"),
-        },
-        "Reservation": {
-            "guest": ("Guest", "many_to_one"),
-            "room_type": ("RoomType", "many_to_one"),
-        },
-        "Task": {
-            "room": ("Room", "many_to_one"),
-            "assignee": ("Employee", "many_to_one"),
-        },
-        "Bill": {
-            "stay_record": ("StayRecord", "one_to_one"),
-        },
-    }
-
     def __init__(
         self,
         vector_store: Optional[VectorStore] = None,
@@ -76,7 +48,22 @@ class SchemaRetriever:
             embedding_service=get_embedding_service()
         )
         self.registry = registry or OntologyRegistry()
-        self.relationship_map = self._RELATIONSHIP_MAP
+        self._relationship_map_cache: Optional[Dict[str, Dict[str, tuple]]] = None
+
+    @property
+    def relationship_map(self) -> Dict[str, Dict[str, tuple]]:
+        """Build relationship map dynamically from OntologyRegistry."""
+        if self._relationship_map_cache is None:
+            result: Dict[str, Dict[str, tuple]] = {}
+            for entity in self.registry.get_entities():
+                rels = self.registry.get_relationships(entity.name)
+                if rels:
+                    result[entity.name] = {
+                        r.name: (r.target_entity, r.cardinality)
+                        for r in rels
+                    }
+            self._relationship_map_cache = result
+        return self._relationship_map_cache
 
     def retrieve_for_query(
         self,

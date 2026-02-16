@@ -7,9 +7,11 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { debugApi } from '../services/api'
-import type { SessionDetailResponse } from '../types'
+import type { SessionDetailResponse, LLMInteraction } from '../types'
 import { Button } from '../components/ui/button'
 import { ArrowLeft, Play, RefreshCw, Copy, Check, ChevronDown, ChevronRight } from 'lucide-react'
+import DualTrackTimeline from '../components/DualTrackTimeline'
+import LLMInteractionDetail from '../components/LLMInteractionDetail'
 
 // Lightweight JSON syntax highlighter (no dependencies)
 function JsonHighlight({ data }: { data: unknown }) {
@@ -368,6 +370,7 @@ export default function SessionDetailPage() {
   const [data, setData] = useState<SessionDetailResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState<string | null>(null)
+  const [selectedInteraction, setSelectedInteraction] = useState<LLMInteraction | null>(null)
 
   useEffect(() => {
     if (sessionId) {
@@ -417,11 +420,15 @@ export default function SessionDetailPage() {
     )
   }
 
-  const { session, attempts } = data
+  const { session, attempts, llm_interactions = [] } = data
 
   // Extract structured prompt parts if available
   const promptParts = session.llm_prompt_parts as Record<string, any> | null
   const responseParsed = session.llm_response_parsed as Record<string, any> | null
+
+  // Determine whether to show dual-track timeline
+  const hasOodaPhases = session.metadata && (session.metadata as any).ooda_phases
+  const hasLLMInteractions = llm_interactions.length > 0
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -462,7 +469,7 @@ export default function SessionDetailPage() {
       )}
 
       {/* Session Overview */}
-      <div className="grid grid-cols-5 gap-4 mb-6">
+      <div className={`grid ${hasLLMInteractions ? 'grid-cols-6' : 'grid-cols-5'} gap-4 mb-6`}>
         <div className="bg-dark-900 border border-dark-800 rounded-lg p-4">
           <div className="text-gray-400 text-xs uppercase">Status</div>
           <div className={`text-lg font-bold ${
@@ -488,21 +495,46 @@ export default function SessionDetailPage() {
         <div className="bg-dark-900 border border-dark-800 rounded-lg p-4">
           <div className="text-gray-400 text-xs uppercase">LLM Tokens</div>
           <div className="text-lg font-bold text-white">
-            {session.llm_tokens_used || '-'}
+            {hasLLMInteractions
+              ? llm_interactions.reduce((sum, i) => sum + (i.tokens_total || 0), 0) || session.llm_tokens_used || '-'
+              : session.llm_tokens_used || '-'}
           </div>
         </div>
+        {hasLLMInteractions && (
+          <div className="bg-dark-900 border border-dark-800 rounded-lg p-4">
+            <div className="text-gray-400 text-xs uppercase">LLM Calls</div>
+            <div className="text-lg font-bold text-white">{llm_interactions.length}</div>
+          </div>
+        )}
         <div className="bg-dark-900 border border-dark-800 rounded-lg p-4">
           <div className="text-gray-400 text-xs uppercase">Attempts</div>
           <div className="text-lg font-bold text-white">{attempts.length}</div>
         </div>
       </div>
 
-      {/* OODA Pipeline Visualization (SPEC-26) */}
-      {session.metadata && (session.metadata as any).ooda_phases && (
+      {/* OODA + LLM Pipeline Visualization */}
+      {hasLLMInteractions && hasOodaPhases ? (
+        <div className="mb-6">
+          <DualTrackTimeline
+            oodaPhases={(session.metadata as any).ooda_phases as Record<string, OodaPhase>}
+            llmInteractions={llm_interactions}
+            onSelectInteraction={(i) => setSelectedInteraction(
+              selectedInteraction?.interaction_id === i.interaction_id ? null : i
+            )}
+            selectedInteractionId={selectedInteraction?.interaction_id || null}
+          />
+          {selectedInteraction && (
+            <LLMInteractionDetail
+              interaction={selectedInteraction}
+              onClose={() => setSelectedInteraction(null)}
+            />
+          )}
+        </div>
+      ) : hasOodaPhases ? (
         <div className="mb-6">
           <OodaPipeline phases={(session.metadata as any).ooda_phases as Record<string, OodaPhase>} />
         </div>
-      )}
+      ) : null}
 
       <div className="grid grid-cols-2 gap-6">
         {/* Input Section */}
@@ -537,7 +569,8 @@ export default function SessionDetailPage() {
         </div>
       </div>
 
-      {/* LLM Interaction — Full Width Enhanced Viewer */}
+      {/* Legacy LLM Interaction — only shown for old sessions without per-call tracking */}
+      {!hasLLMInteractions && (
       <div className="mt-6 bg-dark-900 border border-dark-800 rounded-lg p-4">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-medium text-white">LLM Interaction</h3>
@@ -686,6 +719,7 @@ export default function SessionDetailPage() {
           )}
         </div>
       </div>
+      )}
 
       {/* Result Section */}
       <div className="mt-6 bg-dark-900 border border-dark-800 rounded-lg p-4">

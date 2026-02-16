@@ -4,10 +4,11 @@ core/security/masking.py
 敏感数据脱敏 - 根据安全级别和用户权限自动脱敏敏感数据
 支持多种数据类型的脱敏规则
 """
-from typing import Dict, Any, Optional, Callable, Pattern
+from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 import re
+import threading
 import logging
 
 from core.security.context import SecurityContext, security_context_manager
@@ -67,13 +68,14 @@ class DataMasker:
     """
 
     _instance: Optional["DataMasker"] = None
-    _lock = object()
+    _lock = threading.Lock()
 
     def __new__(cls) -> "DataMasker":
-        """单例模式"""
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):

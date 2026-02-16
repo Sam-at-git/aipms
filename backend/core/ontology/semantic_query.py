@@ -12,24 +12,8 @@ core/ontology/semantic_query.py
 """
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Literal
-from enum import Enum
 
-
-class FilterOperator(str, Enum):
-    """过滤操作符 - 与 StructuredQuery 兼容"""
-    EQ = "eq"          # 等于
-    NE = "ne"          # 不等于
-    GT = "gt"          # 大于
-    GTE = "gte"        # 大于等于
-    LT = "lt"          # 小于
-    LTE = "lte"        # 小于等于
-    IN = "in"          # 在列表中
-    NOT_IN = "not_in"  # 不在列表中
-    LIKE = "like"      # 模糊匹配
-    NOT_LIKE = "not_like"
-    BETWEEN = "between"
-    IS_NULL = "is_null"
-    IS_NOT_NULL = "is_not_null"
+from core.ontology.query import FilterOperator
 
 
 @dataclass

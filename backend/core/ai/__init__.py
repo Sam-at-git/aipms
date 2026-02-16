@@ -3,13 +3,14 @@ core/ai/ - AI 抽象层
 
 提供统一的 LLM 调用接口、提示词构建、人类在环确认策略和向量检索。
 """
+import threading
 from typing import Optional
 
 from core.ai.llm_client import LLMClient, OpenAICompatibleClient
 from core.ai.prompt_builder import PromptBuilder
 from core.ai.hitl import HITLStrategy, ConfirmAlwaysStrategy, ConfirmByRiskStrategy, ConfirmByPolicyStrategy
 from core.ai.query_keywords import QUERY_KEYWORDS, ACTION_KEYWORDS, HELP_KEYWORDS
-from core.ai.embedding import EmbeddingService, EmbeddingResult, create_embedding_service
+from core.ai.embedding import EmbeddingService, create_embedding_service
 from core.ai.vector_store import VectorStore, SchemaItem
 from core.ai.schema_retriever import SchemaRetriever
 from core.ai.actions import ActionDefinition, ActionRegistry, ActionCategory
@@ -43,6 +44,7 @@ from core.ai.response_generator import (
 
 # Global singleton instance (lazy initialized)
 _embedding_service: Optional[EmbeddingService] = None
+_embedding_lock = threading.Lock()
 
 # Module-level configuration (injected by app layer at startup)
 _embedding_config: Optional[dict] = None
@@ -66,14 +68,15 @@ def configure_embedding_service(
         enabled: Whether embedding is enabled
     """
     global _embedding_config, _embedding_service
-    _embedding_config = {
-        "api_key": api_key,
-        "base_url": base_url,
-        "model": model,
-        "cache_size": cache_size,
-        "enabled": enabled,
-    }
-    _embedding_service = None  # Reset singleton so next call uses new config
+    with _embedding_lock:
+        _embedding_config = {
+            "api_key": api_key,
+            "base_url": base_url,
+            "model": model,
+            "cache_size": cache_size,
+            "enabled": enabled,
+        }
+        _embedding_service = None  # Reset singleton so next call uses new config
 
 
 def get_embedding_service() -> EmbeddingService:
@@ -87,7 +90,11 @@ def get_embedding_service() -> EmbeddingService:
         The global EmbeddingService instance
     """
     global _embedding_service
-    if _embedding_service is None:
+    if _embedding_service is not None:
+        return _embedding_service
+    with _embedding_lock:
+        if _embedding_service is not None:  # double-check after acquiring lock
+            return _embedding_service
         if _embedding_config is not None:
             _embedding_service = EmbeddingService(**_embedding_config)
         else:
@@ -147,7 +154,6 @@ __all__ = [
     "ACTION_KEYWORDS",
     "HELP_KEYWORDS",
     "EmbeddingService",
-    "EmbeddingResult",
     "create_embedding_service",
     "configure_embedding_service",
     "get_embedding_service",

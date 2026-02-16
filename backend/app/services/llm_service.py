@@ -6,7 +6,7 @@ import json
 import os
 import re
 from typing import Optional, Dict, Any, List
-from datetime import date
+from datetime import date, datetime
 from openai import OpenAI
 from app.config import settings
 
@@ -496,6 +496,101 @@ ontology_query 用于动态字段级查询，params 结构如下：
         # Schema 缓存
         self._query_schema_cache = None
 
+    def _instrumented_completion(self, messages, **kwargs):
+        """
+        Wrapper around self.client.chat.completions.create() that records
+        each LLM call to the debug logger via LLMCallContext.
+
+        Transparent: returns the original response object unchanged.
+        """
+        from core.ai.llm_call_context import LLMCallContext
+
+        ctx = LLMCallContext.get_current()
+        started_at = datetime.now()
+
+        try:
+            response = self.client.chat.completions.create(messages=messages, **kwargs)
+            ended_at = datetime.now()
+            latency_ms = int((ended_at - started_at).total_seconds() * 1000)
+
+            # Record interaction if we have an active debug context
+            if ctx and ctx.get('debug_logger') and ctx.get('session_id') and ctx.get('ooda_phase'):
+                try:
+                    seq = LLMCallContext.next_sequence()
+                    debug_logger = ctx['debug_logger']
+
+                    # Extract token usage
+                    tokens_input = None
+                    tokens_output = None
+                    tokens_total = None
+                    if hasattr(response, 'usage') and response.usage:
+                        tokens_input = getattr(response.usage, 'prompt_tokens', None)
+                        tokens_output = getattr(response.usage, 'completion_tokens', None)
+                        tokens_total = getattr(response.usage, 'total_tokens', None)
+
+                    # Extract response text
+                    resp_text = None
+                    if response.choices:
+                        resp_text = response.choices[0].message.content
+
+                    # Serialize prompt (messages array)
+                    prompt_json = json.dumps(messages, ensure_ascii=False, default=str)
+
+                    debug_logger.log_llm_interaction(
+                        session_id=ctx['session_id'],
+                        sequence_number=seq,
+                        ooda_phase=ctx['ooda_phase'],
+                        call_type=ctx.get('call_type', 'unknown'),
+                        started_at=started_at.isoformat(),
+                        ended_at=ended_at.isoformat(),
+                        latency_ms=latency_ms,
+                        model=kwargs.get('model', None),
+                        prompt=prompt_json,
+                        response=resp_text,
+                        tokens_input=tokens_input,
+                        tokens_output=tokens_output,
+                        tokens_total=tokens_total,
+                        temperature=kwargs.get('temperature', None),
+                        success=True,
+                    )
+                except Exception as log_err:
+                    import logging
+                    logging.getLogger(__name__).debug(f"Failed to log LLM interaction: {log_err}")
+
+            return response
+
+        except Exception as e:
+            ended_at = datetime.now()
+            latency_ms = int((ended_at - started_at).total_seconds() * 1000)
+
+            # Record failed interaction
+            if ctx and ctx.get('debug_logger') and ctx.get('session_id') and ctx.get('ooda_phase'):
+                try:
+                    seq = LLMCallContext.next_sequence()
+                    debug_logger = ctx['debug_logger']
+                    prompt_json = json.dumps(messages, ensure_ascii=False, default=str)
+                    debug_logger.log_llm_interaction(
+                        session_id=ctx['session_id'],
+                        sequence_number=seq,
+                        ooda_phase=ctx['ooda_phase'],
+                        call_type=ctx.get('call_type', 'unknown'),
+                        started_at=started_at.isoformat(),
+                        ended_at=ended_at.isoformat(),
+                        latency_ms=latency_ms,
+                        model=kwargs.get('model', None),
+                        prompt=prompt_json,
+                        tokens_input=None,
+                        tokens_output=None,
+                        tokens_total=None,
+                        temperature=kwargs.get('temperature', None),
+                        success=False,
+                        error=str(e),
+                    )
+                except Exception:
+                    pass
+
+            raise
+
     def on_ontology_changed(self):
         """本体变化时调用 - 清除 PromptBuilder 缓存"""
         if self._prompt_builder:
@@ -681,10 +776,12 @@ ontology_query 用于动态字段级查询，params 结构如下：
             })
 
             # 尝试使用 json_object 模式
+            from core.ai.llm_call_context import LLMCallContext
+            LLMCallContext.before_call("decide", "chat")
             try:
-                response = self.client.chat.completions.create(
-                    model=settings.LLM_MODEL,
+                response = self._instrumented_completion(
                     messages=messages,
+                    model=settings.LLM_MODEL,
                     temperature=settings.LLM_TEMPERATURE,
                     max_tokens=settings.LLM_MAX_TOKENS,
                     response_format={"type": "json_object"}
@@ -705,9 +802,10 @@ ontology_query 用于动态字段级查询，params 结构如下：
                     "content": f"{context_info}{user_date_hint}\n\n用户输入: {message}"
                 })
 
-                response = self.client.chat.completions.create(
-                    model=settings.LLM_MODEL,
+                LLMCallContext.before_call("decide", "chat")
+                response = self._instrumented_completion(
                     messages=fallback_messages,
+                    model=settings.LLM_MODEL,
                     temperature=settings.LLM_TEMPERATURE,
                     max_tokens=settings.LLM_MAX_TOKENS
                 )
@@ -939,11 +1037,13 @@ ontology_query 用于动态字段级查询，params 结构如下：
 只返回一个单词，不要解释。"""
 
         try:
-            response = self.client.chat.completions.create(
-                model=settings.LLM_MODEL,
+            from core.ai.llm_call_context import LLMCallContext
+            LLMCallContext.before_call("orient", "topic_relevance")
+            response = self._instrumented_completion(
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
+                model=settings.LLM_MODEL,
                 temperature=0,
                 max_tokens=20
             )
@@ -1111,12 +1211,14 @@ ontology_query 用于动态字段级查询，params 结构如下：
 """
 
         try:
-            response = self.client.chat.completions.create(
-                model=settings.LLM_MODEL,
+            from core.ai.llm_call_context import LLMCallContext
+            LLMCallContext.before_call("decide", "parse_followup")
+            response = self._instrumented_completion(
                 messages=[
                     {"role": "system", "content": "你是酒店管理系统的参数提取助手，必须返回纯 JSON 格式。"},
                     {"role": "user", "content": prompt}
                 ],
+                model=settings.LLM_MODEL,
                 temperature=0.3,
                 max_tokens=1500,
                 response_format={"type": "json_object"}
@@ -1344,12 +1446,14 @@ ontology_query 用于动态字段级查询，params 结构如下：
 如果参数值不在消息中，不要编造。
 """
 
-            response = self.client.chat.completions.create(
-                model=settings.LLM_MODEL,
+            from core.ai.llm_call_context import LLMCallContext
+            LLMCallContext.before_call("decide", "extract_params")
+            response = self._instrumented_completion(
                 messages=[
                     {"role": "system", "content": "你是参数提取助手，必须返回纯JSON格式。"},
                     {"role": "user", "content": prompt}
                 ],
+                model=settings.LLM_MODEL,
                 temperature=0,
                 max_tokens=500,
                 response_format={"type": "json_object"}

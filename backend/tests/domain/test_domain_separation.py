@@ -68,9 +68,8 @@ class TestArchitectureGuard:
 
         violations = []
         for root, dirs, files in os.walk(core_dir):
-            # Skip domain/ backward compat stubs and __pycache__
             rel = os.path.relpath(root, core_dir)
-            if rel.startswith('domain') or '__pycache__' in root:
+            if '__pycache__' in root:
                 continue
             for f in files:
                 if not f.endswith('.py'):

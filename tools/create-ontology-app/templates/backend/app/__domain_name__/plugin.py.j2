@@ -1,0 +1,67 @@
+"""
+{{ domain_display_name }} Domain Plugin.
+
+Encapsulates all {{ domain_name }}-specific bootstrap logic for the generic framework.
+"""
+import logging
+from typing import List, Optional, Callable
+
+logger = logging.getLogger(__name__)
+
+
+class {{ domain_class_name }}Plugin:
+    """{{ domain_display_name }} domain plugin — registers all domain-specific resources."""
+
+    @property
+    def name(self) -> str:
+        return "{{ domain_name }}"
+
+    def get_routers(self) -> List:
+        """Return all {{ domain_name }} domain routers."""
+        from app.{{ domain_name }}.routers import get_{{ domain_name }}_routers
+        return get_{{ domain_name }}_routers()
+
+    def register_actions(self, action_registry) -> None:
+        """Register {{ domain_name }} action handlers."""
+        from app.{{ domain_name }}.actions import register_{{ domain_name }}_actions
+        register_{{ domain_name }}_actions(action_registry)
+
+    def register_ontology(self, ont_registry) -> None:
+        """Register {{ domain_name }} domain ontology: entities, relationships, rules, adapter."""
+        # Register domain relationships
+        from core.domain.relationships import relationship_registry
+        from app.{{ domain_name }}.domain.relationships import register_{{ domain_name }}_relationships
+        register_{{ domain_name }}_relationships(relationship_registry)
+
+        # Register business rules
+        from app.{{ domain_name }}.domain.rules import register_all_rules
+        from core.engine.rule_engine import rule_engine
+        register_all_rules(rule_engine)
+
+        # Bootstrap domain adapter
+        from app.{{ domain_name }}.{{ domain_name }}_domain_adapter import {{ domain_class_name }}DomainAdapter
+        adapter = {{ domain_class_name }}DomainAdapter()
+        adapter.register_ontology(ont_registry)
+        logger.info(f"{{ domain_class_name }} ontology registered ({len(ont_registry.get_entities())} entities)")
+
+        # Initialize business rules
+        from app.{{ domain_name }}.business_rules import init_{{ domain_name }}_business_rules
+        init_{{ domain_name }}_business_rules()
+
+    def register_events(self) -> None:
+        """Register {{ domain_name }} event handlers."""
+        # TODO: Register domain event handlers
+        from app.services.alert_service import register_alert_handlers
+        register_alert_handlers()
+
+    def register_security(self) -> None:
+        """Register {{ domain_name }} ACL permissions and role permissions."""
+        from core.security.context import SecurityContext
+        SecurityContext.set_admin_roles({"sysadmin", "manager"})
+
+        from app.{{ domain_name }}.security import register_{{ domain_name }}_role_permissions
+        register_{{ domain_name }}_role_permissions()
+
+    def get_seed_function(self) -> Optional[Callable]:
+        """Return domain seed data function."""
+        return None

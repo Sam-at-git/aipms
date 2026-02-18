@@ -1,0 +1,60 @@
+# {{ domain_display_name }}
+
+{{ description }}
+
+Powered by [Ontology Runtime](https://github.com/anthropics/ontology-runtime).
+
+## Quick Start
+
+### Backend
+
+```bash
+cd backend
+uv sync
+uv run python init_data.py
+uv run uvicorn app.main:app --reload --port {{ backend_port }}
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### Combined
+
+```bash
+./start.sh
+```
+
+### Default Credentials
+
+- sysadmin / 123456 (system admin)
+- manager / 123456 (manager)
+
+## Architecture
+
+This project follows a three-layer architecture:
+
+1. **`core/`** — Domain-agnostic Ontology Runtime framework
+2. **`app/{{ domain_name }}/`** — {{ domain_display_name }} business domain (pluggable)
+3. **`app/system/`** — System management (RBAC, menus, config, etc.)
+
+## Development
+
+### Adding Entities
+
+See the domain plugin at `backend/app/{{ domain_name }}/` for structure.
+
+### Environment Variables
+
+Set via environment or `backend/.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | (none) | LLM API key |
+| `OPENAI_BASE_URL` | `https://api.deepseek.com` | LLM API endpoint |
+| `LLM_MODEL` | `deepseek-chat` | Model name |
+| `ENABLE_LLM` | `true` | LLM feature toggle |

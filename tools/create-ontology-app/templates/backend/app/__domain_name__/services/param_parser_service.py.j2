@@ -1,0 +1,19 @@
+"""{{ domain_display_name }} parameter parser service.
+
+Parses and resolves user-provided parameters to database entity IDs.
+TODO: Implement domain-specific parameter parsing.
+"""
+from sqlalchemy.orm import Session
+
+
+class ParamParserService:
+    """Domain parameter parser — resolves fuzzy input to entity IDs."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    # TODO: Add domain-specific parsing methods
+    # Example:
+    # def parse_patient(self, input_value) -> ParseResult:
+    #     """Resolve patient name/ID to database ID."""
+    #     ...

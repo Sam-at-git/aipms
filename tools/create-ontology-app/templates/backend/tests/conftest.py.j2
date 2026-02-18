@@ -1,0 +1,94 @@
+"""
+Pytest configuration and shared fixtures.
+"""
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from typing import Generator
+from fastapi.testclient import TestClient
+
+from app.database import Base, get_db
+from app.{{ domain_name }}.models import ontology
+from app.models import snapshots
+from app.{{ domain_name }}.models.ontology import Employee, EmployeeRole
+from app.security.auth import get_password_hash, create_access_token
+from app.main import app
+
+
+@pytest.fixture(scope="function")
+def db_engine():
+    """Create in-memory database engine."""
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool
+    )
+    Base.metadata.create_all(bind=engine)
+    yield engine
+    Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture(scope="function")
+def db_session(db_engine):
+    """Create database session."""
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=db_engine)
+    session = SessionLocal()
+    yield session
+    session.close()
+
+
+@pytest.fixture(scope="function")
+def client(db_session):
+    """Create test client."""
+    def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+# ============== Auth Fixtures ==============
+
+@pytest.fixture
+def manager_token(db_session):
+    """Create manager user and return token."""
+    manager = Employee(
+        username="manager",
+        password_hash=get_password_hash("123456"),
+        name="Manager",
+        role=EmployeeRole.MANAGER,
+        is_active=True
+    )
+    db_session.add(manager)
+    db_session.commit()
+    db_session.refresh(manager)
+    return create_access_token(manager.id, manager.role)
+
+
+@pytest.fixture
+def sysadmin_token(db_session):
+    """Create sysadmin user and return token."""
+    sysadmin = Employee(
+        username="sysadmin",
+        password_hash=get_password_hash("123456"),
+        name="System Admin",
+        role=EmployeeRole.SYSADMIN,
+        is_active=True
+    )
+    db_session.add(sysadmin)
+    db_session.commit()
+    db_session.refresh(sysadmin)
+    return create_access_token(sysadmin.id, sysadmin.role)
+
+
+@pytest.fixture
+def clean_registry():
+    """Reset OntologyRegistry singleton between tests."""
+    from core.ontology.registry import OntologyRegistry
+    registry = OntologyRegistry()
+    registry.reset()
+    yield registry
+    registry.reset()

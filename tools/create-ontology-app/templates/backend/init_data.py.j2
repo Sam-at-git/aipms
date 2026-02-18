@@ -1,0 +1,70 @@
+"""
+Initialize database with seed data.
+Creates: sysadmin and manager employees.
+"""
+import sys
+sys.path.insert(0, '.')
+
+from app.database import SessionLocal, init_db
+from app.{{ domain_name }}.models.ontology import Employee, EmployeeRole
+from app.security.auth import get_password_hash
+
+
+def init_employees(db):
+    """Initialize system employees."""
+    employees = [
+        {
+            'username': 'sysadmin',
+            'password': '123456',
+            'name': 'System Admin',
+            'role': EmployeeRole.SYSADMIN,
+        },
+        {
+            'username': 'manager',
+            'password': '123456',
+            'name': 'Manager',
+            'role': EmployeeRole.MANAGER,
+        },
+    ]
+
+    created = []
+    for emp_data in employees:
+        existing = db.query(Employee).filter(Employee.username == emp_data['username']).first()
+        if not existing:
+            emp = Employee(
+                username=emp_data['username'],
+                password_hash=get_password_hash(emp_data['password']),
+                name=emp_data['name'],
+                role=emp_data['role'],
+                is_active=True,
+            )
+            db.add(emp)
+            created.append(emp_data['username'])
+
+    db.commit()
+    print(f"Employees initialized: {created if created else 'already exist'}")
+
+
+def reset_business_data(db):
+    """Reset business data (for testing)."""
+    # TODO: Add domain-specific reset logic
+    pass
+
+
+def main():
+    """Main initialization."""
+    print("Initializing database...")
+    init_db()
+
+    db = SessionLocal()
+    try:
+        init_employees(db)
+        # TODO: Add domain-specific seed data here
+        print("\nInitialization complete!")
+        print("Default credentials: sysadmin/123456, manager/123456")
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    main()

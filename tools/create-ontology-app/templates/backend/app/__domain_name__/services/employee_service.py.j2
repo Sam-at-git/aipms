@@ -1,0 +1,33 @@
+"""{{ domain_display_name }} employee service — required by auth router."""
+from typing import Optional
+from sqlalchemy.orm import Session
+from app.{{ domain_name }}.models.ontology import Employee
+from app.security.auth import get_password_hash, verify_password
+
+
+class EmployeeService:
+    """Employee management service."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def authenticate(self, username: str, password: str) -> Optional[Employee]:
+        """Authenticate employee by username and password."""
+        employee = self.db.query(Employee).filter(
+            Employee.username == username,
+            Employee.is_active == True
+        ).first()
+        if employee and verify_password(password, employee.password_hash):
+            return employee
+        return None
+
+    def get_employee(self, employee_id: int) -> Optional[Employee]:
+        return self.db.query(Employee).filter(Employee.id == employee_id).first()
+
+    def change_password(self, employee: Employee, old_password: str, new_password: str) -> bool:
+        """Change employee password."""
+        if not verify_password(old_password, employee.password_hash):
+            return False
+        employee.password_hash = get_password_hash(new_password)
+        self.db.commit()
+        return True

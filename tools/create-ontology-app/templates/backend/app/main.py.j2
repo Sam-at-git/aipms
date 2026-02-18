@@ -1,0 +1,158 @@
+"""
+Ontology Runtime Application — generic bootstrap with domain plugin loading.
+"""
+import os
+import logging
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.database import init_db
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifecycle management."""
+    # Initialize database
+    init_db()
+
+    try:
+        # ========== Domain Plugin: {{ domain_class_name }} ==========
+        from app.{{ domain_name }}.plugin import {{ domain_class_name }}Plugin
+        plugin = {{ domain_class_name }}Plugin()
+
+        # Register domain event handlers
+        plugin.register_events()
+
+        # Register domain ontology (entities, relationships, rules)
+        from core.ontology.registry import OntologyRegistry
+        ont_registry = OntologyRegistry()
+        plugin.register_ontology(ont_registry)
+
+        # Configure embedding service
+        from core.ai import configure_embedding_service
+        from app.config import settings
+        embed_api_key = settings.EMBEDDING_API_KEY or settings.OPENAI_API_KEY
+        configure_embedding_service(
+            api_key=embed_api_key,
+            base_url=settings.EMBEDDING_BASE_URL,
+            model=settings.EMBEDDING_MODEL,
+            cache_size=settings.EMBEDDING_CACHE_SIZE,
+            enabled=settings.ENABLE_LLM and settings.EMBEDDING_ENABLED and bool(embed_api_key),
+        )
+
+        # Register domain security (admin roles, ACL, role permissions)
+        plugin.register_security()
+
+        # Sync ActionRegistry to OntologyRegistry
+        from app.services.actions import get_action_registry, register_smart_updates
+        action_registry = get_action_registry()
+        action_registry.set_ontology_registry(ont_registry)
+
+        # Register smart update actions (requires populated OntologyRegistry)
+        register_smart_updates(ont_registry)
+        logger.info(f"ActionRegistry synced ({len(action_registry.list_actions())} actions)")
+
+        # ========== System Domain ==========
+        from app.system.system_domain_adapter import SystemDomainAdapter
+        sys_adapter = SystemDomainAdapter()
+        sys_adapter.register_ontology(ont_registry)
+
+        # RBAC: Register permission provider
+        from core.security.permission import permission_provider_registry
+        from app.system.services.permission_provider import RBACPermissionProvider
+        from app.database import SessionLocal
+        provider = RBACPermissionProvider(SessionLocal)
+        permission_provider_registry.set_provider(provider)
+
+        # RBAC + System seed data
+        from app.system.services.rbac_seed import seed_rbac_data
+        from app.system.services.menu_seed import seed_menu_data
+        from app.system.services.config_seed import seed_config_data
+        seed_db = SessionLocal()
+        try:
+            seed_rbac_data(seed_db)
+            seed_menu_data(seed_db)
+            seed_config_data(seed_db)
+        finally:
+            seed_db.close()
+
+    except Exception as e:
+        logger.warning(f"Bootstrap warning: {e}")
+
+    # Optional: build semantic search index
+    if os.getenv("AUTO_BUILD_SCHEMA_INDEX", "false").lower() == "true":
+        try:
+            from app.services.schema_index_service import SchemaIndexService
+            service = SchemaIndexService()
+            service.build_index()
+        except Exception as e:
+            logger.warning(f"Schema index build warning: {e}")
+
+    yield
+
+
+# Create application
+app = FastAPI(
+    title="{{ domain_display_name }}",
+    description="{{ description }}",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ========== Generic routers ==========
+from app.routers import auth, ai, audit_logs, conversations, settings, undo, ontology, security, debug, benchmark
+app.include_router(auth.router)
+app.include_router(ai.router)
+app.include_router(audit_logs.router)
+app.include_router(conversations.router)
+app.include_router(settings.router)
+app.include_router(undo.router)
+app.include_router(ontology.router)
+app.include_router(security.router)
+app.include_router(debug.router)
+app.include_router(benchmark.router)
+
+# ========== Domain routers (via plugin) ==========
+from app.{{ domain_name }}.routers import get_{{ domain_name }}_routers
+for router in get_{{ domain_name }}_routers():
+    app.include_router(router)
+
+# ========== System domain routers ==========
+from app.system.routers import dict_router, config_router, rbac_router, menu_router, org_router, message_router, scheduler_router
+app.include_router(dict_router.router)
+app.include_router(config_router.router)
+app.include_router(rbac_router.role_router)
+app.include_router(rbac_router.permission_router)
+app.include_router(rbac_router.user_role_router)
+app.include_router(menu_router.router)
+app.include_router(org_router.dept_router)
+app.include_router(org_router.pos_router)
+app.include_router(message_router.msg_router)
+app.include_router(message_router.tpl_router)
+app.include_router(message_router.ann_router)
+app.include_router(scheduler_router.router)
+
+
+@app.get("/")
+def root():
+    return {
+        "name": "{{ domain_display_name }}",
+        "version": "1.0.0",
+        "description": "{{ description }}"
+    }
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}

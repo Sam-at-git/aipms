@@ -1,0 +1,41 @@
+"""{{ domain_display_name }} AI service — required by AI router."""
+import logging
+from typing import Dict, Any, Optional
+from sqlalchemy.orm import Session
+
+from app.{{ domain_name }}.models.ontology import Employee
+
+logger = logging.getLogger(__name__)
+
+
+class AIService:
+    """Domain AI service — delegates to OODA orchestrator."""
+
+    def __init__(self, db: Session, user: Employee):
+        self.db = db
+        self.user = user
+
+    async def process_message(
+        self,
+        content: str,
+        topic_id: Optional[str] = None,
+        follow_up_context: Optional[Dict[str, Any]] = None,
+        language: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Process a user message through the AI pipeline."""
+        from core.ai.ooda_orchestrator import OodaOrchestrator
+        from app.{{ domain_name }}.{{ domain_name }}_domain_adapter import {{ domain_class_name }}DomainAdapter
+
+        adapter = {{ domain_class_name }}DomainAdapter(db=self.db)
+        orchestrator = OodaOrchestrator(
+            domain_adapter=adapter,
+            db=self.db,
+            user=self.user,
+        )
+
+        return await orchestrator.process_message(
+            message=content,
+            topic_id=topic_id,
+            follow_up_context=follow_up_context,
+            language=language,
+        )

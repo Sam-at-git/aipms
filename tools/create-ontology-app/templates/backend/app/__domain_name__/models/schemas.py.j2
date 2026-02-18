@@ -1,0 +1,28 @@
+"""
+{{ domain_display_name }} Pydantic schemas for API request/response validation.
+"""
+from datetime import datetime
+from typing import Optional
+from pydantic import BaseModel, ConfigDict
+from app.{{ domain_name }}.models.ontology import EmployeeRole
+
+
+class EmployeeResponse(BaseModel):
+    """Employee response schema — required by auth module."""
+    id: int
+    username: str
+    name: str
+    phone: Optional[str] = None
+    role: EmployeeRole
+    is_active: bool
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PasswordChange(BaseModel):
+    """Password change request — required by auth router."""
+    old_password: str
+    new_password: str
+
+
+# TODO: Add your domain schemas here.

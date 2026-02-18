@@ -1,0 +1,296 @@
+"""
+Ontology metadata service — runtime metadata extraction (semantic, kinetic, dynamic).
+"""
+from typing import Dict, List, Optional, Any
+from sqlalchemy import inspect
+from sqlalchemy.orm import Session
+from app.{{ domain_name }}.models.ontology import Employee
+from app.services.metadata import (
+    get_model_attributes, get_entity_relationships,
+    AttributeMetadata, ActionMetadata, StateTransition, BusinessRule
+)
+from core.ontology.registry import OntologyRegistry
+
+
+class OntologyMetadataService:
+    """Ontology metadata service — extracts semantic, kinetic, dynamic metadata."""
+
+    # Models are populated from OntologyRegistry
+    _FALLBACK_MODELS = {
+        "Employee": Employee,
+        # TODO: Add your domain models here
+    }
+
+    _FALLBACK_DESCRIPTIONS = {
+        "Employee": "Employee — system user",
+        # TODO: Add your domain entity descriptions here
+    }
+
+    _FALLBACK_AGGREGATE_ROOTS = set()
+
+    _FALLBACK_RELATIONSHIPS = {
+        # TODO: Add your domain relationships here
+    }
+
+    @property
+    def MODELS(self):
+        registry = OntologyRegistry()
+        model_map = registry.get_model_map()
+        if model_map:
+            return model_map
+        return self._FALLBACK_MODELS
+
+    @property
+    def ENTITY_DESCRIPTIONS(self):
+        registry = OntologyRegistry()
+        descriptions = {}
+        for entity in registry.get_entities():
+            descriptions[entity.name] = entity.description
+        if descriptions:
+            merged = dict(self._FALLBACK_DESCRIPTIONS)
+            merged.update(descriptions)
+            return merged
+        return self._FALLBACK_DESCRIPTIONS
+
+    @property
+    def AGGREGATE_ROOTS(self):
+        registry = OntologyRegistry()
+        roots = set()
+        for entity in registry.get_entities():
+            if entity.is_aggregate_root:
+                roots.add(entity.name)
+        if roots:
+            return roots
+        return self._FALLBACK_AGGREGATE_ROOTS
+
+    @property
+    def ENTITY_RELATIONSHIPS(self):
+        registry = OntologyRegistry()
+        result = {}
+        entities = registry.get_entities()
+        if entities:
+            for entity in entities:
+                rels = registry.get_relationships(entity.name)
+                result[entity.name] = list({r.target_entity for r in rels})
+            merged = dict(self._FALLBACK_RELATIONSHIPS)
+            merged.update(result)
+            return merged
+        return self._FALLBACK_RELATIONSHIPS
+
+    def __init__(self, db: Session = None):
+        self.db = db
+
+    # ============== Semantic Layer ==============
+
+    def get_semantic_metadata(self) -> Dict[str, Any]:
+        entities = []
+        for entity_name, model_class in self.MODELS.items():
+            attributes = self._get_enriched_attributes(entity_name, model_class)
+            relationships = self._get_enriched_relationships(entity_name)
+            onto_registry = OntologyRegistry()
+            entity_meta = onto_registry.get_entity(entity_name)
+
+            entity_info = {
+                "name": entity_name,
+                "description": self.ENTITY_DESCRIPTIONS.get(entity_name, ""),
+                "table_name": model_class.__tablename__,
+                "is_aggregate_root": entity_name in self.AGGREGATE_ROOTS,
+                "attributes": [self._serialize_attribute(attr) for attr in attributes],
+                "relationships": relationships,
+                "related_entities": self.ENTITY_RELATIONSHIPS.get(entity_name, []),
+            }
+
+            if entity_meta:
+                entity_info["category"] = getattr(entity_meta, "category", "")
+                entity_info["implements"] = getattr(entity_meta, "implements", [])
+                entity_info["lifecycle_states"] = getattr(entity_meta, "lifecycle_states", None)
+                extensions = getattr(entity_meta, "extensions", {})
+                if extensions:
+                    entity_info["business_purpose"] = extensions.get("business_purpose", "")
+                    entity_info["key_attributes"] = extensions.get("key_attributes", [])
+                    entity_info["invariants"] = extensions.get("invariants", [])
+            entities.append(entity_info)
+
+        return {"entities": entities}
+
+    def _get_enriched_attributes(self, entity_name: str, model_class) -> List[AttributeMetadata]:
+        attributes = get_model_attributes(model_class)
+        onto_registry = OntologyRegistry()
+        entity_meta = onto_registry.get_entity(entity_name)
+        if entity_meta and entity_meta.properties:
+            for attr in attributes:
+                prop = entity_meta.properties.get(attr.name)
+                if prop:
+                    attr.description = prop.description or attr.description
+                    attr.security_level = prop.security_level or "INTERNAL"
+        return attributes
+
+    def _serialize_attribute(self, attr: AttributeMetadata) -> Dict:
+        return {
+            "name": attr.name,
+            "type": attr.type,
+            "python_type": attr.python_type,
+            "is_primary_key": attr.is_primary_key,
+            "is_foreign_key": attr.is_foreign_key,
+            "is_required": attr.is_required,
+            "is_nullable": attr.is_nullable,
+            "is_unique": attr.is_unique,
+            "default_value": str(attr.default_value) if attr.default_value is not None else None,
+            "max_length": attr.max_length,
+            "enum_values": attr.enum_values,
+            "description": attr.description,
+            "security_level": attr.security_level,
+            "foreign_key_target": attr.foreign_key_target,
+        }
+
+    def _get_enriched_relationships(self, entity_name: str) -> List[Dict]:
+        model_class = self.MODELS.get(entity_name)
+        if not model_class:
+            return []
+
+        relationships = []
+        onto_registry = OntologyRegistry()
+        registry_rels = onto_registry.get_relationships(entity_name)
+        registry_labels = {}
+        for r in registry_rels:
+            if r.description:
+                registry_labels[r.target_entity] = r.description
+
+        base_relationships = get_entity_relationships(model_class)
+        for rel in base_relationships:
+            rel["label"] = registry_labels.get(rel["target"], rel["name"])
+            relationships.append(rel)
+
+        return relationships
+
+    # ============== Kinetic Layer ==============
+
+    def get_kinetic_metadata(self) -> Dict[str, Any]:
+        onto_registry = OntologyRegistry()
+        registered_actions = onto_registry.get_actions()
+
+        all_actions = {}
+        for action in registered_actions:
+            if action.entity not in all_actions:
+                all_actions[action.entity] = []
+            all_actions[action.entity].append(self._serialize_action(action))
+
+        entities = []
+        for entity_name, entity_actions in all_actions.items():
+            entity_meta = onto_registry.get_entity(entity_name)
+            entities.append({
+                "name": entity_name,
+                "description": self.ENTITY_DESCRIPTIONS.get(entity_name, ""),
+                "category": getattr(entity_meta, "category", "") if entity_meta else "",
+                "actions": entity_actions
+            })
+
+        return {"entities": entities}
+
+    def _serialize_action(self, action: ActionMetadata) -> Dict:
+        return {
+            "action_type": action.action_type,
+            "description": action.description,
+            "params": [
+                {
+                    "name": p.name,
+                    "type": p.type.value,
+                    "required": p.required,
+                    "description": p.description,
+                    "enum_values": p.enum_values,
+                    "format": p.format,
+                }
+                for p in action.params
+            ],
+            "requires_confirmation": action.requires_confirmation,
+            "allowed_roles": list(action.allowed_roles),
+            "writeback": action.writeback,
+            "undoable": action.undoable,
+        }
+
+    # ============== Dynamic Layer ==============
+
+    def get_dynamic_metadata(self) -> Dict[str, Any]:
+        return {
+            "state_machines": self._get_state_machines(),
+            "permission_matrix": self._get_permission_matrix(),
+            "business_rules": self._get_business_rules(),
+        }
+
+    def _get_state_machines(self) -> List[Dict]:
+        onto_registry = OntologyRegistry()
+        state_machines = []
+        for entity in onto_registry.get_entities():
+            sm = onto_registry.get_state_machine(entity.name)
+            if sm:
+                state_machines.append(self._serialize_state_machine(sm))
+        return state_machines
+
+    STATE_PRESENTATION = {}
+    TRIGGER_ACTIONS = {}
+
+    def _serialize_state_machine(self, sm) -> Dict:
+        states = []
+        for s in sm.states:
+            pres = self.STATE_PRESENTATION.get(s, {})
+            states.append({
+                "value": s,
+                "label": pres.get("label", s),
+                "color": pres.get("color", "gray"),
+            })
+        transitions = []
+        for t in sm.transitions:
+            transitions.append({
+                "from": t.from_state,
+                "to": t.to_state,
+                "trigger": t.trigger,
+                "trigger_action": self.TRIGGER_ACTIONS.get(t.trigger, t.trigger),
+                "condition": t.condition,
+                "side_effects": t.side_effects,
+            })
+        return {
+            "entity": sm.entity,
+            "description": f"{sm.entity} state machine",
+            "states": states,
+            "initial_state": sm.initial_state,
+            "transitions": transitions,
+        }
+
+    def _get_permission_matrix(self) -> Dict:
+        onto_registry = OntologyRegistry()
+        registered_permissions = onto_registry.get_permissions()
+        return {
+            "roles": ["manager"],
+            "actions": registered_permissions if registered_permissions else [],
+        }
+
+    def _get_business_rules(self) -> List[Dict]:
+        onto_registry = OntologyRegistry()
+        rules = []
+        for entity in onto_registry.get_entities():
+            for rule in onto_registry.get_business_rules(entity.name):
+                rules.append({
+                    "rule_id": rule.rule_id,
+                    "entity": rule.entity,
+                    "rule_name": rule.rule_name,
+                    "description": rule.description,
+                    "condition": rule.condition,
+                    "action": rule.action,
+                    "severity": rule.severity,
+                })
+        return rules
+
+    def get_events(self) -> List[Dict]:
+        onto_registry = OntologyRegistry()
+        events = onto_registry.get_events()
+        return [
+            {
+                "name": e.name,
+                "description": e.description,
+                "entity": e.entity,
+                "triggered_by": e.triggered_by,
+                "payload_fields": e.payload_fields,
+                "subscribers": e.subscribers,
+            }
+            for e in events
+        ]

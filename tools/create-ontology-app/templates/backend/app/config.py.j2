@@ -1,0 +1,39 @@
+"""
+Application configuration.
+"""
+import os
+from typing import Optional
+from pydantic import ConfigDict
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """Application settings."""
+
+    APP_NAME: str = "{{ domain_display_name }}"
+    DEBUG: bool = False
+
+    DATABASE_URL: str = "sqlite:///./{{ db_name }}"
+
+    SECRET_KEY: str = "your-secret-key-change-in-production"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+
+    OPENAI_API_KEY: Optional[str] = os.environ.get("OPENAI_API_KEY")
+    OPENAI_BASE_URL: str = os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")
+    LLM_MODEL: str = os.environ.get("LLM_MODEL", "deepseek-chat")
+    LLM_TEMPERATURE: float = float(os.environ.get("LLM_TEMPERATURE", "0.7"))
+    LLM_MAX_TOKENS: int = int(os.environ.get("LLM_MAX_TOKENS", "2000"))
+
+    ENABLE_LLM: bool = os.environ.get("ENABLE_LLM", "true").lower() == "true"
+
+    EMBEDDING_API_KEY: Optional[str] = os.environ.get("EMBEDDING_API_KEY", "ollama")
+    EMBEDDING_BASE_URL: str = os.environ.get("EMBEDDING_BASE_URL", "http://localhost:11434/v1")
+    EMBEDDING_MODEL: str = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
+    EMBEDDING_CACHE_SIZE: int = int(os.environ.get("EMBEDDING_CACHE_SIZE", "1000"))
+    EMBEDDING_ENABLED: bool = os.environ.get("EMBEDDING_ENABLED", "true").lower() == "true"
+
+    model_config = ConfigDict(env_file=".env", case_sensitive=True)
+
+
+settings = Settings()

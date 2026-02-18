@@ -1,0 +1,470 @@
+"""
+Ontology visualization router.
+Provides ontology schema, entity statistics, and relationship graph data.
+Supports three dimensions: Semantic, Kinetic, Dynamic.
+"""
+from typing import Optional, Dict, List, Any
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.{{ domain_name }}.models.ontology import Employee, EmployeeRole
+from app.security.auth import get_current_user, require_manager
+from app.services.ontology_metadata_service import OntologyMetadataService
+from core.ontology.registry import OntologyRegistry
+
+router = APIRouter(prefix="/ontology", tags=["ontology"])
+
+
+@router.get("/schema")
+async def get_ontology_schema(
+    current_user: Employee = Depends(require_manager)
+):
+    """Get ontology schema definition."""
+    onto_registry = OntologyRegistry()
+    entities = onto_registry.get_entities()
+
+    if not entities:
+        return {"entities": [], "relationships": []}
+
+    # Build entities list from registry
+    entity_list = []
+    for entity in entities:
+        attrs = []
+        for prop_name, prop in entity.properties.items():
+            attr = {"name": prop_name, "type": prop.type}
+            if prop.is_primary_key:
+                attr["primary"] = True
+            if prop.enum_values:
+                attr["type"] = "enum"
+                attr["values"] = prop.enum_values
+            attrs.append(attr)
+        entity_list.append({
+            "name": entity.name,
+            "description": entity.description,
+            "category": entity.category or "business",
+            "attributes": attrs,
+        })
+
+    # Build relationships from registry
+    rel_list = []
+    for entity in entities:
+        rels = onto_registry.get_relationships(entity.name)
+        for rel in rels:
+            if rel.cardinality in ("many_to_one", "one_to_one"):
+                rel_list.append({
+                    "from": entity.name,
+                    "to": rel.target_entity,
+                    "type": "belongs_to",
+                    "label": rel.description or rel.name,
+                })
+
+    return {"entities": entity_list, "relationships": rel_list}
+
+
+@router.get("/statistics")
+async def get_ontology_statistics(
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_manager)
+):
+    """Get entity statistics."""
+    onto_registry = OntologyRegistry()
+    result = {}
+
+    # Generic total counts from registry model map
+    model_map = onto_registry.get_model_map()
+    for entity_name, model_cls in model_map.items():
+        result[entity_name] = {"total": db.query(model_cls).count()}
+
+    # Employee breakdown (always available)
+    if "Employee" in result:
+        result["Employee"]["by_role"] = {
+            r.value: db.query(Employee).filter(Employee.role == r).count()
+            for r in EmployeeRole
+        }
+
+    # TODO: Add domain-specific entity breakdowns here
+    # Example:
+    # if "Patient" in result:
+    #     result["Patient"]["by_status"] = { ... }
+
+    return {"entities": result}
+
+
+@router.get("/instance-graph")
+async def get_instance_graph(
+    center_entity: Optional[str] = Query(None, description="Center entity type"),
+    center_id: Optional[int] = Query(None, description="Center entity ID"),
+    depth: int = Query(2, ge=1, le=3, description="Relationship depth"),
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_manager)
+):
+    """Get instance relationship graph data."""
+    nodes = []
+    edges = []
+
+    if center_entity and center_id:
+        # Get entity from registry model map
+        onto_registry = OntologyRegistry()
+        model_map = onto_registry.get_model_map()
+        model_cls = model_map.get(center_entity)
+
+        if model_cls:
+            entity = db.query(model_cls).filter(model_cls.id == center_id).first()
+            if entity:
+                label = getattr(entity, 'name', None) or f"{center_entity} #{center_id}"
+                nodes.append({
+                    "id": f"{center_entity}-{center_id}",
+                    "type": center_entity,
+                    "label": label,
+                    "data": {}
+                })
+
+                # TODO: Add domain-specific relationship traversal here
+                # Use onto_registry.get_relationships(center_entity) to discover links
+    else:
+        # Return system overview graph (entity types as nodes)
+        onto_registry = OntologyRegistry()
+        model_map = onto_registry.get_model_map()
+
+        # Build nodes from registry entities
+        x_offset = 200
+        for i, entity in enumerate(onto_registry.get_entities()):
+            name = entity.name
+            model_cls = model_map.get(name)
+            total = db.query(model_cls).count() if model_cls else 0
+            nodes.append({
+                "id": name,
+                "type": "entity",
+                "label": entity.description.split(" - ")[0] if " - " in entity.description else entity.description,
+                "data": {
+                    "name": name,
+                    "total": total,
+                },
+                "position": {"x": x_offset + (i % 4) * 200, "y": 100 + (i // 4) * 200},
+            })
+
+        # Build edges from registry relationships (belongs_to only)
+        edge_i = 0
+        for entity in onto_registry.get_entities():
+            for rel in onto_registry.get_relationships(entity.name):
+                if rel.cardinality in ("many_to_one", "one_to_one"):
+                    edges.append({
+                        "id": f"edge-{edge_i}",
+                        "source": entity.name,
+                        "target": rel.target_entity,
+                        "label": rel.description or rel.name,
+                    })
+                    edge_i += 1
+
+    return {"nodes": nodes, "edges": edges}
+
+
+# ============== Semantic Layer - Entity attributes and relationships ==============
+
+@router.get("/semantic")
+async def get_semantic_metadata(
+    current_user: Employee = Depends(require_manager)
+):
+    """
+    Get semantic layer metadata.
+    Shows all entity attribute definitions, types, constraints.
+    """
+    service = OntologyMetadataService()
+    return service.get_semantic_metadata()
+
+
+@router.get("/semantic/{entity_name}")
+async def get_entity_semantic(
+    entity_name: str,
+    current_user: Employee = Depends(require_manager)
+):
+    """Get semantic metadata for a single entity."""
+    service = OntologyMetadataService()
+    all_semantic = service.get_semantic_metadata()
+
+    for entity in all_semantic["entities"]:
+        if entity["name"] == entity_name:
+            return entity
+
+    return {"error": "Entity not found"}
+
+
+# ============== Kinetic Layer - Executable actions ==============
+
+@router.get("/kinetic")
+async def get_kinetic_metadata(
+    current_user: Employee = Depends(require_manager)
+):
+    """
+    Get kinetic layer metadata.
+    Shows all executable actions grouped by entity.
+    """
+    service = OntologyMetadataService()
+    return service.get_kinetic_metadata()
+
+
+@router.get("/kinetic/{entity_name}")
+async def get_entity_kinetic(
+    entity_name: str,
+    current_user: Employee = Depends(require_manager)
+):
+    """Get kinetic metadata for a single entity."""
+    service = OntologyMetadataService()
+    all_kinetic = service.get_kinetic_metadata()
+
+    for entity in all_kinetic["entities"]:
+        if entity["name"] == entity_name:
+            return entity
+
+    return {"error": "Entity not found"}
+
+
+# ============== Dynamic Layer - State machines, permissions, business rules ==============
+
+@router.get("/dynamic")
+async def get_dynamic_metadata(
+    current_user: Employee = Depends(require_manager)
+):
+    """
+    Get dynamic layer metadata.
+    Includes state machines, permission matrix, business rules.
+    """
+    service = OntologyMetadataService()
+    return service.get_dynamic_metadata()
+
+
+@router.get("/dynamic/state-machines")
+async def get_state_machines(
+    current_user: Employee = Depends(require_manager)
+):
+    """Get all state machine definitions."""
+    service = OntologyMetadataService()
+    dynamic = service.get_dynamic_metadata()
+    return dynamic["state_machines"]
+
+
+@router.get("/dynamic/state-machines/{entity_name}")
+async def get_entity_state_machine(
+    entity_name: str,
+    current_user: Employee = Depends(require_manager)
+):
+    """Get state machine for a single entity."""
+    service = OntologyMetadataService()
+    state_machines = service._get_state_machines()
+
+    for sm in state_machines:
+        if sm["entity"] == entity_name:
+            return sm
+
+    return {"error": "State machine not found"}
+
+
+@router.get("/dynamic/permission-matrix")
+async def get_permission_matrix(
+    current_user: Employee = Depends(require_manager)
+):
+    """Get permission matrix."""
+    service = OntologyMetadataService()
+    dynamic = service.get_dynamic_metadata()
+    return dynamic["permission_matrix"]
+
+
+@router.get("/dynamic/events")
+async def get_events(
+    current_user: Employee = Depends(require_manager)
+):
+    """Get all registered domain events."""
+    service = OntologyMetadataService()
+    return {"events": service.get_events()}
+
+
+@router.get("/dynamic/business-rules")
+async def get_business_rules(
+    entity: Optional[str] = Query(None, description="Filter by entity"),
+    current_user: Employee = Depends(require_manager)
+):
+    """Get business rules list."""
+    service = OntologyMetadataService()
+    rules = service._get_business_rules()
+
+    if entity:
+        rules = [r for r in rules if r["entity"] == entity]
+
+    return {"rules": rules}
+
+
+# ============== Reasoning Transparency APIs ==============
+
+@router.get("/dynamic/state-transitions/{entity_name}")
+async def get_state_transitions(
+    entity_name: str,
+    current_state: Optional[str] = Query(None, description="Current state"),
+    current_user: Employee = Depends(get_current_user)
+):
+    """Get valid state transitions for an entity.
+
+    Given an entity and current state, returns reachable next states and required roles.
+    If current_state is not specified, returns all state transitions.
+    """
+    from core.ontology.registry import registry
+    state_machine = registry.get_state_machine(entity_name)
+    if not state_machine:
+        return {"entity": entity_name, "transitions": [], "error": "No state machine registered"}
+
+    transitions = []
+    for t in state_machine.transitions:
+        if current_state and t.from_state.lower() != current_state.lower():
+            continue
+        transition_info = {
+            "from_state": t.from_state,
+            "to_state": t.to_state,
+            "trigger": t.trigger,
+        }
+        if hasattr(t, "condition") and t.condition:
+            transition_info["condition"] = t.condition
+        if hasattr(t, "side_effects") and t.side_effects:
+            transition_info["side_effects"] = t.side_effects
+        transitions.append(transition_info)
+
+    return {
+        "entity": entity_name,
+        "current_state": current_state,
+        "transitions": transitions,
+    }
+
+
+@router.post("/dynamic/constraints/validate")
+async def validate_constraints(
+    body: dict,
+    current_user: Employee = Depends(get_current_user)
+):
+    """Validate operation constraints.
+
+    Given action_type and entity_type, checks all registered constraints.
+    Optionally provide params and entity_state to evaluate executable constraints.
+
+    Request body:
+    {
+        "entity_type": "MyEntity",
+        "action_type": "some_action",
+        "params": {},
+        "entity_state": {}
+    }
+    """
+    from core.ontology.registry import registry
+
+    entity_type = body.get("entity_type", "")
+    action_type = body.get("action_type", "")
+    params = body.get("params", {})
+    entity_state = body.get("entity_state", {})
+
+    # Get registered constraints
+    constraints = registry.get_constraints_for_entity_action(entity_type, action_type)
+
+    constraint_list = []
+    for c in constraints:
+        info = {
+            "id": c.id,
+            "name": c.name,
+            "description": c.description,
+            "severity": c.severity.value if hasattr(c.severity, "value") else str(c.severity),
+            "has_executable_code": bool(c.condition_code) if hasattr(c, "condition_code") else False,
+        }
+        constraint_list.append(info)
+
+    # If we have a GuardExecutor and entity_state, run evaluation
+    violations = []
+    warnings = []
+    try:
+        from core.ontology.guard_executor import GuardExecutor
+        guard = GuardExecutor(ontology_registry=registry)
+        result = guard.check(entity_type, action_type, params, {
+            "entity_state": entity_state,
+            "user_context": {"role": current_user.role.value},
+        })
+        for v in result.violations:
+            violations.append({
+                "constraint_id": v.constraint_id,
+                "message": v.message,
+                "severity": v.severity,
+            })
+        for w in result.warnings:
+            warnings.append({
+                "constraint_id": w.constraint_id,
+                "message": w.message,
+                "severity": w.severity,
+            })
+    except Exception:
+        pass  # GuardExecutor evaluation is optional
+
+    return {
+        "entity_type": entity_type,
+        "action_type": action_type,
+        "constraints": constraint_list,
+        "violations": violations,
+        "warnings": warnings,
+    }
+
+
+# ============== Interfaces - Phase 2.5 ==============
+
+@router.get("/interfaces")
+async def get_interfaces(
+    current_user: Employee = Depends(require_manager)
+):
+    """Get all interface definitions and their implementations."""
+    from core.ontology.registry import registry
+    schema = registry.export_schema()
+    return schema.get("interfaces", {})
+
+
+@router.get("/interfaces/{interface_name}")
+async def get_interface(
+    interface_name: str,
+    current_user: Employee = Depends(require_manager)
+):
+    """Get single interface details."""
+    from core.ontology.registry import registry
+    schema = registry.export_schema()
+    interfaces = schema.get("interfaces", {})
+    return interfaces.get(interface_name, {"error": "Interface not found"})
+
+
+@router.get("/interfaces/{interface_name}/implementations")
+async def get_interface_implementations(
+    interface_name: str,
+    current_user: Employee = Depends(require_manager)
+):
+    """Get all entities implementing a given interface."""
+    from core.ontology.registry import registry
+    implementations = registry.get_implementations(interface_name)
+    return {"interface": interface_name, "implementations": implementations}
+
+
+@router.get("/entities/{entity_name}/interfaces")
+async def get_entity_interfaces(
+    entity_name: str,
+    current_user: Employee = Depends(require_manager)
+):
+    """Get all interfaces implemented by an entity."""
+    from core.ontology.registry import registry
+    schema = registry.export_schema()
+    entity = schema.get("entity_types", {}).get(entity_name, {})
+    return {
+        "entity": entity_name,
+        "interfaces": entity.get("interfaces", [])
+    }
+
+
+# ============== Schema Export - Phase 2.5 ==============
+
+@router.get("/schema/export")
+async def export_schema(
+    current_user: Employee = Depends(require_manager)
+):
+    """
+    Export complete ontology schema (JSON).
+    Used for version snapshots, AI context injection, API doc generation.
+    """
+    from core.ontology.registry import registry
+    return registry.export_schema()

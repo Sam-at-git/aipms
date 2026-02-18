@@ -1,0 +1,78 @@
+"""
+{{ domain_display_name }} domain ORM models.
+
+Employee, EmployeeRole, and SystemLog are required by the framework (auth, audit).
+Add your domain entities below.
+"""
+from datetime import datetime
+from enum import Enum
+from sqlalchemy import (
+    Column, Integer, String, Float, DateTime, Date,
+    ForeignKey, Text, Enum as SQLEnum, Boolean, Numeric
+)
+from sqlalchemy.orm import relationship
+from app.database import Base
+
+
+# ============== Framework-required types ==============
+
+class EmployeeRole(str, Enum):
+    """Employee roles."""
+    SYSADMIN = "sysadmin"
+    MANAGER = "manager"
+    # TODO: Add domain-specific roles
+
+
+class Employee(Base):
+    """Employee / system user — required by auth module."""
+    __tablename__ = "employees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    name = Column(String(100), nullable=False)
+    phone = Column(String(20))
+    role = Column(SQLEnum(EmployeeRole), nullable=False)
+    is_active = Column(Boolean, default=True)
+    department_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True)
+    position_id = Column(Integer, ForeignKey("sys_position.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    department = relationship("SysDepartment", foreign_keys=[department_id])
+    position = relationship("SysPosition", foreign_keys=[position_id])
+
+    @property
+    def clearance(self):
+        """Return security clearance based on role."""
+        from app.models.ontology import SecurityLevel
+        if self.role in (EmployeeRole.SYSADMIN, EmployeeRole.MANAGER):
+            return SecurityLevel.RESTRICTED
+        return SecurityLevel.INTERNAL
+
+
+class SystemLog(Base):
+    """System audit log — required by audit_service."""
+    __tablename__ = "system_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    operator_id = Column(Integer, ForeignKey("employees.id"))
+    action = Column(String(100), nullable=False)
+    entity_type = Column(String(50))
+    entity_id = Column(Integer)
+    old_value = Column(Text)
+    new_value = Column(Text)
+    ip_address = Column(String(50))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    operator = relationship("Employee")
+
+
+# ============== Domain entities ==============
+# TODO: Add your domain ORM models here.
+# Example:
+# class MyEntity(Base):
+#     __tablename__ = "my_entities"
+#     id = Column(Integer, primary_key=True, index=True)
+#     name = Column(String(100), nullable=False)
+#     ...

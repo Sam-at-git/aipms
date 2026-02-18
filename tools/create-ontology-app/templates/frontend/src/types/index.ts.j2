@@ -1,0 +1,198 @@
+// Re-export domain types
+export * from './{{ domain_name }}'
+// Import domain types used by generic types below
+import type { Employee, EmployeeRole } from './{{ domain_name }}'
+{% raw %}
+// AI Response
+export interface AIResponse {
+  message: string
+  suggested_actions: AIAction[]
+  context: Record<string, unknown>
+  requires_confirmation?: boolean
+  action?: string
+  candidates?: CandidateOption[]
+  follow_up?: FollowUpInfo
+  topic_id?: string
+  query_result?: QueryResultData
+  reasoning_trace?: ReasoningTrace
+}
+
+export interface ReasoningTrace {
+  intent?: string
+  confidence?: number
+  entities_referenced?: string[]
+  actions_considered?: string[]
+  decision_reason?: string
+}
+
+export interface QueryResultData {
+  columns: string[]
+  rows: Record<string, any>[]
+  total_count?: number
+  display_names?: Record<string, string>
+}
+
+export interface CandidateOption {
+  id: number | string
+  label: string
+  description?: string
+}
+
+export interface AIAction {
+  action_type: string
+  entity_type: string
+  entity_id?: number
+  params: Record<string, unknown>
+  description: string
+  requires_confirmation?: boolean
+  missing_fields?: MissingField[]
+  side_effects?: string[]
+}
+
+export interface MissingField {
+  field_name: string
+  display_name: string
+  field_type: string
+  options?: Array<{ value: string | number; label: string }>
+  placeholder?: string
+  required?: boolean
+}
+
+export interface FollowUpInfo {
+  action_type: string
+  message: string
+  missing_fields: MissingField[]
+  collected_fields: Record<string, unknown>
+  context: Record<string, unknown>
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp?: string
+  actions?: AIAction[]
+  follow_up?: FollowUpInfo
+  topic_id?: string
+  reasoning_trace?: ReasoningTrace
+}
+
+export interface ConversationMessage {
+  id: number
+  role: string
+  content: string
+  topic_id?: string
+  timestamp: string
+  metadata?: string
+}
+
+// Auth
+export interface LoginResponse {
+  access_token: string
+  token_type: string
+  employee: Employee
+}
+
+// Audit
+export interface AuditLog {
+  id: number
+  operator_id: number
+  action: string
+  entity_type?: string
+  entity_id?: number
+  old_value?: string
+  new_value?: string
+  ip_address?: string
+  created_at: string
+}
+
+export interface ActionSummary {
+  action: string
+  entity_type: string
+  count: number
+}
+
+// Conversations
+export interface MessagesListResponse {
+  messages: ConversationMessage[]
+  has_more: boolean
+}
+
+export interface SearchResultsResponse {
+  results: ConversationMessage[]
+}
+
+export interface AvailableDatesResponse {
+  dates: string[]
+}
+
+export interface AIResponseWithHistory extends AIResponse {
+  conversation_id?: string
+}
+
+export interface ConversationStatistics {
+  total_messages: number
+  total_topics: number
+  messages_today: number
+  avg_messages_per_topic: number
+}
+
+// Debug types
+export type { DebugSession, LLMInteraction, OodaPhase, AttemptLog, SessionDetailResponse } from './debug'
+export type { ReplayRequest, ReplayResponse, DebugStatistics, SessionsListResponse, ReplaysListResponse, TokenTrendResponse, ErrorAggregationResponse } from './debug'
+
+// Benchmark
+export interface BenchmarkSuite {
+  id: number
+  name: string
+  category: string
+  description?: string
+  init_script?: string
+  case_count: number
+  created_at: string
+  updated_at?: string
+}
+
+export interface BenchmarkCase {
+  id: number
+  suite_id: number
+  sequence_order: number
+  name: string
+  input: string
+  run_as?: string
+  assertions: string
+  follow_up_fields?: string
+  created_at: string
+  updated_at?: string
+}
+
+export interface BenchmarkSuiteDetail extends BenchmarkSuite {
+  cases: BenchmarkCase[]
+}
+
+export interface BenchmarkCaseResult {
+  id: number
+  case_id: number
+  status: string
+  debug_session_id?: string
+  actual_response?: string
+  assertion_details?: string
+  error_message?: string
+  executed_at?: string
+}
+
+export interface BenchmarkRun {
+  id: number
+  suite_id: number
+  status: string
+  total_cases: number
+  passed: number
+  failed: number
+  error_count: number
+  started_at: string
+  finished_at?: string
+}
+
+export interface BenchmarkRunDetail extends BenchmarkRun {
+  case_results: BenchmarkCaseResult[]
+}
+{% endraw %}

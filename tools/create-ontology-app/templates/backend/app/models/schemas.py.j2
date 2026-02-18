@@ -1,0 +1,237 @@
+"""
+Pydantic schemas — generic framework types.
+
+Generic schemas: AI, Auth, LLM, Benchmark.
+Domain-specific schemas are in app.{{ domain_name }}.models.schemas.
+"""
+from datetime import datetime, date
+from decimal import Decimal
+from typing import Optional, List, Union
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+
+# Import domain types needed by LoginResponse / TokenPayload
+from app.{{ domain_name }}.models.schemas import EmployeeResponse  # noqa: E402
+from app.{{ domain_name }}.models.ontology import EmployeeRole  # noqa: E402
+
+
+# ============== AI Schemas ==============
+
+class AIMessage(BaseModel):
+    content: str
+
+
+class MissingField(BaseModel):
+    """Missing field definition."""
+    field_name: str
+    display_name: str
+    field_type: str
+    options: Optional[List[dict]] = None
+    placeholder: Optional[str] = None
+    required: bool = True
+
+
+class FollowUpInfo(BaseModel):
+    """Follow-up information."""
+    action_type: str
+    message: str
+    missing_fields: List[MissingField] = []
+    collected_fields: dict = {}
+    context: dict = {}
+
+
+class AIAction(BaseModel):
+    action_type: str
+    entity_type: str
+    entity_id: Optional[int] = None
+    params: dict = {}
+    description: str
+    requires_confirmation: bool = True
+    missing_fields: Optional[List[Union[MissingField, str, dict]]] = None
+    side_effects: Optional[List[str]] = None
+
+    @field_validator('missing_fields', mode='before')
+    @classmethod
+    def normalize_missing_fields(cls, v):
+        """Normalize missing_fields to MissingField objects."""
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            return None
+
+        normalized = []
+        for item in v:
+            if isinstance(item, MissingField):
+                normalized.append(item)
+            elif isinstance(item, str):
+                normalized.append(MissingField(
+                    field_name=item,
+                    display_name=item,
+                    field_type='text',
+                    required=True
+                ))
+            elif isinstance(item, dict):
+                normalized.append(MissingField(**item))
+        return normalized if normalized else None
+
+
+class AIResponse(BaseModel):
+    message: str
+    suggested_actions: List[AIAction] = []
+    context: dict = {}
+    follow_up: Optional[FollowUpInfo] = None
+    topic_id: Optional[str] = None
+    reasoning_trace: Optional[dict] = None
+
+
+class ActionConfirmation(BaseModel):
+    action: AIAction
+    confirmed: bool
+
+
+# ============== Login Schemas ==============
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    employee: EmployeeResponse
+
+
+class TokenPayload(BaseModel):
+    sub: int
+    role: EmployeeRole
+    exp: datetime
+
+
+# ============== System Settings Schemas ==============
+
+class LLMSettings(BaseModel):
+    """LLM configuration."""
+    openai_api_key: Optional[str] = None
+    openai_base_url: str = "https://api.deepseek.com"
+    llm_model: str = "deepseek-chat"
+    llm_temperature: float = 0.7
+    llm_max_tokens: int = 1000
+    enable_llm: bool = True
+    system_prompt: Optional[str] = None
+    has_env_key: bool = False
+    embedding_enabled: bool = True
+    embedding_base_url: str = "http://localhost:11434/v1"
+    embedding_model: str = "nomic-embed-text"
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LLMTestRequest(BaseModel):
+    """LLM connection test request."""
+    api_key: Optional[str] = None
+    base_url: str
+    model: str
+
+
+# ============== Benchmark Schemas ==============
+
+class BenchmarkSuiteCreate(BaseModel):
+    name: str = Field(..., max_length=100)
+    category: str = Field(..., max_length=50)
+    description: Optional[str] = None
+    init_script: Optional[str] = None
+
+
+class BenchmarkSuiteUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=100)
+    category: Optional[str] = Field(None, max_length=50)
+    description: Optional[str] = None
+    init_script: Optional[str] = None
+
+
+class BenchmarkCaseResponse(BaseModel):
+    id: int
+    suite_id: int
+    sequence_order: int
+    name: str
+    input: str
+    run_as: Optional[str] = None
+    assertions: str
+    follow_up_fields: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BenchmarkSuiteResponse(BaseModel):
+    id: int
+    name: str
+    category: str
+    description: Optional[str] = None
+    init_script: Optional[str] = None
+    case_count: int = 0
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BenchmarkSuiteDetailResponse(BenchmarkSuiteResponse):
+    cases: List[BenchmarkCaseResponse] = []
+
+
+class BenchmarkCaseCreate(BaseModel):
+    name: str = Field(..., max_length=200)
+    input: str
+    run_as: Optional[str] = None
+    assertions: str
+    sequence_order: Optional[int] = None
+    follow_up_fields: Optional[str] = None
+
+
+class BenchmarkCaseUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=200)
+    input: Optional[str] = None
+    run_as: Optional[str] = None
+    assertions: Optional[str] = None
+    follow_up_fields: Optional[str] = None
+
+
+class BenchmarkCaseReorderRequest(BaseModel):
+    case_ids: List[int]
+
+
+class BenchmarkGenerateAssertionsRequest(BaseModel):
+    input: str
+    case_type: Optional[str] = "mutation"
+
+
+class BenchmarkRunRequest(BaseModel):
+    suite_ids: List[int]
+
+
+class BenchmarkCaseResultResponse(BaseModel):
+    id: int
+    case_id: int
+    status: str
+    debug_session_id: Optional[str] = None
+    actual_response: Optional[str] = None
+    assertion_details: Optional[str] = None
+    error_message: Optional[str] = None
+    executed_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BenchmarkRunResponse(BaseModel):
+    id: int
+    suite_id: int
+    status: str
+    total_cases: int
+    passed: int
+    failed: int
+    error_count: int
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BenchmarkRunDetailResponse(BenchmarkRunResponse):
+    case_results: List[BenchmarkCaseResultResponse] = []

@@ -1,0 +1,41 @@
+"""
+Database configuration — SQLite persistence layer.
+"""
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///./{{ db_name }}"
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False}
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+
+def get_db():
+    """Dependency injection: get database session."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def init_db():
+    """Initialize database tables."""
+    from app.{{ domain_name }}.models import ontology  # noqa
+    from app.models import snapshots  # noqa
+    from app.models import security_events  # noqa
+    from app.models import benchmark  # noqa
+    from app.system import models as system_models  # noqa
+    Base.metadata.create_all(bind=engine)
+
+    # Enable WAL mode for better concurrency
+    with engine.connect() as conn:
+        conn.execute(text("PRAGMA journal_mode=WAL"))
+        conn.execute(text("PRAGMA synchronous=NORMAL"))
+        conn.commit()

@@ -1,0 +1,30 @@
+#!/bin/bash
+# Start {{ domain_display_name }} application
+# Backend: http://localhost:{{ backend_port }}
+# Frontend: http://localhost:{{ frontend_port }}
+
+set -e
+
+# Start backend
+cd "$(dirname "$0")/backend"
+echo "Starting backend on port {{ backend_port }}..."
+uv run uvicorn app.main:app --reload --port {{ backend_port }} &
+BACKEND_PID=$!
+
+# Start frontend
+cd "$(dirname "$0")/frontend"
+echo "Starting frontend on port {{ frontend_port }}..."
+npm run dev &
+FRONTEND_PID=$!
+
+# Handle Ctrl+C
+trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit" INT TERM
+
+echo ""
+echo "{{ domain_display_name }} is running!"
+echo "  Backend:  http://localhost:{{ backend_port }}"
+echo "  Frontend: http://localhost:{{ frontend_port }}"
+echo ""
+echo "Press Ctrl+C to stop."
+
+wait

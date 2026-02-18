@@ -1,0 +1,12 @@
+# Ontology Models
+from app.{{ domain_name }}.models.ontology import Employee, SystemLog
+
+# Benchmark Models
+from app.models.benchmark import (
+    BenchmarkSuite, BenchmarkCase, BenchmarkRun, BenchmarkCaseResult
+)
+
+__all__ = [
+    'Employee', 'SystemLog',
+    'BenchmarkSuite', 'BenchmarkCase', 'BenchmarkRun', 'BenchmarkCaseResult',
+]

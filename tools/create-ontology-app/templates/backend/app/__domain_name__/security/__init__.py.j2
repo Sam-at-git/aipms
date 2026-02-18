@@ -1,0 +1,16 @@
+"""{{ domain_display_name }} domain role permissions."""
+from typing import Dict, List
+from core.security.checker import Permission
+
+
+{{ domain_name.upper() }}_ROLE_PERMISSIONS: Dict[str, List[Permission]] = {
+    "manager": [Permission("*", "*")],
+    # TODO: Add domain-specific role permissions
+}
+
+
+def register_{{ domain_name }}_role_permissions() -> None:
+    """Register all {{ domain_name }} role permissions into the global PermissionChecker."""
+    from core.security.checker import permission_checker
+    for role, permissions in {{ domain_name.upper() }}_ROLE_PERMISSIONS.items():
+        permission_checker.register_role_permissions(role, permissions)

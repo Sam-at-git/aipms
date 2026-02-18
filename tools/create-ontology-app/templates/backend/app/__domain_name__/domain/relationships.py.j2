@@ -1,0 +1,15 @@
+"""{{ domain_display_name }} domain relationship definitions."""
+from core.domain.relationships import RelationshipRegistry
+
+
+def register_{{ domain_name }}_relationships(registry: RelationshipRegistry = None) -> None:
+    """Register all {{ domain_name }} domain relationships."""
+    if registry is None:
+        from core.domain.relationships import relationship_registry
+        registry = relationship_registry
+    # TODO: Register entity relationships
+    # Example:
+    # from core.domain.relationships import LinkType, Cardinality, EntityLink
+    # registry.register_relationships("MyEntity", [
+    #     EntityLink(source_entity="MyEntity", target_entity="Employee", ...),
+    # ])

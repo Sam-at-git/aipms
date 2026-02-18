@@ -1,0 +1,74 @@
+"""
+app/services/actions
+
+Action handler modules using ActionRegistry.
+"""
+from core.ai.actions import ActionRegistry
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Global action registry instance
+_action_registry: ActionRegistry = None
+
+
+def _create_action_registry() -> ActionRegistry:
+    """Create and initialize the global action registry."""
+    registry = ActionRegistry()
+
+    # Import and register domain actions
+    from app.{{ domain_name }}.actions import register_{{ domain_name }}_actions
+    register_{{ domain_name }}_actions(registry)
+
+    # Import and register generic actions
+    from app.services.actions import (
+        query_actions,
+        webhook_actions,
+        notification_actions,
+        interface_actions,
+    )
+
+    query_actions.register_query_actions(registry)
+    webhook_actions.register_webhook_actions(registry)
+    notification_actions.register_notification_actions(registry)
+    interface_actions.register_interface_actions(registry)
+
+    # System domain actions
+    from app.system.actions.system_query_actions import register_system_query_actions
+    from app.system.actions.system_mutation_actions import register_system_mutation_actions
+    register_system_query_actions(registry)
+    register_system_mutation_actions(registry)
+
+    logger.info(f"ActionRegistry initialized with {len(registry.list_actions())} actions")
+
+    return registry
+
+
+def register_smart_updates(ontology_registry) -> None:
+    """Register smart update actions for entities with smart_update config."""
+    registry = get_action_registry()
+    from app.services.actions import smart_update_actions
+    smart_update_actions.register_smart_update_actions(registry, ontology_registry)
+    logger.info(f"Smart update actions registered (total: {len(registry.list_actions())} actions)")
+
+
+def get_action_registry() -> ActionRegistry:
+    """Get the global action registry instance (lazy initialization)."""
+    global _action_registry
+    if _action_registry is None:
+        _action_registry = _create_action_registry()
+    return _action_registry
+
+
+def reset_action_registry() -> None:
+    """Reset the global action registry (useful for testing)."""
+    global _action_registry
+    _action_registry = None
+
+
+__all__ = [
+    "get_action_registry",
+    "reset_action_registry",
+    "register_smart_updates",
+]

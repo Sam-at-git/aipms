@@ -1,0 +1,342 @@
+import api from './apiClient'
+import type {
+  Employee, LoginResponse, AuditLog, ActionSummary,
+  MessagesListResponse, SearchResultsResponse, AvailableDatesResponse, AIResponseWithHistory, ConversationStatistics,
+  SessionDetailResponse, ReplayRequest,
+  ReplayResponse, DebugStatistics, SessionsListResponse, ReplaysListResponse,
+  TokenTrendResponse, ErrorAggregationResponse,
+  BenchmarkSuite, BenchmarkSuiteDetail, BenchmarkCase, BenchmarkRun, BenchmarkRunDetail,
+} from '../types'
+
+// Re-export domain APIs for backward compatibility
+export * from './{{ domain_name }}Api'
+{% raw %}
+// ============== Auth ==============
+
+export const authApi = {
+  login: async (username: string, password: string): Promise<LoginResponse> => {
+    const res = await api.post('/auth/login', { username, password })
+    return res.data
+  },
+  me: async (): Promise<Employee> => {
+    const res = await api.get('/auth/me')
+    return res.data
+  },
+  changePassword: async (oldPassword: string, newPassword: string) => {
+    const res = await api.post('/auth/change-password', {
+      old_password: oldPassword,
+      new_password: newPassword
+    })
+    return res.data
+  }
+}
+
+// ============== AI Chat ==============
+
+export const aiApi = {
+  chat: async (content: string, topicId?: string, followUpContext?: any, language?: string): Promise<any> => {
+    const res = await api.post('/ai/chat', {
+      content,
+      topic_id: topicId,
+      follow_up_context: followUpContext,
+      language: language || undefined
+    })
+    return res.data
+  },
+  confirm: async (action: any): Promise<any> => {
+    const res = await api.post('/ai/confirm', action)
+    return res.data
+  },
+}
+
+// ============== Conversations ==============
+
+export const conversationApi = {
+  list: async (topic_id?: string, limit?: number, before_timestamp?: string): Promise<MessagesListResponse> => {
+    const params: any = { limit: limit || 50 }
+    if (topic_id) params.topic_id = topic_id
+    if (before_timestamp) params.before_timestamp = before_timestamp
+    const res = await api.get('/conversations/messages', { params })
+    return res.data
+  },
+  search: async (keyword: string): Promise<SearchResultsResponse> => {
+    const res = await api.get('/conversations/search', { params: { keyword } })
+    return res.data
+  },
+  getStats: async (): Promise<ConversationStatistics> => {
+    const res = await api.get('/conversations/statistics')
+    return res.data
+  },
+  getAvailableDates: async (): Promise<AvailableDatesResponse> => {
+    const res = await api.get('/conversations/available-dates')
+    return res.data
+  },
+  deleteByDateRange: async (startDate: string, endDate: string) => {
+    const res = await api.delete('/conversations/messages', {
+      params: { start_date: startDate, end_date: endDate }
+    })
+    return res.data
+  }
+}
+
+// ============== Ontology ==============
+
+export const ontologyApi = {
+  getSchema: async () => {
+    const res = await api.get('/ontology/schema')
+    return res.data
+  },
+  getStats: async () => {
+    const res = await api.get('/ontology/stats')
+    return res.data
+  },
+  getSemanticMetadata: async () => {
+    const res = await api.get('/ontology/metadata/semantic')
+    return res.data
+  },
+  getKineticMetadata: async () => {
+    const res = await api.get('/ontology/metadata/kinetic')
+    return res.data
+  },
+  getDynamicMetadata: async () => {
+    const res = await api.get('/ontology/metadata/dynamic')
+    return res.data
+  },
+}
+
+// ============== Debug ==============
+
+export const debugApi = {
+  getSessions: async (params?: { limit?: number; offset?: number; status?: string; min_duration_ms?: number }): Promise<SessionsListResponse> => {
+    const res = await api.get('/debug/sessions', { params })
+    return res.data
+  },
+  getSession: async (sessionId: string): Promise<SessionDetailResponse> => {
+    const res = await api.get(`/debug/sessions/${sessionId}`)
+    return res.data
+  },
+  deleteSession: async (sessionId: string) => {
+    const res = await api.delete(`/debug/sessions/${sessionId}`)
+    return res.data
+  },
+  replay: async (data: ReplayRequest): Promise<ReplayResponse> => {
+    const res = await api.post('/debug/replay', data)
+    return res.data
+  },
+  getReplays: async (sessionId: string): Promise<ReplaysListResponse> => {
+    const res = await api.get(`/debug/sessions/${sessionId}/replays`)
+    return res.data
+  },
+  getStatistics: async (): Promise<DebugStatistics> => {
+    const res = await api.get('/debug/statistics')
+    return res.data
+  },
+  getTokenTrend: async (days?: number): Promise<TokenTrendResponse> => {
+    const res = await api.get('/debug/statistics/token-trend', { params: { days: days || 7 } })
+    return res.data
+  },
+  getErrorAggregation: async (days?: number): Promise<ErrorAggregationResponse> => {
+    const res = await api.get('/debug/statistics/errors', { params: { days: days || 7 } })
+    return res.data
+  },
+  getPhaseTiming: async (days?: number) => {
+    const res = await api.get('/debug/statistics/phase-timing', { params: { days: days || 7 } })
+    return res.data
+  },
+}
+
+// ============== Audit Logs ==============
+
+export const auditLogApi = {
+  getLogs: async (params?: any): Promise<AuditLog[]> => {
+    const res = await api.get('/audit-logs', { params })
+    return res.data
+  },
+  getDailyTrend: async (days?: number) => {
+    const res = await api.get('/audit-logs/daily-trend', { params: { days: days || 30 } })
+    return res.data
+  },
+  getActionSummary: async (days?: number): Promise<ActionSummary[]> => {
+    const res = await api.get('/audit-logs/action-summary', { params: { days: days || 30 } })
+    return res.data
+  },
+}
+
+// ============== Security ==============
+
+export const securityApi = {
+  getEvents: async (params?: any) => {
+    const res = await api.get('/security/events', { params })
+    return res.data
+  },
+  getDashboard: async () => {
+    const res = await api.get('/security/dashboard')
+    return res.data
+  },
+  getAlerts: async (params?: any) => {
+    const res = await api.get('/security/alerts', { params })
+    return res.data
+  },
+  acknowledgeAlert: async (alertId: number) => {
+    const res = await api.post(`/security/alerts/${alertId}/acknowledge`)
+    return res.data
+  },
+}
+
+// ============== Undo ==============
+
+export const undoApi = {
+  getUndoable: async () => {
+    const res = await api.get('/undo/undoable')
+    return res.data
+  },
+  undo: async (snapshotUuid: string) => {
+    const res = await api.post(`/undo/${snapshotUuid}`)
+    return res.data
+  },
+  getHistory: async () => {
+    const res = await api.get('/undo/history')
+    return res.data
+  },
+}
+
+// ============== Settings ==============
+
+export const settingsApi = {
+  getLLMSettings: async () => {
+    const res = await api.get('/settings/llm')
+    return res.data
+  },
+  updateLLMSettings: async (settings: any) => {
+    const res = await api.put('/settings/llm', settings)
+    return res.data
+  },
+  testLLM: async (settings: any) => {
+    const res = await api.post('/settings/llm/test', settings)
+    return res.data
+  },
+}
+
+// ============== Benchmark ==============
+
+export const benchmarkApi = {
+  getSuites: async (): Promise<BenchmarkSuite[]> => {
+    const res = await api.get('/benchmark/suites')
+    return res.data
+  },
+  getSuite: async (suiteId: number): Promise<BenchmarkSuiteDetail> => {
+    const res = await api.get(`/benchmark/suites/${suiteId}`)
+    return res.data
+  },
+  createSuite: async (data: any): Promise<BenchmarkSuite> => {
+    const res = await api.post('/benchmark/suites', data)
+    return res.data
+  },
+  updateSuite: async (suiteId: number, data: any): Promise<BenchmarkSuite> => {
+    const res = await api.put(`/benchmark/suites/${suiteId}`, data)
+    return res.data
+  },
+  deleteSuite: async (suiteId: number) => {
+    const res = await api.delete(`/benchmark/suites/${suiteId}`)
+    return res.data
+  },
+  createCase: async (suiteId: number, data: any): Promise<BenchmarkCase> => {
+    const res = await api.post(`/benchmark/suites/${suiteId}/cases`, data)
+    return res.data
+  },
+  updateCase: async (caseId: number, data: any): Promise<BenchmarkCase> => {
+    const res = await api.put(`/benchmark/cases/${caseId}`, data)
+    return res.data
+  },
+  deleteCase: async (caseId: number) => {
+    const res = await api.delete(`/benchmark/cases/${caseId}`)
+    return res.data
+  },
+  reorderCases: async (suiteId: number, caseIds: number[]) => {
+    const res = await api.post(`/benchmark/suites/${suiteId}/reorder`, { case_ids: caseIds })
+    return res.data
+  },
+  runSuites: async (suiteIds: number[]): Promise<any> => {
+    const res = await api.post('/benchmark/run', { suite_ids: suiteIds })
+    return res.data
+  },
+  getRun: async (runId: number): Promise<BenchmarkRunDetail> => {
+    const res = await api.get(`/benchmark/runs/${runId}`)
+    return res.data
+  },
+  getInitScripts: async (): Promise<string[]> => {
+    const res = await api.get('/benchmark/init-scripts')
+    return res.data
+  },
+  generateAssertions: async (input: string, caseType?: string) => {
+    const res = await api.post('/benchmark/generate-assertions', { input, case_type: caseType || 'mutation' })
+    return res.data
+  },
+}
+
+// ============== System Management ==============
+
+export const systemApi = {
+  // Data dictionary
+  getDictTypes: async () => { const res = await api.get('/sys-dict/types'); return res.data },
+  getDictItems: async (typeCode: string) => { const res = await api.get(`/sys-dict/types/${typeCode}/items`); return res.data },
+  createDictType: async (data: any) => { const res = await api.post('/sys-dict/types', data); return res.data },
+  updateDictType: async (id: number, data: any) => { const res = await api.put(`/sys-dict/types/${id}`, data); return res.data },
+  deleteDictType: async (id: number) => { const res = await api.delete(`/sys-dict/types/${id}`); return res.data },
+  createDictItem: async (typeCode: string, data: any) => { const res = await api.post(`/sys-dict/types/${typeCode}/items`, data); return res.data },
+  updateDictItem: async (id: number, data: any) => { const res = await api.put(`/sys-dict/items/${id}`, data); return res.data },
+  deleteDictItem: async (id: number) => { const res = await api.delete(`/sys-dict/items/${id}`); return res.data },
+
+  // Config
+  getConfigGroups: async () => { const res = await api.get('/sys-config/groups'); return res.data },
+  getConfigs: async (group?: string) => { const res = await api.get('/sys-config/', { params: group ? { group } : {} }); return res.data },
+  updateConfig: async (id: number, data: any) => { const res = await api.put(`/sys-config/${id}`, data); return res.data },
+  createConfig: async (data: any) => { const res = await api.post('/sys-config/', data); return res.data },
+  deleteConfig: async (id: number) => { const res = await api.delete(`/sys-config/${id}`); return res.data },
+  getConfigHistory: async (configKey: string) => { const res = await api.get(`/sys-config/${configKey}/history`); return res.data },
+
+  // RBAC
+  getRoles: async () => { const res = await api.get('/sys-roles/'); return res.data },
+  createRole: async (data: any) => { const res = await api.post('/sys-roles/', data); return res.data },
+  updateRole: async (id: number, data: any) => { const res = await api.put(`/sys-roles/${id}`, data); return res.data },
+  deleteRole: async (id: number) => { const res = await api.delete(`/sys-roles/${id}`); return res.data },
+  getPermissions: async () => { const res = await api.get('/sys-permissions/'); return res.data },
+  createPermission: async (data: any) => { const res = await api.post('/sys-permissions/', data); return res.data },
+  updatePermission: async (id: number, data: any) => { const res = await api.put(`/sys-permissions/${id}`, data); return res.data },
+  deletePermission: async (id: number) => { const res = await api.delete(`/sys-permissions/${id}`); return res.data },
+  getUserRoles: async (userId: number) => { const res = await api.get(`/sys-user-roles/user/${userId}`); return res.data },
+  assignRole: async (userId: number, roleId: number) => { const res = await api.post('/sys-user-roles/', { user_id: userId, role_id: roleId }); return res.data },
+  removeUserRole: async (id: number) => { const res = await api.delete(`/sys-user-roles/${id}`); return res.data },
+
+  // Organization
+  getDepartments: async () => { const res = await api.get('/sys-dept/'); return res.data },
+  createDepartment: async (data: any) => { const res = await api.post('/sys-dept/', data); return res.data },
+  updateDepartment: async (id: number, data: any) => { const res = await api.put(`/sys-dept/${id}`, data); return res.data },
+  deleteDepartment: async (id: number) => { const res = await api.delete(`/sys-dept/${id}`); return res.data },
+  getPositions: async () => { const res = await api.get('/sys-pos/'); return res.data },
+  createPosition: async (data: any) => { const res = await api.post('/sys-pos/', data); return res.data },
+  updatePosition: async (id: number, data: any) => { const res = await api.put(`/sys-pos/${id}`, data); return res.data },
+  deletePosition: async (id: number) => { const res = await api.delete(`/sys-pos/${id}`); return res.data },
+
+  // Messaging
+  getTemplates: async () => { const res = await api.get('/sys-msg-tpl/'); return res.data },
+  createTemplate: async (data: any) => { const res = await api.post('/sys-msg-tpl/', data); return res.data },
+  updateTemplate: async (id: number, data: any) => { const res = await api.put(`/sys-msg-tpl/${id}`, data); return res.data },
+  deleteTemplate: async (id: number) => { const res = await api.delete(`/sys-msg-tpl/${id}`); return res.data },
+  getAnnouncements: async () => { const res = await api.get('/sys-ann/'); return res.data },
+  createAnnouncement: async (data: any) => { const res = await api.post('/sys-ann/', data); return res.data },
+  updateAnnouncement: async (id: number, data: any) => { const res = await api.put(`/sys-ann/${id}`, data); return res.data },
+  deleteAnnouncement: async (id: number) => { const res = await api.delete(`/sys-ann/${id}`); return res.data },
+  getMessages: async () => { const res = await api.get('/sys-msg/'); return res.data },
+  sendMessage: async (data: any) => { const res = await api.post('/sys-msg/', data); return res.data },
+
+  // Scheduler
+  getJobs: async () => { const res = await api.get('/scheduler/jobs'); return res.data },
+  createJob: async (data: any) => { const res = await api.post('/scheduler/jobs', data); return res.data },
+  updateJob: async (id: number, data: any) => { const res = await api.put(`/scheduler/jobs/${id}`, data); return res.data },
+  deleteJob: async (id: number) => { const res = await api.delete(`/scheduler/jobs/${id}`); return res.data },
+  pauseJob: async (id: number) => { const res = await api.post(`/scheduler/jobs/${id}/pause`); return res.data },
+  resumeJob: async (id: number) => { const res = await api.post(`/scheduler/jobs/${id}/resume`); return res.data },
+  getJobHistory: async (id: number) => { const res = await api.get(`/scheduler/jobs/${id}/history`); return res.data },
+}
+{% endraw %}

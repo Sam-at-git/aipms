@@ -1,0 +1,111 @@
+import { useState, useEffect } from 'react'
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
+import { useAuthStore } from './store'
+import Layout from './components/Layout'
+import ChatPanel from './components/ChatPanel'
+import Login from './pages/Login'
+import Settings from './pages/Settings'
+import AuditLogs from './pages/AuditLogs'
+import Ontology from './pages/Ontology'
+import SecurityDashboard from './pages/SecurityDashboard'
+import Chat from './pages/Chat'
+import ConversationAdmin from './pages/ConversationAdmin'
+import DebugPanel from './pages/DebugPanel'
+import SessionDetail from './pages/SessionDetail'
+import ReplayResult from './pages/ReplayResult'
+import DictManagement from './pages/system/DictManagement'
+import ConfigManagement from './pages/system/ConfigManagement'
+import RbacManagement from './pages/system/RbacManagement'
+import OrgManagement from './pages/system/OrgManagement'
+import MessageCenter from './pages/system/MessageCenter'
+import SchedulerManagement from './pages/system/SchedulerManagement'
+import Benchmark from './pages/Benchmark'
+import BenchmarkSuiteDetail from './pages/BenchmarkSuiteDetail'
+// Domain routes
+import { get{{ domain_class_name }}Routes, {{ domain_name }}NavItems } from './pages/{{ domain_name }}/routes'
+
+{% raw %}
+// Protected route
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated } = useAuthStore()
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  return <>{children}</>
+}
+
+// Layout with chat panel
+function LayoutWithChat() {
+  return (
+    <div className="flex h-screen bg-dark-950">
+      <div className="flex-1 flex overflow-hidden">
+        <Layout />
+      </div>
+    </div>
+  )
+}
+
+// Main page wrapper (includes ChatPanel)
+function PageWithChat({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex flex-1 overflow-hidden">
+      <div className="flex-1 overflow-auto">
+        {children}
+      </div>
+      <ChatPanel />
+    </div>
+  )
+}
+
+// Chat-only page
+function ChatOnlyPage() {
+  return (
+    <div className="flex-1 overflow-hidden">
+      <Chat />
+    </div>
+  )
+}
+{% endraw %}
+
+function App() {
+  return (
+    <Routes>
+{%- raw %}
+      <Route path="/login" element={<Login />} />
+      <Route path="/" element={
+        <ProtectedRoute>
+          <LayoutWithChat />
+        </ProtectedRoute>
+      }>
+        <Route index element={<Navigate to="/chat" replace />} />
+        <Route path="chat" element={<ChatOnlyPage />} />
+        <Route path="ontology" element={<PageWithChat><Ontology /></PageWithChat>} />
+        <Route path="audit-logs" element={<PageWithChat><AuditLogs /></PageWithChat>} />
+        <Route path="security" element={<PageWithChat><SecurityDashboard /></PageWithChat>} />
+        <Route path="settings" element={<PageWithChat><Settings /></PageWithChat>} />
+        <Route path="conversations" element={<PageWithChat><ConversationAdmin /></PageWithChat>} />
+        <Route path="debug" element={<PageWithChat><DebugPanel /></PageWithChat>} />
+        <Route path="debug/:sessionId" element={<PageWithChat><SessionDetail /></PageWithChat>} />
+        <Route path="debug/replay/:replayId" element={<PageWithChat><ReplayResult /></PageWithChat>} />
+        <Route path="benchmark" element={<PageWithChat><Benchmark /></PageWithChat>} />
+        <Route path="benchmark/:suiteId" element={<PageWithChat><BenchmarkSuiteDetail /></PageWithChat>} />
+        {/* System management */}
+        <Route path="system/dict" element={<PageWithChat><DictManagement /></PageWithChat>} />
+        <Route path="system/config" element={<PageWithChat><ConfigManagement /></PageWithChat>} />
+        <Route path="system/rbac" element={<PageWithChat><RbacManagement /></PageWithChat>} />
+        <Route path="system/org" element={<PageWithChat><OrgManagement /></PageWithChat>} />
+        <Route path="system/messages" element={<PageWithChat><MessageCenter /></PageWithChat>} />
+        <Route path="system/scheduler" element={<PageWithChat><SchedulerManagement /></PageWithChat>} />
+{% endraw %}
+        {/* Domain routes */}
+        {get{{ domain_class_name }}Routes()}
+{%- raw %}
+      </Route>
+    </Routes>
+{% endraw %}
+  )
+}
+
+export default App

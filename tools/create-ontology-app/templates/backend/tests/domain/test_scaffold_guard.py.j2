@@ -1,0 +1,90 @@
+"""
+Scaffold guard: verify domain boundaries are respected.
+
+Ensures:
+- app/ root only imports domain through documented coupling points
+- Domain plugin doesn't import from app.routers or app.system
+- app/models/ontology.py contains no domain ORM classes
+"""
+import os
+import re
+import pytest
+
+
+def _get_python_files(directory: str):
+    """Yield all .py files in directory recursively."""
+    for root, dirs, files in os.walk(directory):
+        dirs[:] = [d for d in dirs if d != '__pycache__']
+        for f in files:
+            if f.endswith('.py'):
+                yield os.path.join(root, f)
+
+
+def _read_file(filepath: str) -> str:
+    with open(filepath, 'r', encoding='utf-8') as f:
+        return f.read()
+
+
+def test_no_hotel_references():
+    """Verify no 'hotel' references remain in the scaffold."""
+    app_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'app')
+    if not os.path.isdir(app_dir):
+        pytest.skip("app/ directory not found")
+
+    hotel_pattern = re.compile(r'app\.hotel|from\s+app\.hotel|import\s+.*hotel', re.IGNORECASE)
+    violations = []
+
+    for filepath in _get_python_files(app_dir):
+        content = _read_file(filepath)
+        if hotel_pattern.search(content):
+            rel_path = os.path.relpath(filepath, app_dir)
+            violations.append(rel_path)
+
+    assert not violations, (
+        f"No 'hotel' references should exist. Violations in:\n"
+        + "\n".join(f"  - app/{v}" for v in violations)
+    )
+
+
+def test_domain_plugin_isolation():
+    """Verify domain plugin doesn't import from app.routers or app.system."""
+    domain_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        'app', '{{ domain_name }}'
+    )
+    if not os.path.isdir(domain_dir):
+        pytest.skip("Domain directory not found")
+
+    cross_import_pattern = re.compile(r'from\s+app\.(routers|system)\b')
+    violations = []
+
+    for filepath in _get_python_files(domain_dir):
+        content = _read_file(filepath)
+        matches = cross_import_pattern.findall(content)
+        if matches:
+            rel_path = os.path.relpath(filepath, domain_dir)
+            violations.append(f"{rel_path}: imports from {', '.join(set(matches))}")
+
+    assert not violations, (
+        f"Domain plugin must not import from app.routers or app.system:\n"
+        + "\n".join(f"  - {v}" for v in violations)
+    )
+
+
+def test_generic_ontology_models_clean():
+    """Verify app/models/ontology.py contains no domain ORM classes."""
+    ontology_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        'app', 'models', 'ontology.py'
+    )
+    if not os.path.isfile(ontology_path):
+        pytest.skip("app/models/ontology.py not found")
+
+    content = _read_file(ontology_path)
+    # Should only contain SecurityLevel and similar framework types
+    class_pattern = re.compile(r'^class\s+(\w+)\(Base\)', re.MULTILINE)
+    orm_classes = class_pattern.findall(content)
+
+    assert not orm_classes, (
+        f"app/models/ontology.py should not contain ORM model classes. Found: {orm_classes}"
+    )

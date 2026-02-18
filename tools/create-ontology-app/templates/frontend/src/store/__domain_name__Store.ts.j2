@@ -1,0 +1,17 @@
+/**
+ * {{ domain_display_name }} domain Zustand stores.
+ * TODO: Add your domain stores here.
+ */
+import { create } from 'zustand'
+{% raw %}
+// Placeholder store
+interface DashboardState {
+  loading: boolean
+  setLoading: (loading: boolean) => void
+}
+
+export const useDashboardStore = create<DashboardState>((set) => ({
+  loading: false,
+  setLoading: (loading) => set({ loading }),
+}))
+{% endraw %}

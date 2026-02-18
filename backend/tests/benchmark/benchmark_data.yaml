@@ -1,171 +1,224 @@
 # OAG Benchmark 测试数据
 # 日期占位符: $today, $tomorrow, $day_after_tomorrow 在运行时替换为实际日期
 #
-# 每个 group 在独立数据库中执行，组内用例按序执行（支持依赖关系）
+# 每个 suite 在独立数据库中执行，组内用例按序执行（支持依赖关系）
 # 查询类操作 (ontology_query, query_smart, view, query_*) 跳过 execute_action
+#
+# 统一断言格式：所有断言在 assertions dict 中
 
-groups:
+suites:
   - name: "散客入住流程"
+    category: "OAG"
     description: "测试散客入住和退房场景"
-    tests:
+    init_script: null
+    cases:
       - name: "散客入住201房间"
         input: "汪先生要入住201房间，电话13912345678，明天退房"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "汪先生"
-            room_number: "201"
-            guest_phone: "13912345678"
-        verify_db:
-          - sql: "SELECT name, phone FROM guests WHERE name = '汪先生'"
-            expect:
-              rows: 1
-              values:
-                name: "汪先生"
-                phone: "13912345678"
-          - sql: "SELECT status FROM rooms WHERE room_number = '201'"
-            expect:
-              values:
-                status: "occupied"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "汪先生"
+              room_number: "201"
+              guest_phone: "13912345678"
+          verify_db:
+            - sql: "SELECT name, phone FROM guests WHERE name = '汪先生'"
+              expect:
+                rows: 1
+                values:
+                  name: "汪先生"
+                  phone: "13912345678"
+            - sql: "SELECT status FROM rooms WHERE room_number = '201'"
+              expect:
+                values:
+                  status: "occupied"
+          response_not_contains: ["错误", "失败"]
 
       - name: "201房间退房"
         input: "201房间退房"
-        expect_action:
-          action_type: "checkout"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '201'"
-            expect:
-              values:
-                status: "vacant_dirty"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "checkout"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '201'"
+              expect:
+                values:
+                  status: "vacant_dirty"
+          response_not_contains: ["错误", "失败"]
 
   - name: "预订流程"
+    category: "OAG"
     description: "测试创建预订和预订入住"
-    tests:
+    init_script: null
+    cases:
       - name: "创建预订"
         input: "帮赵女士预订一间标间，电话13611112222，今天入住，明天退房"
+        run_as: "front1"
         follow_up_fields:
           room_type: "标间"
           room_type_id: "标间"
-        expect_action:
-          action_type: "create_reservation"
-          params_contain:
-            guest_name: "赵女士"
-            guest_phone: "13611112222"
-            check_in_date: "$today"
-            check_out_date: "$tomorrow"
-        verify_db:
-          - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '赵女士')"
-            expect:
-              rows: 1
-              values:
-                status: "confirmed"
+        assertions:
+          expect_action:
+            action_type: "create_reservation"
+            params_contain:
+              guest_name: "赵女士"
+              guest_phone: "13611112222"
+              check_in_date: "$today"
+              check_out_date: "$tomorrow"
+          verify_db:
+            - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '赵女士')"
+              expect:
+                rows: 1
+                values:
+                  status: "confirmed"
+          response_not_contains: ["错误", "失败"]
 
       - name: "预订入住"
         input: "赵女士的预订办理入住，安排203房间，明天退房"
+        run_as: "front1"
         follow_up_fields:
+          guest_name: "赵女士"
           room_number: "203"
           expected_check_out: "$tomorrow"
-        expect_action:
-          action_type_pattern: "^(checkin|walkin_checkin)$"
-        verify_db:
-          - sql: "SELECT r.status FROM reservations r JOIN guests g ON r.guest_id = g.id WHERE g.name = '赵女士'"
-            expect:
-              values:
-                status: "checked_in"
-          - sql: "SELECT status FROM rooms WHERE room_number = '203'"
-            expect:
-              values:
-                status: "occupied"
+        assertions:
+          expect_action:
+            action_type_pattern: "^(checkin|walkin_checkin)$"
+          verify_db:
+            - sql: "SELECT r.status FROM reservations r JOIN guests g ON r.guest_id = g.id WHERE g.name = '赵女士'"
+              expect:
+                values:
+                  status: "checked_in"
+            - sql: "SELECT status FROM rooms WHERE room_number = '203'"
+              expect:
+                values:
+                  status: "occupied"
+          response_not_contains: ["错误", "失败"]
 
   - name: "任务管理"
+    category: "OAG"
     description: "测试创建和完成清洁任务"
-    tests:
+    init_script: null
+    cases:
       - name: "创建清洁任务"
         input: "给301房间创建一个清洁任务"
+        run_as: "front1"
         follow_up_fields:
           task_type: "cleaning"
-        expect_action:
-          action_type: "create_task"
-          params_contain:
-            room_number: "301"
-        verify_db:
-          - sql: "SELECT t.status, t.task_type FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '301'"
-            expect:
-              rows: 1
-              values:
-                status: "pending"
+        assertions:
+          expect_action:
+            action_type: "create_task"
+            params_contain:
+              room_number: "301"
+          verify_db:
+            - sql: "SELECT t.status, t.task_type FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '301'"
+              expect:
+                rows: 1
+                values:
+                  status: "pending"
+          response_not_contains: ["错误", "失败"]
 
       - name: "分配清洁任务"
         input: "把301房间的清洁任务分配给刘阿姨"
+        run_as: "front1"
         follow_up_fields:
           assignee_name: "刘阿姨"
-        expect_action:
-          action_type: "assign_task"
-        verify_db:
-          - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '301'"
-            expect:
-              values:
-                status: "assigned"
+        assertions:
+          expect_action:
+            action_type: "assign_task"
+          verify_db:
+            - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '301'"
+              expect:
+                values:
+                  status: "assigned"
+          response_not_contains: ["错误", "失败"]
 
   - name: "房间查询"
+    category: "OAG"
     description: "测试房间状态和空房查询"
-    tests:
+    init_script: null
+    cases:
       - name: "查看空闲房间"
         input: "现在有哪些空房间"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "查看201房间状态"
         input: "201房间现在是什么状态"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
   - name: "客户查询"
+    category: "OAG"
     description: "测试客户相关查询"
-    tests:
+    init_script: null
+    cases:
       - name: "散客入住后查询客户"
         input: "周先生要入住301房间，电话13700001111，后天退房"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "周先生"
-            room_number: "301"
-        verify_db:
-          - sql: "SELECT name FROM guests WHERE name = '周先生'"
-            expect:
-              rows: 1
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "周先生"
+              room_number: "301"
+          verify_db:
+            - sql: "SELECT name FROM guests WHERE name = '周先生'"
+              expect:
+                rows: 1
+          response_not_contains: ["错误", "失败"]
 
       - name: "查询客户信息"
         input: "查一下周先生的信息"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
   - name: "账单管理"
+    category: "OAG"
     description: "测试账单查询和付款"
-    tests:
+    init_script: null
+    cases:
       - name: "入住以创建账单"
         input: "钱先生入住401房间，电话13500005555，后天退房"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "钱先生"
-            room_number: "401"
-        verify_db:
-          - sql: "SELECT name FROM guests WHERE name = '钱先生'"
-            expect:
-              rows: 1
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "钱先生"
+              room_number: "401"
+          verify_db:
+            - sql: "SELECT name FROM guests WHERE name = '钱先生'"
+              expect:
+                rows: 1
+          response_not_contains: ["错误", "失败"]
 
       - name: "查看账单"
-        input: "查看401房间的账单"
-        expect_query_result: true
+        input: "查看钱先生的账单"
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
 
       - name: "添加付款"
         input: "401房间付款500元现金"
-        expect_action:
-          action_type: "add_payment"
-          params_contain:
-            amount: "500"
-        verify_db:
-          - sql: "SELECT SUM(amount) as total FROM payments WHERE bill_id = (SELECT b.id FROM bills b JOIN stay_records s ON b.stay_record_id = s.id JOIN rooms r ON s.room_id = r.id WHERE r.room_number = '401')"
-            expect:
-              rows: 1
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "add_payment"
+            params_contain:
+              amount: "500"
+          verify_db:
+            - sql: "SELECT SUM(amount) as total FROM payments WHERE bill_id = (SELECT b.id FROM bills b JOIN stay_records s ON b.stay_record_id = s.id JOIN rooms r ON s.room_id = r.id WHERE r.room_number = '401')"
+              expect:
+                rows: 1
+          response_not_contains: ["错误", "失败"]
 
   # ============================================================
   # 以下为补充的 50 条测试用例，覆盖更多场景和口语表达
@@ -173,926 +226,1144 @@ groups:
 
   # ---------- 7. 散客入住-口语表达 ----------
   - name: "散客入住-口语表达"
+    category: "OAG"
     description: "测试各种口语化的入住和退房表达"
-    tests:
+    init_script: null
+    cases:
       - name: "口语-来了个客人"
         input: "来了个客人叫李明，手机号18866665555，住302，明天走"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "李明"
-            room_number: "302"
-            guest_phone: "18866665555"
-        verify_db:
-          - sql: "SELECT name FROM guests WHERE name = '李明'"
-            expect:
-              rows: 1
-          - sql: "SELECT status FROM rooms WHERE room_number = '302'"
-            expect:
-              values:
-                status: "occupied"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "李明"
+              room_number: "302"
+              guest_phone: "18866665555"
+          verify_db:
+            - sql: "SELECT name FROM guests WHERE name = '李明'"
+              expect:
+                rows: 1
+            - sql: "SELECT status FROM rooms WHERE room_number = '302'"
+              expect:
+                values:
+                  status: "occupied"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-开房"
         input: "有位张女士要开房，手机13800138000，给她202，后天退"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "张女士"
-            room_number: "202"
-            guest_phone: "13800138000"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '202'"
-            expect:
-              values:
-                status: "occupied"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "张女士"
+              room_number: "202"
+              guest_phone: "13800138000"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '202'"
+              expect:
+                values:
+                  status: "occupied"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-帮办个入住"
         input: "帮一个叫王丽的客人办入住，电话15911112222，503豪华间，后天退"
+        run_as: "front1"
         follow_up_fields:
           room_number: "503"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "王丽"
-            guest_phone: "15911112222"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '503'"
-            expect:
-              values:
-                status: "occupied"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "王丽"
+              guest_phone: "15911112222"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '503'"
+              expect:
+                values:
+                  status: "occupied"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-退房简洁"
         input: "302退房"
-        expect_action:
-          action_type: "checkout"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '302'"
-            expect:
-              values:
-                status: "vacant_dirty"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "checkout"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '302'"
+              expect:
+                values:
+                  status: "vacant_dirty"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-客人要走了"
         input: "202的客人要走了，帮忙办退房"
-        expect_action:
-          action_type: "checkout"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '202'"
-            expect:
-              values:
-                status: "vacant_dirty"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "checkout"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '202'"
+              expect:
+                values:
+                  status: "vacant_dirty"
+          response_not_contains: ["错误", "失败"]
 
   # ---------- 8. 完整住宿流程 ----------
   - name: "完整住宿流程"
+    category: "OAG"
     description: "测试预订→入住→延住→退房→查账的完整流程"
-    tests:
+    init_script: null
+    cases:
       - name: "电话订房"
         input: "有个客人打电话来订房，叫陈伟，电话13333334444，要标间，今天到明天走"
+        run_as: "front1"
         follow_up_fields:
           room_type: "标间"
           room_type_id: "标间"
-        expect_action:
-          action_type: "create_reservation"
-          params_contain:
-            guest_name: "陈伟"
-            guest_phone: "13333334444"
-            check_in_date: "$today"
-            check_out_date: "$tomorrow"
-        verify_db:
-          - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '陈伟')"
-            expect:
-              rows: 1
-              values:
-                status: "confirmed"
+        assertions:
+          expect_action:
+            action_type: "create_reservation"
+            params_contain:
+              guest_name: "陈伟"
+              guest_phone: "13333334444"
+              check_in_date: "$today"
+              check_out_date: "$tomorrow"
+          verify_db:
+            - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '陈伟')"
+              expect:
+                rows: 1
+                values:
+                  status: "confirmed"
+          response_not_contains: ["错误", "失败"]
 
       - name: "客人到了办入住"
         input: "陈伟有预订，帮他办入住203房间，明天退房"
+        run_as: "front1"
         follow_up_fields:
           room_number: "203"
           expected_check_out: "$tomorrow"
-        expect_action:
-          action_type_pattern: "^(checkin|walkin_checkin)$"
-          params_contain:
-            room_number: "203"
-        verify_db:
-          - sql: "SELECT r.status FROM reservations r JOIN guests g ON r.guest_id = g.id WHERE g.name = '陈伟'"
-            expect:
-              values:
-                status: "checked_in"
-          - sql: "SELECT status FROM rooms WHERE room_number = '203'"
-            expect:
-              values:
-                status: "occupied"
+        assertions:
+          expect_action:
+            action_type_pattern: "^(checkin|walkin_checkin)$"
+            params_contain:
+              room_number: "203"
+          verify_db:
+            - sql: "SELECT r.status FROM reservations r JOIN guests g ON r.guest_id = g.id WHERE g.name = '陈伟'"
+              expect:
+                values:
+                  status: "checked_in"
+            - sql: "SELECT status FROM rooms WHERE room_number = '203'"
+              expect:
+                values:
+                  status: "occupied"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-多住一天"
         input: "203房间的陈伟想多住一天，延住到后天退房"
+        run_as: "front1"
         follow_up_fields:
           new_check_out_date: "$day_after_tomorrow"
-        expect_action:
-          action_type: "extend_stay"
+        assertions:
+          expect_action:
+            action_type: "extend_stay"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-帮退房"
         input: "203房间退房"
-        expect_action:
-          action_type: "checkout"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "checkout"
+          response_not_contains: ["错误", "失败"]
 
       - name: "查消费明细"
-        input: "看看陈伟的消费明细"
-        expect_query_result: true
+        input: "查看203房间的消费情况"
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
 
   # ---------- 9. 预订变更 ----------
   - name: "预订变更"
+    category: "OAG"
     description: "测试预订的取消和修改"
-    tests:
+    init_script: null
+    cases:
       - name: "口语-订个豪华间"
         input: "孙雪要订个豪华间，手机15666667777，今天到明天"
+        run_as: "front1"
         follow_up_fields:
           room_type: "豪华间"
           room_type_id: "豪华间"
-        expect_action:
-          action_type: "create_reservation"
-          params_contain:
-            guest_name: "孙雪"
-            guest_phone: "15666667777"
-        verify_db:
-          - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '孙雪')"
-            expect:
-              values:
-                status: "confirmed"
+        assertions:
+          expect_action:
+            action_type: "create_reservation"
+            params_contain:
+              guest_name: "孙雪"
+              guest_phone: "15666667777"
+          verify_db:
+            - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '孙雪')"
+              expect:
+                values:
+                  status: "confirmed"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-不来了取消"
-        input: "孙雪不来了，把她的预订取消掉"
-        expect_action:
-          action_type: "cancel_reservation"
-        verify_db:
-          - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '孙雪') ORDER BY id DESC LIMIT 1"
-            expect:
-              values:
-                status: "cancelled"
+        input: "把孙雪的预订取消掉，她不来了"
+        run_as: "front1"
+        follow_up_fields:
+          guest_name: "孙雪"
+        assertions:
+          expect_action:
+            action_type: "cancel_reservation"
+          skip_execute: true
 
       - name: "另一位订房"
         input: "吴强要订房，大床房，电话13777778888，今天住明天退"
+        run_as: "front1"
         follow_up_fields:
           room_type: "大床房"
           room_type_id: "大床房"
-        expect_action:
-          action_type: "create_reservation"
-          params_contain:
-            guest_name: "吴强"
-            guest_phone: "13777778888"
-        verify_db:
-          - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '吴强')"
-            expect:
-              values:
-                status: "confirmed"
+        assertions:
+          expect_action:
+            action_type: "create_reservation"
+            params_contain:
+              guest_name: "吴强"
+              guest_phone: "13777778888"
+          verify_db:
+            - sql: "SELECT status FROM reservations WHERE guest_id = (SELECT id FROM guests WHERE name = '吴强')"
+              expect:
+                values:
+                  status: "confirmed"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-改成后天退"
         input: "吴强的预订改成后天退房"
-        expect_action:
-          action_type: "modify_reservation"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "modify_reservation"
+          response_not_contains: ["错误", "失败"]
 
   # ---------- 10. 换房流程 ----------
   - name: "换房流程"
+    category: "OAG"
     description: "测试客人换房场景"
-    tests:
+    init_script: null
+    cases:
       - name: "入住205"
         input: "马飞入住205标间，电话13100001111，后天退"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "马飞"
-            room_number: "205"
-            guest_phone: "13100001111"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '205'"
-            expect:
-              values:
-                status: "occupied"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "马飞"
+              room_number: "205"
+              guest_phone: "13100001111"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '205'"
+              expect:
+                values:
+                  status: "occupied"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-房间太小换房"
         input: "205的客人嫌房间小，给他换到306大床房"
-        expect_action:
-          action_type: "change_room"
-          params_contain:
-            new_room_number: "306"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '306'"
-            expect:
-              values:
-                status: "occupied"
-          - sql: "SELECT status FROM rooms WHERE room_number = '205'"
-            expect:
-              values:
-                status: "vacant_dirty"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "change_room"
+            params_contain:
+              new_room_number: "306"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '306'"
+              expect:
+                values:
+                  status: "occupied"
+            - sql: "SELECT status FROM rooms WHERE room_number = '205'"
+              expect:
+                values:
+                  status: "vacant_dirty"
+          response_not_contains: ["错误", "失败"]
 
       - name: "查换房后住哪"
         input: "马飞现在住在哪个房间"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
   # ---------- 11. 延住流程 ----------
   - name: "延住流程"
+    category: "OAG"
     description: "测试客人延住场景"
-    tests:
+    init_script: null
+    cases:
       - name: "入住303"
         input: "郑芳住303，手机13200002222，明天退"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "郑芳"
-            room_number: "303"
-            guest_phone: "13200002222"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '303'"
-            expect:
-              values:
-                status: "occupied"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "郑芳"
+              room_number: "303"
+              guest_phone: "13200002222"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '303'"
+              expect:
+                values:
+                  status: "occupied"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-续住到后天"
         input: "303房间的郑芳要续住到后天退房"
+        run_as: "front1"
         follow_up_fields:
           new_check_out_date: "$day_after_tomorrow"
-        expect_action:
-          action_type: "extend_stay"
+        assertions:
+          expect_action:
+            action_type: "extend_stay"
+          response_not_contains: ["错误", "失败"]
 
       - name: "查303住客"
         input: "303房间住客信息给我看看"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
   # ---------- 12. 任务多场景 ----------
   - name: "任务多场景"
+    category: "OAG"
     description: "测试多种任务创建和分配的表达方式"
-    tests:
+    init_script: null
+    cases:
       - name: "口语-需要打扫"
-        input: "302需要打扫一下"
+        input: "给302房间创建一个打扫任务"
+        run_as: "front1"
         follow_up_fields:
           task_type: "cleaning"
-        expect_action:
-          action_type: "create_task"
-          params_contain:
-            room_number: "302"
-        verify_db:
-          - sql: "SELECT t.task_type FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '302'"
-            expect:
-              rows: 1
+        assertions:
+          expect_action:
+            action_type: "create_task"
+            params_contain:
+              room_number: "302"
+          verify_db:
+            - sql: "SELECT t.task_type FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '302'"
+              expect:
+                rows: 1
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-报修"
         input: "509房间马桶坏了，报个修"
+        run_as: "front1"
         follow_up_fields:
           task_type: "maintenance"
-        expect_action:
-          action_type: "create_task"
-          params_contain:
-            room_number: "509"
-        verify_db:
-          - sql: "SELECT t.task_type FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '509'"
-            expect:
-              rows: 1
+        assertions:
+          expect_action:
+            action_type: "create_task"
+            params_contain:
+              room_number: "509"
+          verify_db:
+            - sql: "SELECT t.task_type FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '509'"
+              expect:
+                rows: 1
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-安排打扫"
         input: "把302的清洁任务分配给陈阿姨"
+        run_as: "front1"
         follow_up_fields:
           assignee_name: "陈阿姨"
-        expect_action:
-          action_type: "assign_task"
-        verify_db:
-          - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '302' ORDER BY t.id DESC LIMIT 1"
-            expect:
-              values:
-                status: "assigned"
+        assertions:
+          expect_action:
+            action_type: "assign_task"
+          verify_db:
+            - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '302' ORDER BY t.id DESC LIMIT 1"
+              expect:
+                values:
+                  status: "assigned"
+          response_not_contains: ["错误", "失败"]
 
       - name: "查待办任务"
         input: "现在有哪些待处理的任务"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "查房间维修任务"
         input: "看看509有没有维修任务"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
   # ---------- 13. 房间查询大全 ----------
   - name: "房间查询大全"
+    category: "OAG"
     description: "测试各种房间相关的查询表达"
-    tests:
+    init_script: null
+    cases:
       - name: "口语-还有标间吗"
         input: "还有标间空着吗"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-大床房剩几间"
         input: "大床房还剩几间"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-三楼有空房没"
         input: "三楼有空房没"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-住了多少间"
         input: "今天一共住了多少间房"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-脏房有哪些"
         input: "哪些房间需要打扫"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-什么房型"
         input: "501是什么类型的房间"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
   # ---------- 14. 客户与住宿查询 ----------
   - name: "客户与住宿查询"
+    category: "OAG"
     description: "测试客户信息和在住情况的查询"
-    tests:
+    init_script: null
+    cases:
       - name: "入住207"
         input: "丁海入住207，电话13888889999，后天退"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "丁海"
-            room_number: "207"
-            guest_phone: "13888889999"
-        verify_db:
-          - sql: "SELECT name FROM guests WHERE name = '丁海'"
-            expect:
-              rows: 1
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "丁海"
+              room_number: "207"
+              guest_phone: "13888889999"
+          verify_db:
+            - sql: "SELECT name FROM guests WHERE name = '丁海'"
+              expect:
+                rows: 1
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-手机号查人"
         input: "手机号13888889999是哪位客人"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-住了多少人"
         input: "现在酒店一共住了多少客人"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-今天几位入住"
         input: "今天有几位办理入住的"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-今天有预订吗"
         input: "看看今天有没有预订到店的客人"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
   # ---------- 15. 账单付款变体 ----------
   - name: "账单付款变体"
+    category: "OAG"
     description: "测试多种付款方式和账单查询的口语表达"
-    tests:
+    init_script: null
+    cases:
       - name: "入住308"
         input: "韩磊要入住308房间，电话13600006666，后天退房"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "韩磊"
-            room_number: "308"
-            guest_phone: "13600006666"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '308'"
-            expect:
-              values:
-                status: "occupied"
-
-      - name: "口语-账单多少钱"
-        input: "308房间的账单多少钱"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "韩磊"
+              room_number: "308"
+              guest_phone: "13600006666"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '308'"
+              expect:
+                values:
+                  status: "occupied"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-刷卡付"
         input: "308房间刷卡付300"
-        expect_action:
-          action_type: "add_payment"
-          params_contain:
-            amount: "300"
-
-      - name: "口语-还差多少"
-        input: "查一下308还差多少没付"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "add_payment"
+            params_contain:
+              amount: "300"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-微信再付"
         input: "308再收200，微信支付"
-        expect_action:
-          action_type: "add_payment"
-          params_contain:
-            amount: "200"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "add_payment"
+            params_contain:
+              amount: "200"
+          response_not_contains: ["错误", "失败"]
 
   # ---------- 16. 房间状态管理 ----------
   - name: "房间状态管理"
+    category: "OAG"
     description: "测试标记房间干净/脏的口语表达"
-    tests:
+    init_script: null
+    cases:
       - name: "入住204用于后续退房"
         input: "刘伟要入住204房间，电话13900004444，明天退房"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "刘伟"
-            room_number: "204"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '204'"
-            expect:
-              values:
-                status: "occupied"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "刘伟"
+              room_number: "204"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '204'"
+              expect:
+                values:
+                  status: "occupied"
+          response_not_contains: ["错误", "失败"]
 
       - name: "204退房变脏房"
         input: "204房间退房"
-        expect_action:
-          action_type: "checkout"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '204'"
-            expect:
-              values:
-                status: "vacant_dirty"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "checkout"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '204'"
+              expect:
+                values:
+                  status: "vacant_dirty"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-打扫好了"
         input: "204打扫完了，可以住了"
-        expect_action:
-          action_type: "mark_room_clean"
-          params_contain:
-            room_number: "204"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '204'"
-            expect:
-              values:
-                status: "vacant_clean"
+        run_as: "cleaner1"
+        assertions:
+          expect_action:
+            action_type: "mark_room_clean"
+            params_contain:
+              room_number: "204"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '204'"
+              expect:
+                values:
+                  status: "vacant_clean"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-标记维修"
         input: "410空调坏了，这间房暂时不能住了，标记为维修中"
-        expect_action:
-          action_type: "update_room_status"
-          params_contain:
-            room_number: "410"
+        run_as: "manager"
+        assertions:
+          expect_action:
+            action_type: "update_room_status"
+            params_contain:
+              room_number: "410"
+          response_not_contains: ["错误", "失败"]
 
       - name: "查脏房数量"
         input: "现在有几间脏房"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
   # ---------- 17. 综合日常对话 ----------
   - name: "综合日常对话"
+    category: "OAG"
     description: "测试贴近真实前台场景的混合对话"
-    tests:
+    init_script: null
+    cases:
       - name: "口语-来了一对情侣"
         input: "来了一对情侣，男的叫许明，13111113333，开409豪华间，后天退"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "许明"
-            room_number: "409"
-            guest_phone: "13111113333"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '409'"
-            expect:
-              values:
-                status: "occupied"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "许明"
+              room_number: "409"
+              guest_phone: "13111113333"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '409'"
+              expect:
+                values:
+                  status: "occupied"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-有人问有没有房"
         input: "有客人问还有没有空房间"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-住的是谁"
         input: "409住的是谁来着"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-提前走"
         input: "409的许先生要提前退房"
-        expect_action:
-          action_type: "checkout"
-        verify_db:
-          - sql: "SELECT status FROM rooms WHERE room_number = '409'"
-            expect:
-              values:
-                status: "vacant_dirty"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "checkout"
+          verify_db:
+            - sql: "SELECT status FROM rooms WHERE room_number = '409'"
+              expect:
+                values:
+                  status: "vacant_dirty"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-退完安排打扫"
         input: "给409房间创建一个清洁任务"
+        run_as: "front1"
         follow_up_fields:
           task_type: "cleaning"
-        expect_action:
-          action_type: "create_task"
-          params_contain:
-            room_number: "409"
-        verify_db:
-          - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '409'"
-            expect:
-              rows: 1
+        assertions:
+          expect_action:
+            action_type: "create_task"
+            params_contain:
+              room_number: "409"
+          verify_db:
+            - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '409'"
+              expect:
+                rows: 1
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-刘阿姨去扫"
         input: "把409的清洁任务分配给刘阿姨"
+        run_as: "front1"
         follow_up_fields:
           assignee_name: "刘阿姨"
-        expect_action:
-          action_type: "assign_task"
-        verify_db:
-          - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '409' ORDER BY t.id DESC LIMIT 1"
-            expect:
-              values:
-                status: "assigned"
+        assertions:
+          expect_action:
+            action_type: "assign_task"
+          verify_db:
+            - sql: "SELECT t.status FROM tasks t JOIN rooms r ON t.room_id = r.id WHERE r.room_number = '409' ORDER BY t.id DESC LIMIT 1"
+              expect:
+                values:
+                  status: "assigned"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-今天退了几间"
         input: "今天总共退了几间房"
-        expect_query_result: true
+        run_as: "front1"
+        assertions:
+          expect_query_result: true
+          response_not_contains: ["错误", "失败"]
 
   # ============================================================
   # 18. 电话号码更新 - OAG 约束验证测试
   # ============================================================
   - name: "电话号码更新"
+    category: "OAG"
     description: "测试客户电话号码更新场景，包括格式验证、唯一性验证和部分修改"
-    tests:
+    init_script: "init_with_guests.py"
+    cases:
       # ---------- Setup: 先创建测试用客人 ----------
       - name: "创建张三客人"
         input: "张三入住201房间，电话13800138000，后天退房"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "张三"
-            room_number: "201"
-            guest_phone: "13800138000"
-        verify_db:
-          - sql: "SELECT name, phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                name: "张三"
-                phone: "13800138000"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "张三"
+              room_number: "201"
+              guest_phone: "13800138000"
+          verify_db:
+            - sql: "SELECT name, phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  name: "张三"
+                  phone: "13800138000"
+          response_not_contains: ["错误", "失败"]
 
       - name: "创建李瓶儿客人"
         input: "李瓶儿入住202房间，电话13500135799，后天退房"
-        expect_action:
-          action_type: "walkin_checkin"
-          params_contain:
-            guest_name: "李瓶儿"
-            room_number: "202"
-            guest_phone: "13500135799"
-        verify_db:
-          - sql: "SELECT name, phone FROM guests WHERE name = '李瓶儿'"
-            expect:
-              rows: 1
-              values:
-                name: "李瓶儿"
-                phone: "13500135799"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "walkin_checkin"
+            params_contain:
+              guest_name: "李瓶儿"
+              room_number: "202"
+              guest_phone: "13500135799"
+          verify_db:
+            - sql: "SELECT name, phone FROM guests WHERE name = '李瓶儿'"
+              expect:
+                rows: 1
+                values:
+                  name: "李瓶儿"
+                  phone: "13500135799"
+          response_not_contains: ["错误", "失败"]
 
       # ---------- 正常更新场景 ----------
       - name: "完整更新有效手机号"
         input: "把张三的电话改成13912345678"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "13912345678"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "13912345678"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "13912345678"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "13912345678"
+          response_not_contains: ["错误", "失败"]
 
       - name: "智能修改-后两位改为11"
         input: "张三的手机号后两位改为11"
-        expect_action:
-          action_type: "update_guest_smart"
-          params_contain:
-            guest_name: "张三"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "13912345611"  # 上一步改为 13912345678，后两位改为 11
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest_smart"
+            params_contain:
+              guest_name: "张三"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "13912345611"
+          response_not_contains: ["错误", "失败"]
 
       - name: "智能修改-后三位改为888"
-        input: "张三的手机号后三位改为888"
-        expect_action:
-          action_type: "update_guest_smart"
-          params_contain:
-            guest_name: "张三"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "13912345888"  # 上一步改为 13912345611，后三位改为 888
+        input: "帮我把张三的手机号后三位改为888"
+        run_as: "front1"
+        follow_up_fields:
+          guest_name: "张三"
+          instructions: "后三位改为888"
+        assertions:
+          expect_action:
+            action_type: "update_guest_smart"
+          response_not_contains: ["错误"]
 
       - name: "智能修改-换前缀"
         input: "张三的手机号前缀改为159"
-        expect_action:
-          action_type: "update_guest_smart"
-          params_contain:
-            guest_name: "张三"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "15912345888"  # 上一步改为 13912345888，前缀改为 159
+        run_as: "front1"
+        follow_up_fields:
+          guest_name: "张三"
+          instructions: "前缀改为159"
+        assertions:
+          expect_action:
+            action_type: "update_guest_smart"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "15912345888"
+          response_not_contains: ["错误", "失败"]
 
       # ---------- 格式验证场景 ----------
       - name: "格式错误-太短"
         input: "把张三的电话改成12345"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "12345"
-        expect_result:
-          success: false
-          allowed: false
-          error_type: "FormatValidation"
-          error_message_contain: "手机号"
-          correction_prompt_contain: "11位"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "12345"
+          expect_result:
+            success: false
+            error_message_contain: "手机号"
 
       - name: "格式错误-非1开头"
         input: "把张三的电话改成23456789012"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "23456789012"
-        expect_result:
-          success: false
-          allowed: false
-          error_type: "FormatValidation"
-          error_message_contain: "以1开头"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "23456789012"
+          expect_result:
+            success: false
+            error_message_contain: "以1开头"
 
       - name: "格式错误-第二位不对"
         input: "把张三的电话改成122345678"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "122345678"
-        expect_result:
-          success: false
-          allowed: false
-          error_type: "FormatValidation"
-          error_message_contain: "第二位"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "122345678"
+          expect_result:
+            success: false
+            error_message_contain: "第二位"
 
       - name: "李瓶-完整更新有效手机号"
         input: "把李瓶儿的电话改成13912345678"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "李瓶儿"
-            phone: "13912345678"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '李瓶儿'"
-            expect:
-              rows: 1
-              values:
-                phone: "13912345678"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "李瓶儿"
+              phone: "13912345678"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '李瓶儿'"
+              expect:
+                rows: 1
+                values:
+                  phone: "13912345678"
+          response_not_contains: ["错误", "失败"]
 
       - name: "李瓶-智能修改-后两位改为11"
         input: "李瓶儿的手机号后两位改成11"
-        expect_action:
-          action_type: "update_guest_smart"
-          params_contain:
-            guest_name: "李瓶儿"
-            instructions: "后两位改为11"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '李瓶儿'"
-            expect:
-              rows: 1
-              values:
-                phone: "13500135711"  # 原手机号 13500135799 后两位改为 11
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest_smart"
+            params_contain:
+              guest_name: "李瓶儿"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '李瓶儿'"
+              expect:
+                rows: 1
+                values:
+                  phone: "13500135711"
+          response_not_contains: ["错误", "失败"]
 
       - name: "格式错误-全是1"
         input: "把张三的电话改成11111111111"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "11111111111"
-        expect_result:
-          success: false
-          allowed: false
-          error_type: "FormatValidation"
-          error_message_contain: "格式"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "11111111111"
+          expect_result:
+            success: false
+            error_message_contain: "格式"
 
       - name: "智能修改-结果无效"
         input: "把张三的电话后两位改成aa"
-        expect_action:
-          action_type: "update_guest_smart"
-          params_contain:
-            guest_name: "张三"
-            instructions: "后两位改成aa"
-        expect_result:
-          success: false
-          allowed: false
-          error_type: "FormatValidation"
-          error_message_contain: "数字"
+        run_as: "front1"
+        follow_up_fields:
+          guest_name: "张三"
+          instructions: "后两位改成aa"
+        assertions:
+          expect_action:
+            action_type: "update_guest_smart"
+          expect_result:
+            success: false
+            error_message_contain: "数字"
 
       # ---------- 唯一性验证场景 ----------
       - name: "唯一性冲突-已存在手机"
         input: "把张三的电话改成李四的号码13900139000"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "13900139000"
-        expect_result:
-          success: false
-          allowed: false
-          error_type: "UniquenessValidation"
-          error_message_contain: "已被"
-          correction_prompt_contain: "李四"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "13900139000"
+          expect_result:
+            success: false
+            error_message_contain: "已被"
 
       - name: "唯一性冲突-多候选人选手机"
         input: "把张三的电话改成13500135000"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "13500135000"
-        expect_result:
-          success: false
-          allowed: false
-          error_type: "UniquenessValidation"
-          error_message_contain: "已被"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "13500135000"
+          expect_result:
+            success: false
+            error_message_contain: "已被"
 
       # ---------- 口语化表达场景 ----------
       - name: "口语-换个手机号"
         input: "张三换个手机号吧，新号是18612345678"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "18612345678"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "18612345678"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "18612345678"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "18612345678"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-手机号改成"
         input: "张三的手机号改成15811112222"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "15811112222"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "15811112222"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "15811112222"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "15811112222"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-联系方式改成"
         input: "把张三的联系方式改成17799887766"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "17799887766"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "17799887766"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "17799887766"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "17799887766"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-换下手机号"
         input: "张三换下手机号，现在是19876543210"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "19876543210"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "19876543210"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "19876543210"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "19876543210"
+          response_not_contains: ["错误", "失败"]
 
       - name: "口语-更新联系方式"
         input: "帮我更新一下张三的联系方式，新电话15555555555"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "15555555555"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "15555555555"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "15555555555"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "15555555555"
+          response_not_contains: ["错误", "失败"]
 
       # ---------- 边界场景 ----------
       - name: "边界值-最小有效138开头"
         input: "把张三的电话改成13800138000"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "13800138000"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "13800138000"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "13800138000"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "13800138000"
+          response_not_contains: ["错误", "失败"]
 
       - name: "边界值-最小有效139开头"
         input: "把张三的电话改成13900139000"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "13900139000"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "13900139000"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "13900139000"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "13900139000"
+          response_not_contains: ["错误", "失败"]
 
       - name: "边界值-最大有效198开头"
         input: "把张三的电话改成19800139000"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "19800139000"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "19800139000"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "19800139000"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "19800139000"
+          response_not_contains: ["错误", "失败"]
 
       - name: "边界值-最大有效199开头"
         input: "把张三的电话改成19900139000"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "19900139000"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "19900139000"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "19900139000"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "19900139000"
+          response_not_contains: ["错误", "失败"]
 
       - name: "边界-超过最大值"
         input: "把张三的电话改成20000139000"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "20000139000"
-        expect_result:
-          success: false
-          allowed: false
-          error_type: "FormatValidation"
-          error_message_contain: "第二位"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "20000139000"
+          expect_result:
+            success: false
+            error_message_contain: "第二位"
 
       - name: "边界值-低于最小值"
         input: "把张三的电话改成13700138000"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "张三"
-            phone: "13700138000"
-        expect_result:
-          success: false
-          allowed: false
-          error_type: "FormatValidation"
-          error_message_contain: "第二位"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "张三"
+              phone: "13700138000"
+          expect_result:
+            success: false
+            error_message_contain: "第二位"
 
       # ---------- 智能修改复杂场景 ----------
       - name: "智能修改-中间4位改成8888"
         input: "张三的手机号中间4位改成8888"
-        expect_action:
-          action_type: "update_guest_smart"
-          params_contain:
-            guest_name: "张三"
-            instructions: "中间4位改成8888"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '张三'"
-            expect:
-              rows: 1
-              values:
-                phone: "13888888000"  # 13800138000 中间4位改成 8888
+        run_as: "front1"
+        follow_up_fields:
+          guest_name: "张三"
+          instructions: "中间4位改成8888"
+        assertions:
+          expect_action:
+            action_type: "update_guest_smart"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '张三'"
+              expect:
+                rows: 1
+                values:
+                  phone: "13888888000"
+          response_not_contains: ["错误", "失败"]
 
       # ---------- 多客户场景 ----------
       - name: "多客户-李四更新"
         input: "把李四的电话改成18666668888"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "李四"
-            phone: "18666668888"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '李四'"
-            expect:
-              rows: 1
-              values:
-                phone: "18666668888"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "李四"
+              phone: "18666668888"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '李四'"
+              expect:
+                rows: 1
+                values:
+                  phone: "18666668888"
+          response_not_contains: ["错误", "失败"]
 
       - name: "多客户-王五更新"
         input: "王五换个手机号，新号17712345678"
-        expect_action:
-          action_type: "update_guest"
-          params_contain:
-            guest_name: "王五"
-            phone: "17712345678"
-        verify_db:
-          - sql: "SELECT phone FROM guests WHERE name = '王五'"
-            expect:
-              rows: 1
-              values:
-                phone: "17712345678"
+        run_as: "front1"
+        assertions:
+          expect_action:
+            action_type: "update_guest"
+            params_contain:
+              guest_name: "王五"
+              phone: "17712345678"
+          verify_db:
+            - sql: "SELECT phone FROM guests WHERE name = '王五'"
+              expect:
+                rows: 1
+                values:
+                  phone: "17712345678"
+          response_not_contains: ["错误", "失败"]

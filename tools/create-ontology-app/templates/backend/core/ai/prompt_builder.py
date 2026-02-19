@@ -35,6 +35,8 @@ class PromptContext:
     custom_variables: Dict[str, Any] = field(default_factory=dict)
     domain_prompt: str = ""  # 领域特定提示词，由 DomainAdapter 注入
     message_hint: str = ""  # 用户消息（用于关键词匹配按需注入）
+    allowed_entities: Optional[List[str]] = None  # None = 全部注入
+    allowed_actions: Optional[List[str]] = None   # None = 全部注入
 
     def __post_init__(self):
         if self.current_date is None:
@@ -144,6 +146,7 @@ class PromptBuilder:
         self._action_registry = action_registry
         self._admin_roles: set = set(admin_roles) if admin_roles else set()
         self._adapter = adapter
+        self._context: Optional[PromptContext] = None
 
     def build_system_prompt(
         self,
@@ -171,19 +174,105 @@ class PromptBuilder:
         if context is None:
             context = PromptContext()
 
-        # 构建各部分描述
+        # Store context for sub-methods (e.g. action/entity filtering)
+        self._context = context
+        try:
+            # 构建各部分描述
+            role_context = self._build_role_context(context) if context.user_role else ""
+            semantic_query_syntax = self._build_semantic_query_syntax() if context.include_entities else ""
+            entity_descriptions = self._build_entity_descriptions(context) if context.include_entities else ""
+            action_descriptions = self._build_action_descriptions() if context.include_actions else ""
+            state_machine_descriptions = self._build_state_machine_descriptions() if context.include_state_machines else ""
+            rule_descriptions = self._build_rule_descriptions() if context.include_rules else ""
+            permission_context = self._build_permission_context(context) if context.include_permissions else ""
+            date_context = self._build_date_context(context.current_date)
+
+            # 使用模板构建
+            template = base_template or self.BASE_SYSTEM_PROMPT
+
+            domain_prompt = context.domain_prompt if context.domain_prompt else ""
+
+            prompt = template.format(
+                domain_prompt=domain_prompt,
+                role_context=role_context,
+                semantic_query_syntax=semantic_query_syntax,
+                entity_descriptions=entity_descriptions,
+                action_descriptions=action_descriptions,
+                state_machine_descriptions=state_machine_descriptions,
+                rule_descriptions=rule_descriptions,
+                permission_context=permission_context,
+                date_context=date_context
+            )
+
+            # 应用自定义变量替换
+            if context.custom_variables:
+                prompt = self._apply_custom_variables(prompt, context.custom_variables)
+
+            return prompt
+        finally:
+            self._context = None
+
+    # SPEC-P06: Phase 3 discovery prompt template
+    DISCOVERY_TOOL_PROTOCOL = """
+## 工具调用协议
+
+你可以使用以下工具来发现和执行操作。使用 <tool_call> 标签调用工具：
+
+### 可用工具
+
+1. **search_actions** - 搜索可用操作
+   ```
+   <tool_call>{"tool": "search_actions", "args": {"query": "搜索关键词"}}</tool_call>
+   ```
+
+2. **describe_action** - 获取操作的详细参数定义
+   ```
+   <tool_call>{"tool": "describe_action", "args": {"name": "action_name"}}</tool_call>
+   ```
+
+### 工作流程
+
+1. 分析用户意图
+2. 使用 search_actions 搜索相关操作
+3. 使用 describe_action 获取操作参数
+4. 返回最终的 JSON 响应（与普通模式格式相同）
+
+### 重要规则
+- 每次回复中最多包含一个 <tool_call>
+- 收到 <tool_result> 后继续分析，不要重复调用同一工具
+- 当你确定了要执行的操作后，直接返回 JSON 响应，不要再调用工具
+"""
+
+    def build_discovery_prompt(
+        self,
+        context: Optional[PromptContext] = None,
+        base_template: Optional[str] = None,
+    ) -> str:
+        """Build system prompt for Phase 3 discovery mode (SPEC-P06).
+
+        Similar to build_system_prompt but:
+        - Includes entity descriptions (for context)
+        - Does NOT include action descriptions (LLM discovers via tools)
+        - Appends the tool calling protocol definition
+        """
+        if context is None:
+            context = PromptContext()
+
+        # SPEC-P01: Store context for sub-methods
+        self._context = context
+
+        # Build parts — same as normal but skip actions
         role_context = self._build_role_context(context) if context.user_role else ""
         semantic_query_syntax = self._build_semantic_query_syntax() if context.include_entities else ""
         entity_descriptions = self._build_entity_descriptions(context) if context.include_entities else ""
-        action_descriptions = self._build_action_descriptions() if context.include_actions else ""
+        # No action_descriptions — that's the whole point of discovery mode
+        action_descriptions = ""
         state_machine_descriptions = self._build_state_machine_descriptions() if context.include_state_machines else ""
         rule_descriptions = self._build_rule_descriptions() if context.include_rules else ""
         permission_context = self._build_permission_context(context) if context.include_permissions else ""
         date_context = self._build_date_context(context.current_date)
 
-        # 使用模板构建
         template = base_template or self.BASE_SYSTEM_PROMPT
-
         domain_prompt = context.domain_prompt if context.domain_prompt else ""
 
         prompt = template.format(
@@ -195,12 +284,14 @@ class PromptBuilder:
             state_machine_descriptions=state_machine_descriptions,
             rule_descriptions=rule_descriptions,
             permission_context=permission_context,
-            date_context=date_context
+            date_context=date_context,
         )
 
-        # 应用自定义变量替换
         if context.custom_variables:
             prompt = self._apply_custom_variables(prompt, context.custom_variables)
+
+        # Append tool protocol
+        prompt += self.DISCOVERY_TOOL_PROTOCOL
 
         return prompt
 
@@ -228,6 +319,12 @@ class PromptBuilder:
         # 按 category 分组
         business_entities = [e for e in entities if getattr(e, 'category', '') != 'system']
         system_entities = [e for e in entities if getattr(e, 'category', '') == 'system']
+
+        # Phase 1/2 filtering: apply allowed_entities whitelist
+        if context and context.allowed_entities is not None:
+            allowed = set(context.allowed_entities)
+            business_entities = [e for e in business_entities if e.name in allowed]
+            system_entities = [e for e in system_entities if e.name in allowed]
 
         lines = ["**本体实体:**"]
 
@@ -302,6 +399,11 @@ class PromptBuilder:
         """从 ActionRegistry 读取操作描述，利用 Pydantic model_json_schema() 提取参数"""
         actions = self._action_registry.list_actions()
 
+        # Phase 1/2 filtering: apply allowed_actions whitelist
+        if self._context and self._context.allowed_actions is not None:
+            allowed = set(self._context.allowed_actions)
+            actions = [a for a in actions if a.name in allowed]
+
         if not actions:
             return "**支持的操作:** 暂无注册操作"
 
@@ -352,6 +454,11 @@ class PromptBuilder:
     def _build_action_descriptions_from_ontology(self) -> str:
         """从 OntologyRegistry 读取操作描述（回退路径）"""
         actions = self.registry.get_actions()
+
+        # Phase 1/2 filtering: apply allowed_actions whitelist
+        if self._context and self._context.allowed_actions is not None:
+            allowed = set(self._context.allowed_actions)
+            actions = [a for a in actions if a.action_type in allowed]
 
         if not actions:
             return "**支持的操作:** 暂无注册操作"
@@ -414,6 +521,14 @@ class PromptBuilder:
     def _build_state_machine_descriptions(self) -> str:
         """构建状态机描述部分 (SPEC-51: 动态注入状态机元数据)"""
         state_machines = self.registry._state_machines
+
+        if not state_machines:
+            return ""
+
+        # Phase 1/2 filtering: only inject state machines for allowed entities
+        if self._context and self._context.allowed_entities is not None:
+            allowed = set(self._context.allowed_entities)
+            state_machines = {k: v for k, v in state_machines.items() if k in allowed}
 
         if not state_machines:
             return ""

@@ -196,6 +196,7 @@ class ActionRegistry:
         self._state_machine_executor = state_machine_executor
         self._constraint_engine = constraint_engine
         self._guard_executor = guard_executor
+        self._search_engine = None  # SPEC-P05: ActionSearchEngine for keyword search
 
         # SPEC-09: Auto-create VectorStore if not provided
         if vector_store is None:
@@ -240,6 +241,24 @@ class ActionRegistry:
             logger.warning(f"Failed to create VectorStore: {e}")
 
         return None
+
+    def set_search_engine(self, engine) -> None:
+        """Attach an ActionSearchEngine for keyword-based action discovery (SPEC-P05)."""
+        self._search_engine = engine
+
+    def populate_search_engine(self) -> None:
+        """Populate the attached ActionSearchEngine with all registered actions' keywords."""
+        if self._search_engine is None:
+            return
+        for name, defn in self._actions.items():
+            if defn.search_keywords:
+                self._search_engine.register_keywords(
+                    action_name=name,
+                    keywords=defn.search_keywords,
+                    entity=defn.entity,
+                    description=defn.description,
+                )
+        logger.info(f"ActionRegistry: populated search engine with {len(self._actions)} actions")
 
     def register(
         self,
@@ -331,6 +350,15 @@ class ActionRegistry:
             # Index to vector store if available
             if self.vector_store:
                 self._index_action(definition)
+
+            # SPEC-P05: Index to search engine if available
+            if self._search_engine and definition.search_keywords:
+                self._search_engine.register_keywords(
+                    action_name=name,
+                    keywords=definition.search_keywords,
+                    entity=definition.entity,
+                    description=definition.description,
+                )
 
             return func
 

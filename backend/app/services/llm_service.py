@@ -639,6 +639,38 @@ ontology_query 用于动态字段级查询，params 结构如下：
 
         return self._query_schema_cache
 
+    def build_discovery_prompt(
+        self,
+        language: Optional[str] = None,
+        user_role: str = "",
+        message_hint: str = "",
+    ) -> Optional[str]:
+        """Build Phase 3 discovery system prompt (SPEC-P06).
+
+        Uses PromptBuilder.build_discovery_prompt() which includes entity
+        descriptions and tool protocol, but NOT action definitions.
+        """
+        if not self._prompt_builder:
+            return None
+
+        from core.ai.prompt_builder import PromptContext
+        context = PromptContext(
+            user_role=user_role,
+            domain_prompt=self.SYSTEM_PROMPT,
+            include_entities=True,
+            include_actions=False,  # Actions discovered via tools
+            include_rules=True,
+            include_state_machines=True,
+            message_hint=message_hint,
+        )
+        prompt = self._prompt_builder.build_discovery_prompt(context)
+
+        if language:
+            lang_hint = LANGUAGE_PROMPTS.get(language, LANGUAGE_PROMPTS["zh"])
+            prompt += f"\n\n{lang_hint}"
+
+        return prompt
+
     def build_system_prompt_with_schema(
         self,
         language: Optional[str] = None,
@@ -647,6 +679,8 @@ ontology_query 用于动态字段级查询，params 结构如下：
         include_glossary: bool = True,
         user_role: str = "",
         message_hint: str = "",
+        allowed_actions: Optional[List[str]] = None,
+        allowed_entities: Optional[List[str]] = None,
     ) -> str:
         """
         构建包含 Schema 的系统提示词
@@ -676,6 +710,8 @@ ontology_query 用于动态字段级查询，params 结构如下：
                 include_rules=True,
                 include_state_machines=True,
                 message_hint=message_hint,
+                allowed_actions=allowed_actions,
+                allowed_entities=allowed_entities,
             )
             system_prompt = self._prompt_builder.build_system_prompt(context)
 
@@ -716,6 +752,32 @@ ontology_query 用于动态字段级查询，params 结构如下：
         """检查 LLM 是否可用"""
         return self.enabled
 
+    def raw_chat(self, messages: List[Dict[str, str]]) -> Optional[str]:
+        """Send messages to LLM and return raw text response (SPEC-P06).
+
+        Used by Phase 3 tool calling loop. No JSON parsing, no response_format.
+
+        Args:
+            messages: List of {"role": "...", "content": "..."} messages.
+
+        Returns:
+            Raw text from LLM, or None on error.
+        """
+        if not self.enabled:
+            return None
+
+        try:
+            response = self._instrumented_completion(
+                messages=messages,
+                model=settings.LLM_MODEL,
+                temperature=settings.LLM_TEMPERATURE,
+                max_tokens=settings.LLM_MAX_TOKENS,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"raw_chat error: {e}")
+            return None
+
     def chat(self, message: str, context: Optional[Dict] = None, language: Optional[str] = None) -> Dict[str, Any]:
         """
         与 LLM 对话，获取结构化响应
@@ -744,12 +806,23 @@ ontology_query 用于动态字段级查询，params 结构如下：
         # 使用 build_system_prompt_with_schema 动态注入操作描述（OAG 机制）
         include_schema = context and context.get('include_query_schema', False)
         user_role = context.get('user_role', '') if context else ''
+
+        # Phase 1/2: extract ShapingResult filtering lists
+        shaping = context.get('_shaping_result') if context else None
+        allowed_actions = None
+        allowed_entities = None
+        if shaping and getattr(shaping, 'strategy', '') in ('role_filter', 'inference'):
+            allowed_actions = shaping.actions
+            allowed_entities = shaping.entities
+
         system_prompt = self.build_system_prompt_with_schema(
             language=lang,
             include_schema=include_schema,
             include_actions=True,  # 动态注入所有注册的操作
             user_role=user_role,
             message_hint=message,
+            allowed_actions=allowed_actions,
+            allowed_entities=allowed_entities,
         )
 
         # 日期上下文已由 PromptBuilder._build_date_context() 注入到 system_prompt

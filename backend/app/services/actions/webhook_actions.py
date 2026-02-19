@@ -48,7 +48,7 @@ def register_webhook_actions(registry: ActionRegistry) -> None:
         name="fetch_channel_reservations",
         entity="Reservation",
         description="从OTA渠道拉取新订单，自动创建对应的预订记录。",
-        category="webhook",
+        category="reservation",
         requires_confirmation=True,
         allowed_roles={"manager"},
         undoable=False,

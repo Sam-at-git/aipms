@@ -1,0 +1,1 @@
+"""Hotel domain services."""

@@ -91,7 +91,7 @@ class TestRegisterGuestActions:
         assert action is not None
         assert action.name == "walkin_checkin"
         assert action.entity == "Guest"
-        assert action.category == "mutation"
+        assert action.category == "front_desk"
         assert action.requires_confirmation is True
         assert "receptionist" in action.allowed_roles
         assert "manager" in action.allowed_roles

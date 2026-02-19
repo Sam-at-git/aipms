@@ -197,7 +197,7 @@ class TestFactoryRegistration:
         action = action_registry.get_action("update_guest_smart")
         assert action is not None
         assert action.entity == "Guest"
-        assert action.category == "mutation"
+        assert action.category == "front_desk"
 
     def test_registers_employee_smart(self, action_registry, ontology_registry):
         """Employee entity should get update_employee_smart registered."""

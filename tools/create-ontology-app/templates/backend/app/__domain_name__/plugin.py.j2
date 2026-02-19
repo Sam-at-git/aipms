@@ -26,6 +26,17 @@ class {{ domain_class_name }}Plugin:
         from app.{{ domain_name }}.actions import register_{{ domain_name }}_actions
         register_{{ domain_name }}_actions(action_registry)
 
+        # Prompt optimization: register role filters (SPEC-P01)
+        # Uncomment and customize for your domain roles:
+        # from core.ai.prompt_shaper import register_role_filter
+        # register_role_filter("restricted_role", {"admin", "billing"})
+
+        # Prompt optimization: attach ActionSearchEngine (SPEC-P05)
+        from core.ai.action_search import ActionSearchEngine
+        search_engine = ActionSearchEngine()
+        action_registry.set_search_engine(search_engine)
+        action_registry.populate_search_engine()
+
     def register_ontology(self, ont_registry) -> None:
         """Register {{ domain_name }} domain ontology: entities, relationships, rules, adapter."""
         # Register domain relationships

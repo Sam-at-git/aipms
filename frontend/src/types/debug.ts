@@ -20,9 +20,18 @@ export interface DebugSession {
   action_type?: string | null;
 }
 
+export interface SchemaShaping {
+  strategy: 'discovery' | 'inference' | 'role_filter' | 'full';
+  actions_injected: number | null;
+  entities_injected: number | null;
+  include_query_schema: boolean;
+  metadata: Record<string, unknown>;
+}
+
 export interface DebugSessionDetail extends DebugSession {
   retrieved_schema: Record<string, unknown> | null;
   retrieved_tools: Record<string, unknown>[] | null;
+  schema_shaping: SchemaShaping | null;
   llm_prompt: string | null;
   llm_response: string | null;
   llm_prompt_parts: Record<string, unknown> | null;

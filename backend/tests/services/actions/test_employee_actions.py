@@ -57,7 +57,7 @@ class TestRegisterEmployeeActions:
 
         action = registry.get_action("create_employee")
         assert action.entity == "Employee"
-        assert action.category == "mutation"
+        assert action.category == "employee_management"
         assert "sysadmin" in action.allowed_roles
 
 

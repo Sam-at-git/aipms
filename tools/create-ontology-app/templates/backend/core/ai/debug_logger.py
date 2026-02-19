@@ -84,6 +84,9 @@ class DebugSession:
     status: str = "pending"  # pending, success, error, partial
     metadata: Optional[str] = None  # JSON
 
+    # SPEC-P07: Schema shaping metadata
+    schema_shaping: Optional[str] = None  # JSON: ShapingResult metadata
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary, parsing JSON fields."""
         result = {
@@ -106,7 +109,8 @@ class DebugSession:
             "final_result": self._parse_json(self.final_result),
             "errors": self._parse_json(self.errors),
             "status": self.status,
-            "metadata": self._parse_json(self.metadata)
+            "metadata": self._parse_json(self.metadata),
+            "schema_shaping": self._parse_json(self.schema_shaping),
         }
         return result
 
@@ -143,7 +147,8 @@ class DebugSession:
             final_result=row["final_result"],
             errors=row["errors"],
             status=row["status"],
-            metadata=row["metadata"]
+            metadata=row["metadata"],
+            schema_shaping=row["schema_shaping"] if "schema_shaping" in row.keys() else None,
         )
 
 
@@ -400,7 +405,10 @@ class DebugLogger:
 
                     -- Metadata
                     status TEXT DEFAULT 'pending',
-                    metadata TEXT
+                    metadata TEXT,
+
+                    -- SPEC-P07: Schema shaping
+                    schema_shaping TEXT
                 )
             """)
 
@@ -484,6 +492,10 @@ class DebugLogger:
                 conn.execute("ALTER TABLE debug_sessions ADD COLUMN llm_latency_ms INTEGER")
             except sqlite3.OperationalError:
                 pass
+            try:
+                conn.execute("ALTER TABLE debug_sessions ADD COLUMN schema_shaping TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
             conn.commit()
             logger.debug(f"DebugLogger: Database initialized at {self.db_path}")
@@ -712,6 +724,34 @@ class DebugLogger:
             conn.commit()
             return cursor.rowcount > 0
 
+        finally:
+            conn.close()
+
+    def update_schema_shaping(
+        self,
+        session_id: str,
+        schema_shaping: Dict[str, Any],
+    ) -> bool:
+        """Store schema shaping metadata for a session (SPEC-P07).
+
+        Args:
+            session_id: Session ID
+            schema_shaping: ShapingResult metadata dict
+
+        Returns:
+            True if update successful
+        """
+        if not session_id:
+            return False
+
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                "UPDATE debug_sessions SET schema_shaping = ? WHERE id = ?",
+                (self._safe_json(schema_shaping), session_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
         finally:
             conn.close()
 

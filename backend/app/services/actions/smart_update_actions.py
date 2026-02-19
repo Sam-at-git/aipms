@@ -228,11 +228,18 @@ def _register_one(
     )
     glossary = _config.glossary_examples or []
 
+    # Entity → category mapping for smart update actions
+    _SMART_UPDATE_CATEGORIES = {
+        "Guest": "front_desk",
+        "Employee": "employee_management",
+        "RoomType": "pricing",
+    }
+
     @registry.register(
         name=action_name,
         entity=entity_name,
         description=description,
-        category="mutation",
+        category=_SMART_UPDATE_CATEGORIES.get(entity_name, "mutation"),
         requires_confirmation=True,
         allowed_roles=_config.allowed_roles,
         undoable=False,

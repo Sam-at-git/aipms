@@ -28,7 +28,7 @@ class TestRegisterPriceActions:
         update_action = registry.get_action("update_price")
         assert update_action is not None
         assert update_action.entity == "RatePlan"
-        assert update_action.category == "mutation"
+        assert update_action.category == "pricing"
         assert update_action.requires_confirmation is True
 
 

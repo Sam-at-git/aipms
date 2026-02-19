@@ -97,7 +97,7 @@ class TestRegisterStayActions:
         assert action is not None
         assert action.name == "checkout"
         assert action.entity == "StayRecord"
-        assert action.category == "mutation"
+        assert action.category == "front_desk"
         assert action.requires_confirmation is True
         assert "receptionist" in action.allowed_roles
         assert action.undoable is True

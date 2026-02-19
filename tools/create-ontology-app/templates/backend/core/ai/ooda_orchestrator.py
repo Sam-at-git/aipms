@@ -102,6 +102,12 @@ class OodaOrchestrator:
         self._query_compiler = None
         self._response_generator = None
 
+        # SPEC-P01: Prompt shaping (lazy initialized)
+        self._prompt_shaper = None
+
+        # SPEC-P03: Last routing result from OAG path (for Phase 2 inference)
+        self._last_routing_result = None
+
         # DebugLogger (调试追踪)
         self.debug_logger = DebugLogger() if DEBUG_LOGGER_AVAILABLE else None
 
@@ -185,6 +191,158 @@ class OodaOrchestrator:
                 self._intent_router = False
         return self._intent_router if self._intent_router is not False else None
 
+    def _get_prompt_shaper(self):
+        """Get PromptShaper instance (SPEC-P01)"""
+        if self._prompt_shaper is None:
+            try:
+                from core.ai.prompt_shaper import PromptShaper
+                from core.ontology.registry import OntologyRegistry
+                ontology_reg = OntologyRegistry()
+                action_reg = self.get_action_registry()
+                self._prompt_shaper = PromptShaper(
+                    ontology_registry=ontology_reg,
+                    action_registry=action_reg,
+                )
+            except Exception as e:
+                logger.debug(f"PromptShaper not available: {e}")
+                self._prompt_shaper = False
+        return self._prompt_shaper if self._prompt_shaper is not False else None
+
+    def _decide_with_tool_calling(
+        self, message: str, user, context: dict, language: str
+    ) -> Optional[Dict[str, Any]]:
+        """Phase 3: Multi-round tool calling for dynamic action discovery (SPEC-P06).
+
+        Sends a discovery prompt to LLM, then loops through tool calls
+        (search_actions, describe_action) until the LLM produces a final
+        JSON response or MAX_ROUNDS is exceeded.
+
+        Returns:
+            LLM result dict if successful, None to trigger fallback to normal chat.
+        """
+        try:
+            from core.ai.tool_call_executor import (
+                extract_tool_call, execute_tool, format_result, MAX_ROUNDS,
+            )
+        except ImportError:
+            logger.debug("tool_call_executor not available")
+            return None
+
+        # Build discovery prompt (no action definitions, includes tool protocol)
+        if not hasattr(self.llm_service, 'raw_chat'):
+            return None
+
+        # Get search engine and action registry for tool execution
+        action_reg = self.get_action_registry()
+        search_engine = getattr(action_reg, '_search_engine', None) if action_reg else None
+
+        # Build discovery system prompt
+        try:
+            discovery_prompt = self.llm_service.build_discovery_prompt(
+                language=language,
+                user_role=user.role if hasattr(user, 'role') else '',
+                message_hint=message,
+            )
+        except Exception:
+            logger.debug("Failed to build discovery prompt, falling back")
+            return None
+
+        if not discovery_prompt:
+            return None
+
+        # Build initial messages
+        from datetime import date as date_type
+        today = date_type.today()
+        context_info = self.llm_service._build_context_info(context)
+
+        messages = [
+            {"role": "system", "content": discovery_prompt},
+        ]
+
+        # Add conversation history
+        conv_history = context.get("conversation_history", [])
+        for h in conv_history[-6:]:
+            role = h.get("role", "user")
+            content = h.get("content", "")
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content[:500]})
+
+        messages.append({
+            "role": "user",
+            "content": f"{context_info}\n(当前日期: {today.strftime('%Y-%m-%d')})\n\n用户输入: {message}"
+        })
+
+        # Multi-round tool calling loop
+        for round_num in range(MAX_ROUNDS):
+            from core.ai.llm_call_context import LLMCallContext
+            LLMCallContext.before_call("decide", f"tool_round_{round_num}")
+
+            response_text = self.llm_service.raw_chat(messages)
+            if response_text is None:
+                logger.warning("Phase 3: raw_chat returned None")
+                return None
+
+            # Check for tool call
+            tool_call = extract_tool_call(response_text)
+            if tool_call is None:
+                # No tool call — LLM produced a final response
+                # Try to parse as JSON
+                return self._parse_tool_calling_response(response_text)
+
+            # Execute tool
+            result = execute_tool(
+                tool_call,
+                search_engine=search_engine,
+                action_registry=action_reg,
+                user_role=user.role if hasattr(user, 'role') else '',
+            )
+
+            # Format result and append to conversation
+            result_text = format_result(tool_call.tool, result)
+            messages.append({"role": "assistant", "content": response_text})
+            messages.append({"role": "user", "content": result_text})
+
+            logger.info(
+                f"Phase 3 round {round_num + 1}: tool={tool_call.tool}, "
+                f"result_keys={list(result.keys())}"
+            )
+
+        # Exceeded MAX_ROUNDS — fall back
+        logger.warning(f"Phase 3: exceeded {MAX_ROUNDS} rounds, falling back")
+        return None
+
+    def _parse_tool_calling_response(self, text: str) -> Optional[Dict[str, Any]]:
+        """Parse the final LLM response from tool calling mode.
+
+        Tries to extract JSON from the text (may be wrapped in markdown code blocks).
+        """
+        import json
+        import re
+
+        # Try direct JSON parse
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Try extracting from markdown code block
+        match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Try extracting JSON object from text
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        return None
+
     def _get_query_compiler(self):
         """Get OntologyQueryCompiler instance (SPEC-20)"""
         if self._query_compiler is None:
@@ -263,6 +421,9 @@ class OodaOrchestrator:
         except Exception as e:
             logger.debug(f"OAG routing failed: {e}")
             return None
+
+        # SPEC-P03: Store routing result for Phase 2 inference in LLM path
+        self._last_routing_result = routing
 
         # Step 3: Check confidence threshold (lowered to 0.7 to catch more cases)
         if routing.confidence < 0.7:
@@ -916,6 +1077,9 @@ class OodaOrchestrator:
         new_topic_id = topic_id
         include_context = False
 
+        # SPEC-P03: Reset per-request routing result
+        self._last_routing_result = None
+
         # ========== OODA Phase Timing (SPEC-25) ==========
         ooda_phases = {}
         t_observe_start = start_time
@@ -1021,8 +1185,18 @@ class OodaOrchestrator:
                         for h in conversation_history[-6:]  # 最多 3 轮
                     ]
 
-                # 注入查询 Schema（用于 ontology_query）
-                context['include_query_schema'] = True
+                # SPEC-P01/P03: Use PromptShaper to select schema subset
+                shaper = self._get_prompt_shaper()
+                if shaper:
+                    shaping_result = shaper.shape(
+                        message,
+                        user.role if hasattr(user, 'role') else '',
+                        intent=self._last_routing_result,
+                    )
+                    context['include_query_schema'] = shaping_result.include_query_schema
+                    context['_shaping_result'] = shaping_result
+                else:
+                    context['include_query_schema'] = True
 
                 # ========== DebugLogger: 记录检索上下文 ==========
                 if debug_session_id and self.debug_logger:
@@ -1039,7 +1213,32 @@ class OodaOrchestrator:
                         retrieved_tools=retrieved_tools
                     )
 
-                result = self.llm_service.chat(message, context, language=language)
+                # SPEC-P07: Store schema shaping metadata in debug session
+                if debug_session_id and self.debug_logger and context.get('_shaping_result'):
+                    sr = context['_shaping_result']
+                    shaping_data = {
+                        "strategy": getattr(sr, 'strategy', 'full'),
+                        "actions_injected": len(sr.actions) if sr.actions is not None else None,
+                        "entities_injected": len(sr.entities) if sr.entities is not None else None,
+                        "include_query_schema": sr.include_query_schema,
+                        "metadata": sr.metadata or {},
+                    }
+                    self.debug_logger.update_schema_shaping(
+                        debug_session_id, shaping_data
+                    )
+
+                # SPEC-P06: Phase 3 tool calling mode
+                shaping = context.get('_shaping_result')
+                if shaping and getattr(shaping, 'strategy', '') == 'discovery':
+                    result = self._decide_with_tool_calling(
+                        message, user, context, language=language or 'zh',
+                    )
+                    if result is None:
+                        # Tool calling failed — fallback to normal chat
+                        logger.info("Phase 3 tool calling failed, falling back to normal chat")
+                        result = self.llm_service.chat(message, context, language=language)
+                else:
+                    result = self.llm_service.chat(message, context, language=language)
 
                 # ========== OODA Decide Phase End (SPEC-25) ==========
                 t_decide_end = datetime.now()
@@ -1177,8 +1376,6 @@ class OodaOrchestrator:
                 actions_executed=actions_executed,
                 metadata=metadata,
             )
-        if result is not None and session_id:
-            result["debug_session_id"] = session_id
         return result
 
     def _extract_llm_debug_info(self) -> Optional[Dict[str, Any]]:
@@ -1600,6 +1797,8 @@ class OodaOrchestrator:
                         'message': action_def.description,
                         'suggested_actions': [{
                             'action_type': action_name,
+                            'entity_type': action_def.entity or '',
+                            'description': action_def.description or '',
                             'params': {},
                             'requires_confirmation': action_def.requires_confirmation,
                         }],

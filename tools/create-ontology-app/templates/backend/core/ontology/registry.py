@@ -253,6 +253,40 @@ class OntologyRegistry:
         """
         return list(self._entities.values())
 
+    def get_related_entities(self, entity_name: str, depth: int = 1) -> Set[str]:
+        """
+        Get entity names reachable from the given entity via relationships.
+
+        BFS traversal of the relationship graph up to the specified depth.
+        Handles circular references via a visited set.
+
+        Args:
+            entity_name: Starting entity name
+            depth: Maximum traversal depth (0 = self only, 1 = direct neighbors)
+
+        Returns:
+            Set of entity names (always includes entity_name itself)
+        """
+        visited = {entity_name}
+
+        if depth <= 0:
+            return visited
+
+        frontier = {entity_name}
+        for _ in range(depth):
+            next_frontier = set()
+            for e in frontier:
+                for rel in self._relationships.get(e, []):
+                    target = rel.target_entity
+                    if target not in visited:
+                        visited.add(target)
+                        next_frontier.add(target)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        return visited
+
     def get_actions(self, entity: str = None) -> List[ActionMetadata]:
         """
         获取动作元数据

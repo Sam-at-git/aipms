@@ -12,6 +12,7 @@ import { Button } from '../components/ui/button'
 import { ArrowLeft, Play, RefreshCw, Copy, Check, ChevronDown, ChevronRight } from 'lucide-react'
 import DualTrackTimeline from '../components/DualTrackTimeline'
 import LLMInteractionDetail from '../components/LLMInteractionDetail'
+import SchemaSelectionPanel from '../components/SchemaSelectionPanel'
 
 // Lightweight JSON syntax highlighter (no dependencies)
 function JsonHighlight({ data }: { data: unknown }) {
@@ -553,6 +554,12 @@ export default function SessionDetailPage() {
             <h3 className="text-sm font-medium text-white">Retrieval</h3>
           </div>
           <div className="space-y-2">
+            {session.schema_shaping && (
+              <div>
+                <div className="text-xs text-gray-400 mb-1">Schema Shaping</div>
+                <SchemaSelectionPanel shaping={session.schema_shaping} />
+              </div>
+            )}
             <div>
               <div className="text-xs text-gray-400 mb-1">Schema</div>
               <div className="bg-dark-950 rounded p-2 text-xs text-gray-300 font-mono overflow-auto max-h-20">

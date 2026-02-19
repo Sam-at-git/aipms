@@ -67,7 +67,7 @@ class TestRegisterBillActions:
 
         action = registry.get_action("add_payment")
         assert action.entity == "Bill"
-        assert action.category == "mutation"
+        assert action.category == "billing"
         assert action.requires_confirmation is True
 
 

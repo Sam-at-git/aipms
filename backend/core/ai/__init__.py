@@ -41,6 +41,15 @@ from core.ai.response_generator import (
     ResponseGenerator,
     VALID_RESULT_TYPES,
 )
+from core.ai.prompt_shaper import PromptShaper, ShapingResult, register_role_filter
+from core.ai.action_search import ActionSearchEngine, ActionSearchResult
+from core.ai.tool_call_executor import (
+    ToolCall,
+    extract_tool_call,
+    execute_tool,
+    format_result,
+    MAX_ROUNDS,
+)
 
 # Global singleton instance (lazy initialized)
 _embedding_service: Optional[EmbeddingService] = None
@@ -184,4 +193,14 @@ __all__ = [
     "OntologyResult",
     "ResponseGenerator",
     "VALID_RESULT_TYPES",
+    "PromptShaper",
+    "ShapingResult",
+    "register_role_filter",
+    "ActionSearchEngine",
+    "ActionSearchResult",
+    "ToolCall",
+    "extract_tool_call",
+    "execute_tool",
+    "format_result",
+    "MAX_ROUNDS",
 ]

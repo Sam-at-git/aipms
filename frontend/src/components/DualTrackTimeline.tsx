@@ -58,6 +58,9 @@ const callTypeLabels: Record<string, string> = {
   extract_params: 'Extract',
   parse_followup: 'Parse',
   format_result: 'Format',
+  tool_round_0: 'Tool #1',
+  tool_round_1: 'Tool #2',
+  tool_round_2: 'Tool #3',
 }
 
 function formatTokens(n: number | null): string {

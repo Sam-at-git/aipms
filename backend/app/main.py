@@ -110,6 +110,22 @@ async def lifespan(app: FastAPI):
         register_smart_updates(ont_registry)
         print(f"✓ ActionRegistry 已同步到 OntologyRegistry ({len(action_registry.list_actions())} actions)")
 
+        # ========== SPEC-P05: Attach ActionSearchEngine for Phase 3 discovery ==========
+        from core.ai.action_search import ActionSearchEngine
+        search_engine = ActionSearchEngine()
+        action_registry.set_search_engine(search_engine)
+        action_registry.populate_search_engine()
+
+        # ========== SPEC-P01: Register role-based prompt filters ==========
+        from core.ai.prompt_shaper import register_role_filter
+        register_role_filter("cleaner", {
+            "admin", "billing", "reservation", "pricing",
+            "employee_management", "query", "front_desk",
+        })
+        register_role_filter("receptionist", {
+            "admin", "pricing", "employee_management",
+        })
+
         # ========== System Domain: Register system entities to OntologyRegistry ==========
         from app.system.system_domain_adapter import SystemDomainAdapter
         sys_adapter = SystemDomainAdapter()

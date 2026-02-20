@@ -4,7 +4,7 @@ import {
   TrendingUp, ArrowUpRight, ArrowDownRight, Clock
 } from 'lucide-react'
 import { reportApi, reservationApi, checkoutApi } from '../services/api'
-import { useOntologyStore } from '../store'
+import { useOntologyStore, useAuthStore } from '../store'
 import type { DashboardStats, Reservation, StayRecord } from '../types'
 
 export default function Dashboard() {
@@ -12,10 +12,11 @@ export default function Dashboard() {
   const [arrivals, setArrivals] = useState<Reservation[]>([])
   const [departures, setDepartures] = useState<StayRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const currentBranchId = useAuthStore(s => s.currentBranchId)
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [currentBranchId])
 
   const loadData = async () => {
     try {

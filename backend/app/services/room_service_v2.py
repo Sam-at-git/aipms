@@ -111,7 +111,8 @@ class RoomServiceV2:
     # ============== 房间操作 (使用新领域层) ==============
 
     def get_rooms(self, floor: Optional[int] = None, room_type_id: Optional[int] = None,
-                  status: Optional[RoomStatus] = None, is_active: Optional[bool] = True) -> List[Room]:
+                  status: Optional[RoomStatus] = None, is_active: Optional[bool] = True,
+                  branch_id: Optional[int] = None) -> List[Room]:
         """获取房间列表"""
         query = self.db.query(Room)
 
@@ -123,6 +124,8 @@ class RoomServiceV2:
             query = query.filter(Room.status == status)
         if is_active is not None:
             query = query.filter(Room.is_active == is_active)
+        if branch_id is not None:
+            query = query.filter(Room.branch_id == branch_id)
 
         return query.order_by(Room.floor, Room.room_number).all()
 
@@ -310,7 +313,8 @@ class RoomServiceV2:
             'features': room.features,
             'is_active': room.is_active,
             'current_guest': current_guest,
-            'created_at': room.created_at
+            'created_at': room.created_at,
+            'branch_name': room.branch.name if getattr(room, 'branch', None) else None
         }
 
     def get_room_status_summary(self) -> dict:

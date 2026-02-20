@@ -29,6 +29,8 @@ import RbacManagement from './pages/system/RbacManagement'
 import OrgManagement from './pages/system/OrgManagement'
 import MessageCenter from './pages/system/MessageCenter'
 import SchedulerManagement from './pages/system/SchedulerManagement'
+import UserManagement from './pages/system/UserManagement'
+import { BranchSwitcher } from './components/BranchSwitcher'
 
 // 受保护路由
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -107,6 +109,7 @@ export default function App() {
         <Route path="system/org" element={<OrgManagement />} />
         <Route path="system/messages" element={<MessageCenter />} />
         <Route path="system/schedulers" element={<SchedulerManagement />} />
+        <Route path="system/users" element={<UserManagement />} />
       </Route>
     </Routes>
   )
@@ -136,20 +139,21 @@ interface DynamicMenuItem {
   children?: DynamicMenuItem[]
 }
 
-// Fallback static navItems (used when API fails)
+// Fallback static navItems (used when backend menu API unavailable)
+// 'permissions' is the preferred check; 'roles' is legacy fallback
 const fallbackNavItems = [
-  { path: '/', icon: LayoutDashboard, label: '工作台', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'] },
-  { path: '/rooms', icon: BedDouble, label: '房态管理', roles: ['sysadmin', 'manager', 'receptionist'] },
-  { path: '/reservations', icon: CalendarCheck, label: '预订管理', roles: ['sysadmin', 'manager', 'receptionist'] },
-  { path: '/guests', icon: Users, label: '在住客人', roles: ['sysadmin', 'manager', 'receptionist'] },
-  { path: '/customers', icon: UserCircle, label: '客户管理', roles: ['sysadmin', 'manager', 'receptionist'] },
-  { path: '/tasks', icon: ClipboardList, label: '任务管理', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'] },
-  { path: '/billing', icon: DollarSign, label: '账单管理', roles: ['sysadmin', 'manager', 'receptionist'] },
-  { path: '/prices', icon: Tag, label: '价格管理', roles: ['sysadmin', 'manager'] },
-  { path: '/employees', icon: UserCog, label: '员工管理', roles: ['sysadmin', 'manager'] },
-  { path: '/reports', icon: BarChart3, label: '统计报表', roles: ['sysadmin', 'manager'] },
-  { path: '/settings', icon: SettingsIcon, label: '系统设置', roles: ['sysadmin'] },
-  { path: '/chat', icon: MessageSquare, label: '独立聊天', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'] },
+  { path: '/', icon: LayoutDashboard, label: '工作台', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'], permissions: [] as string[] },
+  { path: '/rooms', icon: BedDouble, label: '房态管理', roles: ['sysadmin', 'manager', 'receptionist'], permissions: ['room:read'] },
+  { path: '/reservations', icon: CalendarCheck, label: '预订管理', roles: ['sysadmin', 'manager', 'receptionist'], permissions: ['reservation:read'] },
+  { path: '/guests', icon: Users, label: '在住客人', roles: ['sysadmin', 'manager', 'receptionist'], permissions: ['guest:read'] },
+  { path: '/customers', icon: UserCircle, label: '客户管理', roles: ['sysadmin', 'manager', 'receptionist'], permissions: ['guest:read'] },
+  { path: '/tasks', icon: ClipboardList, label: '任务管理', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'], permissions: ['task:read'] },
+  { path: '/billing', icon: DollarSign, label: '账单管理', roles: ['sysadmin', 'manager', 'receptionist'], permissions: ['bill:read'] },
+  { path: '/prices', icon: Tag, label: '价格管理', roles: ['sysadmin', 'manager'], permissions: ['price:read'] },
+  { path: '/employees', icon: UserCog, label: '员工管理', roles: ['sysadmin', 'manager'], permissions: ['employee:read'] },
+  { path: '/reports', icon: BarChart3, label: '统计报表', roles: ['sysadmin', 'manager'], permissions: ['report:read'] },
+  { path: '/settings', icon: SettingsIcon, label: '系统设置', roles: ['sysadmin'], permissions: ['sys:config:manage'] },
+  { path: '/chat', icon: MessageSquare, label: '独立聊天', roles: ['sysadmin', 'manager', 'receptionist', 'cleaner'], permissions: ['ai:chat'] },
 ]
 
 function convertMenuTree(tree: any[]): DynamicMenuItem[] {
@@ -200,10 +204,18 @@ function AppLayout() {
     navigate('/login')
   }
 
-  // Use dynamic menus if available, otherwise fallback to role-filtered static items
-  const menuItems: DynamicMenuItem[] = dynamicMenus || fallbackNavItems.filter(
-    item => user && item.roles.includes(user.role)
-  )
+  // Use dynamic menus if available, otherwise fallback to permission/role-filtered static items
+  const { permissions: userPerms } = useAuthStore()
+  const menuItems: DynamicMenuItem[] = dynamicMenus || fallbackNavItems.filter(item => {
+    if (!user) return false
+    if (user.role === 'sysadmin') return true
+    // Prefer permission-based check if available
+    if (item.permissions && item.permissions.length > 0) {
+      return item.permissions.some(p => userPerms.has(p))
+    }
+    // Fallback to legacy role check
+    return item.roles.includes(user.role)
+  })
 
   const toggleDir = (label: string) => {
     setExpandedDirs(prev => {
@@ -240,6 +252,9 @@ function AppLayout() {
             <Menu size={20} />
           </button>
         </div>
+
+        {/* 分店切换器 */}
+        {!sidebarCollapsed && <BranchSwitcher />}
 
         {/* 导航 */}
         <nav className="flex-1 py-4 overflow-y-auto">

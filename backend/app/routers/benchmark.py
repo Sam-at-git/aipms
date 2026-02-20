@@ -19,7 +19,8 @@ from app.models.schemas import (
     BenchmarkRunRequest, BenchmarkRunResponse, BenchmarkRunDetailResponse,
     BenchmarkCaseResultResponse,
 )
-from app.security.auth import require_manager
+from app.security.auth import require_permission
+from app.security.permissions import BENCHMARK_READ, BENCHMARK_WRITE
 
 router = APIRouter(prefix="/benchmark", tags=["Benchmark"])
 
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/benchmark", tags=["Benchmark"])
 
 @router.get("/init-scripts")
 def list_init_scripts_endpoint(
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     from app.services.benchmark_runner import list_init_scripts
 
@@ -42,7 +43,7 @@ def list_init_scripts_endpoint(
 def list_suites(
     category: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     query = db.query(BenchmarkSuite)
     if category:
@@ -61,7 +62,7 @@ def list_suites(
 def create_suite(
     data: BenchmarkSuiteCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     suite = BenchmarkSuite(**data.model_dump())
     db.add(suite)
@@ -76,7 +77,7 @@ def create_suite(
 def get_suite(
     suite_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     suite = db.query(BenchmarkSuite).filter(BenchmarkSuite.id == suite_id).first()
     if not suite:
@@ -94,7 +95,7 @@ def update_suite(
     suite_id: int,
     data: BenchmarkSuiteUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     suite = db.query(BenchmarkSuite).filter(BenchmarkSuite.id == suite_id).first()
     if not suite:
@@ -114,7 +115,7 @@ def update_suite(
 def delete_suite(
     suite_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     suite = db.query(BenchmarkSuite).filter(BenchmarkSuite.id == suite_id).first()
     if not suite:
@@ -132,7 +133,7 @@ def create_case(
     suite_id: int,
     data: BenchmarkCaseCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     suite = db.query(BenchmarkSuite).filter(BenchmarkSuite.id == suite_id).first()
     if not suite:
@@ -155,7 +156,7 @@ def update_case(
     case_id: int,
     data: BenchmarkCaseUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     case = db.query(BenchmarkCase).filter(BenchmarkCase.id == case_id).first()
     if not case:
@@ -172,7 +173,7 @@ def update_case(
 def delete_case(
     case_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     case = db.query(BenchmarkCase).filter(BenchmarkCase.id == case_id).first()
     if not case:
@@ -188,7 +189,7 @@ def reorder_cases(
     suite_id: int,
     data: BenchmarkCaseReorderRequest,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     suite = db.query(BenchmarkSuite).filter(BenchmarkSuite.id == suite_id).first()
     if not suite:
@@ -209,7 +210,7 @@ def reorder_cases(
 @router.post("/generate-assertions")
 def generate_assertions_endpoint(
     data: BenchmarkGenerateAssertionsRequest,
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     from app.services.benchmark_service import generate_assertions
 
@@ -228,7 +229,7 @@ def generate_assertions_endpoint(
 def run_benchmark(
     data: BenchmarkRunRequest,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     from app.services.benchmark_runner import run_suites
 
@@ -242,7 +243,7 @@ def run_benchmark(
 @router.get("/runs", response_model=List[BenchmarkRunResponse])
 def list_runs(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     runs = db.query(BenchmarkRun).order_by(BenchmarkRun.suite_id).all()
     return [BenchmarkRunResponse.model_validate(r) for r in runs]
@@ -252,7 +253,7 @@ def list_runs(
 def get_run_detail(
     suite_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     run = db.query(BenchmarkRun).filter_by(suite_id=suite_id).first()
     if not run:
@@ -267,7 +268,7 @@ def get_run_detail(
 @router.post("/reset-db")
 def reset_db_endpoint(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     from init_data import reset_business_data
 
@@ -280,7 +281,7 @@ def reset_db_endpoint(
 @router.get("/export")
 def export_all(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     from app.services.benchmark_service import export_suites
 
@@ -293,7 +294,7 @@ def export_all(
 def export_suite(
     suite_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
 ):
     from app.services.benchmark_service import export_suites
 
@@ -310,7 +311,7 @@ def export_suite(
 async def import_suites_from_yaml(
     request: Request,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(BENCHMARK_WRITE)),
     mode: str = Query("merge"),
 ):
     """Import suites from YAML. Send YAML content as request body."""

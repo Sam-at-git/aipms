@@ -8,7 +8,8 @@ from app.database import get_db
 from app.models.ontology import Employee, TaskType, TaskStatus, EmployeeRole
 from app.models.schemas import TaskCreate, TaskAssign, TaskUpdate, TaskResponse
 from app.services.task_service import TaskService
-from app.security.auth import get_current_user, require_receptionist_or_manager, require_any_role
+from app.security.auth import get_current_user, require_receptionist_or_manager, require_any_role, require_permission
+from app.security.permissions import TASK_READ, TASK_WRITE, TASK_ASSIGN
 
 router = APIRouter(prefix="/tasks", tags=["任务管理"])
 
@@ -31,7 +32,7 @@ def list_tasks(
 @router.get("/my-tasks", response_model=List[TaskResponse])
 def get_my_tasks(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_any_role)
+    current_user: Employee = Depends(require_permission(TASK_READ))
 ):
     """获取我的任务（清洁员）"""
     service = TaskService(db)
@@ -42,7 +43,7 @@ def get_my_tasks(
 @router.get("/pending", response_model=List[TaskResponse])
 def get_pending_tasks(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(TASK_WRITE))
 ):
     """获取待分配任务"""
     service = TaskService(db)
@@ -53,7 +54,7 @@ def get_pending_tasks(
 @router.get("/cleaners")
 def get_cleaners(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(TASK_WRITE))
 ):
     """获取清洁员列表"""
     service = TaskService(db)
@@ -77,7 +78,7 @@ def batch_delete_tasks(
     task_type: Optional[TaskType] = None,
     room_id: Optional[int] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(TASK_WRITE))
 ):
     """批量删除任务（仅 pending/assigned 状态）"""
     if current_user.role not in [EmployeeRole.MANAGER, EmployeeRole.SYSADMIN]:
@@ -91,7 +92,7 @@ def batch_delete_tasks(
 def delete_task(
     task_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(TASK_WRITE))
 ):
     """删除单个任务（仅 pending/assigned 状态）"""
     service = TaskService(db)
@@ -120,7 +121,7 @@ def get_task(
 def create_task(
     data: TaskCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(TASK_WRITE))
 ):
     """创建任务"""
     service = TaskService(db)
@@ -136,7 +137,7 @@ def assign_task(
     task_id: int,
     data: TaskAssign,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(TASK_WRITE))
 ):
     """分配任务"""
     service = TaskService(db)
@@ -151,7 +152,7 @@ def assign_task(
 def start_task(
     task_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_any_role)
+    current_user: Employee = Depends(require_permission(TASK_READ))
 ):
     """开始任务"""
     service = TaskService(db)
@@ -167,7 +168,7 @@ def complete_task(
     task_id: int,
     notes: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_any_role)
+    current_user: Employee = Depends(require_permission(TASK_READ))
 ):
     """完成任务"""
     service = TaskService(db)
@@ -183,7 +184,7 @@ def update_task(
     task_id: int,
     data: TaskUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(TASK_WRITE))
 ):
     """更新任务"""
     service = TaskService(db)

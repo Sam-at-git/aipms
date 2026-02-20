@@ -124,6 +124,8 @@ class CheckInService:
             deposit_amount=data.deposit_amount,
             created_by=operator_id
         )
+        from app.services.branch_utils import inject_branch_id
+        inject_branch_id(stay_record)
         self.db.add(stay_record)
         self.db.flush()
 
@@ -138,6 +140,7 @@ class CheckInService:
             total_amount=total_amount,
             paid_amount=reservation.prepaid_amount
         )
+        inject_branch_id(bill)
         self.db.add(bill)
 
         # 更新房间状态
@@ -256,6 +259,8 @@ class CheckInService:
             deposit_amount=data.deposit_amount,
             created_by=operator_id
         )
+        from app.services.branch_utils import inject_branch_id
+        inject_branch_id(stay_record)
         self.db.add(stay_record)
         self.db.flush()
 
@@ -269,6 +274,7 @@ class CheckInService:
             stay_record_id=stay_record.id,
             total_amount=total_amount
         )
+        inject_branch_id(bill)
         self.db.add(bill)
 
         # 更新房间状态
@@ -548,5 +554,6 @@ class CheckInService:
             'status': stay.status,
             'bill_total': stay.bill.total_amount if stay.bill else Decimal('0'),
             'bill_paid': stay.bill.paid_amount if stay.bill else Decimal('0'),
-            'bill_balance': stay.bill.balance if stay.bill else Decimal('0')
+            'bill_balance': stay.bill.balance if stay.bill else Decimal('0'),
+            'branch_name': stay.branch.name if getattr(stay, 'branch', None) else None
         }

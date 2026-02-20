@@ -138,14 +138,29 @@ class TestMenuAPI:
         response = client.get("/system/menus")
         assert response.status_code in (401, 403)
 
-    def test_menu_with_permission(self, client: TestClient, auth_headers, db_session):
-        """带权限码的菜单在用户菜单中正确过滤"""
+    def test_menu_with_permission(self, client: TestClient, db_session):
+        """带权限码的菜单在用户菜单中正确过滤（经理用户）"""
+        from app.models.ontology import Employee, EmployeeRole
+        from app.security.auth import get_password_hash, create_access_token
+
+        mgr = Employee(
+            username="mgr_menu_perm",
+            password_hash=get_password_hash("123456"),
+            name="经理",
+            role=EmployeeRole.MANAGER,
+            is_active=True,
+        )
+        db_session.add(mgr)
+        db_session.commit()
+        token = create_access_token(mgr.id, mgr.role)
+        mgr_headers = {"Authorization": f"Bearer {token}"}
+
         # Create menus with different permission requirements
         db_session.add(SysMenu(code="perm_menu1", name="无权限菜单", is_visible=True, sort_order=1))
         db_session.add(SysMenu(code="perm_menu2", name="需权限菜单", permission_code="secret:access", is_visible=True, sort_order=2))
         db_session.commit()
 
-        response = client.get("/system/menus/user", headers=auth_headers)
+        response = client.get("/system/menus/user", headers=mgr_headers)
         data = response.json()
         codes = [m["code"] for m in data]
         # No-permission menu should show; permission-required menu should be filtered

@@ -21,6 +21,7 @@ from core.ontology.query import (
     StructuredQuery, FilterClause, JoinClause, FilterOperator, JoinType
 )
 from core.ontology.registry import OntologyRegistry
+from core.security.data_scope import DataScopeLevel, DataScopeType
 
 logger = logging.getLogger(__name__)
 
@@ -204,11 +205,47 @@ class QueryEngine:
             if conditions:
                 q = q.filter(and_(*conditions))
 
+        # 自动注入数据作用域过滤
+        q = self._apply_data_scope_filter(q, query.entity, model_class)
+
         # 处理 ORDER BY
         for order_expr in query.order_by:
             q = self._apply_order_by(q, model_class, order_expr)
 
         return q
+
+    def _apply_data_scope_filter(self, query, entity_name: str, model_class: Type):
+        """自动注入数据作用域过滤条件"""
+        from core.security.context import SecurityContextManager
+
+        ctx = SecurityContextManager().get_context()
+        if not ctx or not ctx.data_scope:
+            return query
+
+        scope = ctx.data_scope
+        if scope.level == DataScopeLevel.ALL:
+            return query
+
+        # 从 OntologyRegistry 获取实体元数据
+        registry = self.registry or _get_registry()
+        entity_meta = registry.get_entity(entity_name)
+        if not entity_meta or entity_meta.data_scope_type != DataScopeType.SCOPED:
+            return query
+
+        scope_col = entity_meta.scope_column
+        if not scope_col or not hasattr(model_class, scope_col):
+            return query
+
+        if scope.level == DataScopeLevel.SELF_ONLY:
+            owner_col = scope.owner_column
+            if hasattr(model_class, owner_col):
+                query = query.filter(getattr(model_class, owner_col) == scope.user_id)
+        else:
+            # SCOPE_ONLY 或 SCOPE_AND_BELOW
+            if scope.scope_ids:
+                query = query.filter(getattr(model_class, scope_col).in_(scope.scope_ids))
+
+        return query
 
     def _apply_join(self, query, base_model: Type, join_clause: JoinClause):
         """应用 JOIN 子句"""
@@ -512,6 +549,9 @@ class QueryEngine:
                 conditions = [self._parse_filter(model_class, f) for f in query.filters]
                 if conditions:
                     base_query = base_query.filter(and_(*conditions))
+
+            # 自动注入数据作用域过滤
+            base_query = self._apply_data_scope_filter(base_query, query.entity, model_class)
 
             # 解析 fields 来确定需要哪些字段
             # fields 可能包含: ["guest.name", "stay_count"]

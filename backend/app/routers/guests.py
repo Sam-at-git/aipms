@@ -19,7 +19,8 @@ try:
 except ImportError:
     CORE_GUEST_SERVICE_AVAILABLE = False
 
-from app.security.auth import get_current_user, require_manager, require_receptionist_or_manager
+from app.security.auth import get_current_user, require_manager, require_receptionist_or_manager, require_permission
+from app.security.permissions import GUEST_READ, GUEST_WRITE
 
 router = APIRouter(prefix="/guests", tags=["客人管理"])
 
@@ -110,7 +111,7 @@ def get_guest(
 def create_guest(
     data: GuestCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(GUEST_WRITE))
 ):
     """创建客人"""
     service = get_guest_service(db)
@@ -142,7 +143,7 @@ def update_guest(
     guest_id: int,
     data: GuestUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(GUEST_WRITE))
 ):
     """更新客人信息"""
     service = get_guest_service(db)
@@ -198,7 +199,7 @@ def update_guest_tier(
     guest_id: int,
     tier: GuestTier,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(GUEST_WRITE))
 ):
     """更新客人等级"""
     service = get_guest_service(db)
@@ -215,7 +216,7 @@ def toggle_blacklist(
     is_blacklisted: bool = Query(...),
     reason: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(GUEST_WRITE))
 ):
     """设置黑名单状态"""
     service = get_guest_service(db)

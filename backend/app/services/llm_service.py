@@ -644,6 +644,7 @@ ontology_query 用于动态字段级查询，params 结构如下：
         language: Optional[str] = None,
         user_role: str = "",
         message_hint: str = "",
+        branch_name: Optional[str] = None,
     ) -> Optional[str]:
         """Build Phase 3 discovery system prompt (SPEC-P06).
 
@@ -662,6 +663,7 @@ ontology_query 用于动态字段级查询，params 结构如下：
             include_rules=True,
             include_state_machines=True,
             message_hint=message_hint,
+            branch_name=branch_name,
         )
         prompt = self._prompt_builder.build_discovery_prompt(context)
 
@@ -681,6 +683,7 @@ ontology_query 用于动态字段级查询，params 结构如下：
         message_hint: str = "",
         allowed_actions: Optional[List[str]] = None,
         allowed_entities: Optional[List[str]] = None,
+        branch_name: Optional[str] = None,
     ) -> str:
         """
         构建包含 Schema 的系统提示词
@@ -712,6 +715,7 @@ ontology_query 用于动态字段级查询，params 结构如下：
                 message_hint=message_hint,
                 allowed_actions=allowed_actions,
                 allowed_entities=allowed_entities,
+                branch_name=branch_name,
             )
             system_prompt = self._prompt_builder.build_system_prompt(context)
 

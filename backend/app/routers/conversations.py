@@ -11,7 +11,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.models.ontology import Employee
 from app.services.conversation_service import ConversationService, ConversationMessage
-from app.security.auth import get_current_user, require_sysadmin
+from app.security.auth import get_current_user, require_sysadmin, require_permission
+from app.security.permissions import CONVERSATION_READ, CONVERSATION_WRITE
 
 
 router = APIRouter(prefix="/conversations", tags=["会话历史"])
@@ -221,7 +222,7 @@ class AdminUsersResponse(BaseModel):
 
 @router.get("/admin/users", response_model=AdminUsersResponse)
 def admin_get_users_with_conversations(
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(CONVERSATION_WRITE)),
     service: ConversationService = Depends(get_conversation_service)
 ):
     """
@@ -238,7 +239,7 @@ def admin_get_users_with_conversations(
 @router.get("/admin/user/{user_id}/dates", response_model=AvailableDatesResponse)
 def admin_get_user_dates(
     user_id: int,
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(CONVERSATION_WRITE)),
     service: ConversationService = Depends(get_conversation_service)
 ):
     """
@@ -256,7 +257,7 @@ def admin_get_user_messages(
     date_str: Optional[str] = Query(default=None, description="日期 YYYY-MM-DD"),
     keyword: Optional[str] = Query(default=None, description="搜索关键词"),
     limit: int = Query(default=50, ge=1, le=200),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(CONVERSATION_WRITE)),
     service: ConversationService = Depends(get_conversation_service)
 ):
     """
@@ -290,7 +291,7 @@ def admin_get_user_messages(
 
 @router.get("/admin/statistics")
 def admin_get_statistics(
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(CONVERSATION_WRITE)),
     service: ConversationService = Depends(get_conversation_service),
 ) -> Dict[str, Any]:
     """
@@ -307,7 +308,7 @@ def admin_export_messages(
     start_date: Optional[str] = Query(default=None, description="开始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(default=None, description="结束日期 YYYY-MM-DD"),
     format: str = Query(default="json", description="导出格式: json 或 csv"),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(CONVERSATION_WRITE)),
     service: ConversationService = Depends(get_conversation_service),
 ):
     """

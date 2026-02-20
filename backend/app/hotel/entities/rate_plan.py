@@ -10,6 +10,7 @@ def get_registration() -> EntityRegistration:
         name="RatePlan",
         description="价格方案 - 动态定价管理，支持按日期范围、周末/平日区分的灵活价格策略。",
         table_name="rate_plans", category="dimension",
+        data_scope_type="scoped", scope_column="branch_id",
         extensions={
             "business_purpose": "动态定价与收益管理",
             "key_attributes": ["room_type_id", "price", "start_date", "end_date"],

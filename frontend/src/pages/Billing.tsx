@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Search, CreditCard, Receipt } from 'lucide-react'
 import { checkinApi, billingApi } from '../services/api'
+import { useAuthStore } from '../store'
 import type { StayRecord, Bill } from '../types'
 
 export default function Billing() {
@@ -8,6 +9,8 @@ export default function Billing() {
   const [loading, setLoading] = useState(true)
   const [searchKeyword, setSearchKeyword] = useState('')
   const [selectedBill, setSelectedBill] = useState<Bill | null>(null)
+  const currentBranchId = useAuthStore(s => s.currentBranchId)
+  const showBranch = !currentBranchId
 
   useEffect(() => {
     loadData()
@@ -102,6 +105,9 @@ export default function Billing() {
                     <div>
                       <span className="font-bold text-primary-400">{stay.room_number}</span>
                       <span className="ml-2 text-dark-400">{stay.guest_name}</span>
+                      {showBranch && stay.branch_name && (
+                        <span className="ml-2 text-xs text-dark-500">{stay.branch_name}</span>
+                      )}
                     </div>
                     <span className={`text-sm font-medium ${
                       stay.bill_balance > 0 ? 'text-red-400' : 'text-emerald-400'

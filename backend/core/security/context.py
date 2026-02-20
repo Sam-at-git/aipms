@@ -10,6 +10,7 @@ import threading
 import logging
 
 from core.ontology.security import SecurityLevel
+from core.security.data_scope import DataScopeContext
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,8 @@ class SecurityContext:
     metadata: Dict[str, Any] = field(default_factory=dict)
     parent_context: Optional["SecurityContext"] = None
     should_mask_pii: bool = False
+    data_scope: Optional[DataScopeContext] = None
+    branch_id: Optional[int] = None
 
     _admin_roles: ClassVar[Set[str]] = {"manager"}
 

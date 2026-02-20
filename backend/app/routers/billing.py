@@ -7,7 +7,8 @@ from app.database import get_db
 from app.models.ontology import Employee
 from app.models.schemas import PaymentCreate, BillAdjustment, BillResponse
 from app.services.billing_service import BillingService
-from app.security.auth import get_current_user, require_manager, require_receptionist_or_manager
+from app.security.auth import get_current_user, require_manager, require_receptionist_or_manager, require_permission
+from app.security.permissions import BILL_READ, BILL_WRITE
 
 router = APIRouter(prefix="/billing", tags=["账单管理"])
 
@@ -44,7 +45,7 @@ def get_bill_by_stay(
 def add_payment(
     data: PaymentCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(BILL_READ))
 ):
     """添加支付记录"""
     service = BillingService(db)
@@ -63,7 +64,7 @@ def add_payment(
 def adjust_bill(
     data: BillAdjustment,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(BILL_WRITE))
 ):
     """调整账单金额（仅经理）"""
     service = BillingService(db)

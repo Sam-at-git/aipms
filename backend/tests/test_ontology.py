@@ -142,9 +142,26 @@ class TestOntologySchema:
         assert "Task" in entity_names
         assert "Employee" in entity_names
 
-    def test_get_ontology_schema_unauthorized(self, client, receptionist_headers):
-        """Test that non-managers cannot access ontology schema"""
+    def test_get_ontology_schema_receptionist_allowed(self, client, receptionist_headers):
+        """Receptionist has ontology:read permission via RBAC fallback"""
         response = client.get("/ontology/schema", headers=receptionist_headers)
+        assert response.status_code == 200
+
+    def test_get_ontology_schema_cleaner_denied(self, client, db):
+        """Cleaner does not have ontology:read permission"""
+        cleaner = Employee(
+            username="test_cleaner_ont",
+            password_hash=get_password_hash("password123"),
+            name="Test Cleaner",
+            role=EmployeeRole.CLEANER,
+            is_active=True,
+        )
+        db.add(cleaner)
+        db.commit()
+        db.refresh(cleaner)
+        token = create_access_token(cleaner.id, cleaner.role)
+        cleaner_headers = {"Authorization": f"Bearer {token}"}
+        response = client.get("/ontology/schema", headers=cleaner_headers)
         assert response.status_code == 403
 
     def test_get_ontology_schema_no_auth(self, client):

@@ -9,12 +9,14 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.ontology import Employee
-from app.security.auth import get_current_user, require_manager
+from app.security.auth import get_current_user, require_permission
+from app.security.permissions import SYS_DEPT_MANAGE
 from app.system.schemas import (
     DepartmentCreate, DepartmentUpdate, DepartmentResponse, DepartmentTreeResponse,
     PositionCreate, PositionUpdate, PositionResponse,
 )
 from app.system.services.org_service import OrgService
+from app.system.services.data_scope_resolver import BranchDataScopeResolver
 
 dept_router = APIRouter(prefix="/system/departments", tags=["组织机构-部门"])
 pos_router = APIRouter(prefix="/system/positions", tags=["组织机构-岗位"])
@@ -43,6 +45,18 @@ def get_department_tree(
     return service.get_department_tree()
 
 
+@dept_router.get("/branches")
+def list_branches(
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    """获取所有分店（分店切换器使用）"""
+    return [
+        {"id": b.id, "name": b.name, "code": b.code}
+        for b in BranchDataScopeResolver.get_all_branches(db)
+    ]
+
+
 @dept_router.get("/{dept_id}", response_model=DepartmentResponse)
 def get_department(
     dept_id: int,
@@ -61,7 +75,7 @@ def get_department(
 def create_department(
     data: DepartmentCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DEPT_MANAGE)),
 ):
     """创建部门（需要经理权限）"""
     service = OrgService(db)
@@ -70,6 +84,7 @@ def create_department(
             code=data.code, name=data.name,
             parent_id=data.parent_id, leader_id=data.leader_id,
             sort_order=data.sort_order,
+            dept_type=getattr(data, 'dept_type', None),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -80,7 +95,7 @@ def update_department(
     dept_id: int,
     data: DepartmentUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DEPT_MANAGE)),
 ):
     """更新部门"""
     service = OrgService(db)
@@ -94,7 +109,7 @@ def update_department(
 def delete_department(
     dept_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DEPT_MANAGE)),
 ):
     """删除部门"""
     service = OrgService(db)
@@ -136,7 +151,7 @@ def get_position(
 def create_position(
     data: PositionCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DEPT_MANAGE)),
 ):
     """创建岗位（需要经理权限）"""
     service = OrgService(db)
@@ -154,7 +169,7 @@ def update_position(
     pos_id: int,
     data: PositionUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DEPT_MANAGE)),
 ):
     """更新岗位"""
     service = OrgService(db)
@@ -168,7 +183,7 @@ def update_position(
 def delete_position(
     pos_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DEPT_MANAGE)),
 ):
     """删除岗位"""
     service = OrgService(db)

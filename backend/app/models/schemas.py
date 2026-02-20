@@ -71,6 +71,7 @@ class RoomResponse(RoomBase):
     created_at: datetime
     room_type_name: Optional[str] = None
     current_guest: Optional[str] = None
+    branch_name: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -203,6 +204,7 @@ class ReservationResponse(BaseModel):
     special_requests: Optional[str]
     estimated_arrival: Optional[str]
     created_at: datetime
+    branch_name: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -297,6 +299,7 @@ class StayRecordResponse(BaseModel):
     bill_total: Decimal = 0
     bill_paid: Decimal = 0
     bill_balance: Decimal = 0
+    branch_name: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -380,6 +383,7 @@ class TaskResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
+    branch_name: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -417,6 +421,10 @@ class EmployeeResponse(BaseModel):
     role: EmployeeRole
     is_active: bool
     created_at: datetime
+    branch_id: Optional[int] = None
+    branch_name: Optional[str] = None
+    role_codes: Optional[list] = None
+    department_id: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -606,3 +614,98 @@ class LLMTestRequest(BaseModel):
     api_key: Optional[str] = None  # 可选，为空时使用环境变量
     base_url: str
     model: str
+
+
+# ============== Benchmark Schemas ==============
+
+class BenchmarkSuiteCreate(BaseModel):
+    name: str = Field(..., max_length=100)
+    category: str = Field(default="", max_length=50)
+    description: Optional[str] = None
+    init_script: Optional[str] = None
+
+class BenchmarkSuiteUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=100)
+    category: Optional[str] = Field(None, max_length=50)
+    description: Optional[str] = None
+    init_script: Optional[str] = None
+
+class BenchmarkSuiteResponse(BaseModel):
+    id: int
+    name: str
+    category: str
+    description: Optional[str] = None
+    init_script: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    case_count: int = 0
+    model_config = ConfigDict(from_attributes=True)
+
+class BenchmarkCaseCreate(BaseModel):
+    sequence_order: Optional[int] = None
+    name: str = Field(..., max_length=200)
+    input: str
+    run_as: Optional[str] = None
+    assertions: str = "{}"
+    follow_up_fields: Optional[str] = None
+
+class BenchmarkCaseUpdate(BaseModel):
+    sequence_order: Optional[int] = None
+    name: Optional[str] = Field(None, max_length=200)
+    input: Optional[str] = None
+    run_as: Optional[str] = None
+    assertions: Optional[str] = None
+    follow_up_fields: Optional[str] = None
+
+class BenchmarkCaseResponse(BaseModel):
+    id: int
+    suite_id: int
+    sequence_order: int
+    name: str
+    input: str
+    run_as: Optional[str] = None
+    assertions: str
+    follow_up_fields: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class BenchmarkSuiteDetailResponse(BenchmarkSuiteResponse):
+    cases: List[BenchmarkCaseResponse] = []
+
+class BenchmarkCaseReorderRequest(BaseModel):
+    case_ids: List[int]
+
+class BenchmarkGenerateAssertionsRequest(BaseModel):
+    input: str
+    case_type: Optional[str] = None
+
+class BenchmarkRunRequest(BaseModel):
+    suite_ids: List[int]
+
+class BenchmarkRunResponse(BaseModel):
+    id: int
+    suite_id: int
+    status: str
+    total_cases: int = 0
+    passed: int = 0
+    failed: int = 0
+    error_count: int = 0
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class BenchmarkCaseResultResponse(BaseModel):
+    id: int
+    run_id: int
+    case_id: int
+    status: str
+    debug_session_id: Optional[str] = None
+    actual_response: Optional[str] = None
+    assertion_details: Optional[str] = None
+    error_message: Optional[str] = None
+    executed_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class BenchmarkRunDetailResponse(BenchmarkRunResponse):
+    case_results: List[BenchmarkCaseResultResponse] = []

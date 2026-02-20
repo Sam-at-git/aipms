@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.ontology import Employee
-from app.security.auth import require_sysadmin
+from app.security.auth import require_permission
+from app.security.permissions import SYS_SCHEDULER_MANAGE
 from app.system.services.scheduler_service import SchedulerService
 
 router = APIRouter(prefix="/system/schedulers", tags=["定时任务"])
@@ -77,7 +78,7 @@ def list_jobs(
     group: Optional[str] = None,
     is_active: Optional[bool] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_SCHEDULER_MANAGE)),
 ):
     """获取定时任务列表"""
     service = SchedulerService(db)
@@ -88,7 +89,7 @@ def list_jobs(
 def create_job(
     body: JobCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_SCHEDULER_MANAGE)),
 ):
     """创建定时任务"""
     service = SchedulerService(db)
@@ -105,7 +106,7 @@ def create_job(
 def get_job(
     job_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_SCHEDULER_MANAGE)),
 ):
     """获取任务详情"""
     service = SchedulerService(db)
@@ -120,7 +121,7 @@ def update_job(
     job_id: int,
     body: JobUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_SCHEDULER_MANAGE)),
 ):
     """更新定时任务"""
     service = SchedulerService(db)
@@ -134,7 +135,7 @@ def update_job(
 def delete_job(
     job_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_SCHEDULER_MANAGE)),
 ):
     """删除定时任务"""
     service = SchedulerService(db)
@@ -146,7 +147,7 @@ def delete_job(
 def start_job(
     job_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_SCHEDULER_MANAGE)),
 ):
     """启动任务"""
     service = SchedulerService(db)
@@ -160,7 +161,7 @@ def start_job(
 def stop_job(
     job_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_SCHEDULER_MANAGE)),
 ):
     """停止任务"""
     service = SchedulerService(db)
@@ -174,7 +175,7 @@ def stop_job(
 def trigger_job(
     job_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_SCHEDULER_MANAGE)),
 ):
     """立即执行一次任务"""
     service = SchedulerService(db)
@@ -191,7 +192,7 @@ def get_job_logs(
     status_filter: Optional[str] = Query(None, alias="status"),
     limit: int = Query(default=50, ge=1, le=500),
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_SCHEDULER_MANAGE)),
 ):
     """获取任务执行日志"""
     service = SchedulerService(db)

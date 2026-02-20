@@ -252,6 +252,7 @@ class DepartmentCreate(BaseModel):
     code: str = Field(..., min_length=1, max_length=50, description="部门编码")
     name: str = Field(..., min_length=1, max_length=100, description="部门名称")
     parent_id: Optional[int] = None
+    dept_type: str = Field(default="DEPARTMENT", description="部门类型: GROUP|BRANCH|DEPARTMENT")
     leader_id: Optional[int] = None
     sort_order: int = Field(default=0)
 
@@ -259,6 +260,7 @@ class DepartmentCreate(BaseModel):
 class DepartmentUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     parent_id: Optional[int] = None
+    dept_type: Optional[str] = None
     leader_id: Optional[int] = None
     sort_order: Optional[int] = None
     is_active: Optional[bool] = None
@@ -269,6 +271,7 @@ class DepartmentResponse(BaseModel):
     code: str
     name: str
     parent_id: Optional[int] = None
+    dept_type: str = "DEPARTMENT"
     leader_id: Optional[int] = None
     sort_order: int
     is_active: bool

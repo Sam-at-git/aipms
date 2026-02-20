@@ -1,6 +1,9 @@
 # Documentation
 docs/
 
+# Skills (role agent definitions)
+skills/
+
 # Python
 __pycache__/
 *.py[cod]

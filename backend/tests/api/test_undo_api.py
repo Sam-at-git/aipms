@@ -197,10 +197,10 @@ class TestListUndoableOperations:
         resp = client.get("/undo/operations", headers=cleaner_auth_headers)
         assert resp.status_code == 403
 
-    def test_list_operations_forbidden_for_sysadmin(self, client, sysadmin_auth_headers):
-        """Undo operations endpoint checks for manager/receptionist role only."""
+    def test_list_operations_allowed_for_sysadmin(self, client, sysadmin_auth_headers):
+        """Sysadmin has all permissions including undo:read via RBAC bypass."""
         resp = client.get("/undo/operations", headers=sysadmin_auth_headers)
-        assert resp.status_code == 403
+        assert resp.status_code == 200
 
     def test_list_operations_unauthenticated(self, client):
         resp = client.get("/undo/operations")
@@ -334,10 +334,10 @@ class TestUndoHistory:
         resp = client.get("/undo/history", headers=cleaner_auth_headers)
         assert resp.status_code == 403
 
-    def test_history_forbidden_for_sysadmin(self, client, sysadmin_auth_headers):
-        """Undo history checks for manager role, not sysadmin."""
+    def test_history_allowed_for_sysadmin(self, client, sysadmin_auth_headers):
+        """Sysadmin has all permissions including undo:history via RBAC bypass."""
         resp = client.get("/undo/history", headers=sysadmin_auth_headers)
-        assert resp.status_code == 403
+        assert resp.status_code == 200
 
 
 # ────────────────────────── GET /undo/{uuid} (detail) ──────────────────────────

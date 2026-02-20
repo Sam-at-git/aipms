@@ -12,7 +12,8 @@ from app.models.ontology import Employee
 from app.models.schemas import AIAction, ActionConfirmation
 from app.services.ai_service import AIService
 from app.services.conversation_service import ConversationService
-from app.security.auth import get_current_user
+from app.security.auth import get_current_user, require_permission
+from app.security.permissions import AI_CHAT
 
 
 router = APIRouter(prefix="/ai", tags=["AI对话"])

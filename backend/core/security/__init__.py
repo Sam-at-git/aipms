@@ -60,6 +60,14 @@ from core.security.permission import (
     permission_provider_registry,
 )
 
+# 数据作用域
+from core.security.data_scope import (
+    DataScopeType,
+    DataScopeLevel,
+    DataScopeContext,
+    IDataScopeResolver,
+)
+
 # 安全级别（从 core.ontology.security 重新导出）
 from core.ontology.security import SecurityLevel
 
@@ -90,6 +98,11 @@ __all__ = [
     "IPermissionProvider",
     "PermissionProviderRegistry",
     "permission_provider_registry",
+    # 数据作用域
+    "DataScopeType",
+    "DataScopeLevel",
+    "DataScopeContext",
+    "IDataScopeResolver",
     # 安全级别
     "SecurityLevel",
 ]

@@ -21,7 +21,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.security.auth import get_current_user, require_sysadmin
+from app.security.auth import get_current_user, require_sysadmin, require_permission
+from app.security.permissions import DEBUG_READ, DEBUG_REPLAY
 from app.models.ontology import Employee
 from core.ai.debug_logger import DebugLogger
 from core.ai.replay import (
@@ -83,7 +84,7 @@ def list_sessions(
     user_id: Optional[int] = Query(None, description="Filter by user ID"),
     limit: int = Query(20, ge=1, le=100, description="Max sessions to return"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(DEBUG_READ)),
 ) -> Dict[str, Any]:
     """
     List debug sessions with optional filters.
@@ -134,7 +135,7 @@ def list_sessions(
 @router.get("/sessions/{session_id}")
 def get_session_detail(
     session_id: str,
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(DEBUG_READ)),
 ) -> Dict[str, Any]:
     """
     Get session detail with all attempts.
@@ -168,7 +169,7 @@ def get_session_detail(
 
 @router.get("/statistics")
 def get_statistics(
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(DEBUG_READ)),
 ) -> Dict[str, Any]:
     """
     Get debug logger statistics.
@@ -184,7 +185,7 @@ def get_statistics(
 @router.get("/analytics/token-trend")
 def get_token_trend(
     days: int = Query(default=7, ge=1, le=90, description="回溯天数"),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(DEBUG_READ)),
 ) -> Dict[str, Any]:
     """Token 使用趋势（按天聚合）"""
     debug_logger = get_debug_logger()
@@ -211,7 +212,7 @@ def get_token_trend(
 @router.get("/analytics/error-aggregation")
 def get_error_aggregation(
     days: int = Query(default=7, ge=1, le=90, description="回溯天数"),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(DEBUG_READ)),
 ) -> Dict[str, Any]:
     """错误聚合统计"""
     debug_logger = get_debug_logger()
@@ -271,7 +272,7 @@ def get_error_aggregation(
 @router.post("/replay")
 def replay_session(
     request: Dict[str, Any],
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(DEBUG_READ)),
 ) -> Dict[str, Any]:
     """
     Replay a session with optional parameter overrides.
@@ -328,7 +329,7 @@ def replay_session(
 @router.get("/replay/{replay_id}")
 def get_replay_result(
     replay_id: str,
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(DEBUG_READ)),
 ) -> Dict[str, Any]:
     """
     Get replay result with comparison to original session.
@@ -382,7 +383,7 @@ def get_replay_result(
 def list_replays(
     original_session_id: Optional[str] = Query(None, description="Filter by original session ID"),
     limit: int = Query(20, ge=1, le=100, description="Max replays to return"),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(DEBUG_READ)),
 ) -> Dict[str, Any]:
     """
     List replay records.
@@ -412,7 +413,7 @@ def list_replays(
 @router.delete("/sessions/{session_id}")
 def delete_session(
     session_id: str,
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(DEBUG_READ)),
 ) -> Dict[str, Any]:
     """
     Delete a debug session and all its attempts.
@@ -434,7 +435,7 @@ def delete_session(
 @router.post("/cleanup")
 def cleanup_old_sessions(
     days: int = Query(30, ge=1, le=365, description="Days to retain"),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(DEBUG_READ)),
 ) -> Dict[str, Any]:
     """
     Delete sessions older than specified days.

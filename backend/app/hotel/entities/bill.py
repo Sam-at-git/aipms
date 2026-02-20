@@ -13,6 +13,7 @@ def get_registration() -> EntityRegistration:
         name="Bill",
         description="账单 - 与住宿记录关联的财务记录。包含总金额、已付金额、调整金额，支持多种支付方式。",
         table_name="bills", category="transactional",
+        data_scope_type="scoped", scope_column="branch_id",
         extensions={
             "business_purpose": "财务管理与结算",
             "key_attributes": ["stay_record_id", "total_amount", "paid_amount", "is_settled"],

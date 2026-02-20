@@ -4,7 +4,7 @@ import { roomApi } from '../services/api'
 import RoomCard, { RoomStatusSummary } from '../components/RoomCard'
 import Modal, { ModalFooter } from '../components/Modal'
 import { UndoButton } from '../components/UndoButton'
-import { useUIStore, useOntologyStore } from '../store'
+import { useUIStore, useOntologyStore, useAuthStore } from '../store'
 import type { Room, RoomType, RoomStatus } from '../types'
 
 export default function Rooms() {
@@ -15,6 +15,8 @@ export default function Rooms() {
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
   const { openModal, closeModal, modalData } = useUIStore()
   const { getStatusConfig } = useOntologyStore()
+  const currentBranchId = useAuthStore(s => s.currentBranchId)
+  const showBranch = !currentBranchId
 
   useEffect(() => {
     loadData()
@@ -130,6 +132,7 @@ export default function Rooms() {
                       key={room.id}
                       room={room}
                       onClick={handleRoomClick}
+                      showBranch={showBranch}
                     />
                   ))}
                 </div>

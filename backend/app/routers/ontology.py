@@ -11,7 +11,8 @@ from app.models.ontology import (
     Room, Guest, Reservation, StayRecord, Task, Employee, RoomType, Bill,
     RoomStatus, ReservationStatus, StayRecordStatus, TaskStatus, EmployeeRole, GuestTier
 )
-from app.security.auth import get_current_user, require_manager
+from app.security.auth import get_current_user, require_permission
+from app.security.permissions import ONTOLOGY_READ
 from app.services.ontology_metadata_service import OntologyMetadataService
 from core.ontology.registry import OntologyRegistry
 
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/ontology", tags=["本体视图"])
 
 @router.get("/schema")
 async def get_ontology_schema(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取本体结构定义"""
     onto_registry = OntologyRegistry()
@@ -68,7 +69,7 @@ async def get_ontology_schema(
 @router.get("/statistics")
 async def get_ontology_statistics(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取各实体的统计数据"""
     onto_registry = OntologyRegistry()
@@ -122,7 +123,7 @@ async def get_instance_graph(
     center_id: Optional[int] = Query(None, description="中心实体ID"),
     depth: int = Query(2, ge=1, le=3, description="关系深度"),
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取以指定实体为中心的关系图数据"""
     nodes = []
@@ -364,7 +365,7 @@ async def get_instance_graph(
 
 @router.get("/semantic")
 async def get_semantic_metadata(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """
     获取语义层元数据
@@ -377,7 +378,7 @@ async def get_semantic_metadata(
 @router.get("/semantic/{entity_name}")
 async def get_entity_semantic(
     entity_name: str,
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取单个实体的语义元数据"""
     service = OntologyMetadataService()
@@ -394,7 +395,7 @@ async def get_entity_semantic(
 
 @router.get("/kinetic")
 async def get_kinetic_metadata(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """
     获取动力层元数据
@@ -407,7 +408,7 @@ async def get_kinetic_metadata(
 @router.get("/kinetic/{entity_name}")
 async def get_entity_kinetic(
     entity_name: str,
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取单个实体的动力元数据（可执行操作）"""
     service = OntologyMetadataService()
@@ -424,7 +425,7 @@ async def get_entity_kinetic(
 
 @router.get("/dynamic")
 async def get_dynamic_metadata(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """
     获取动态层元数据
@@ -436,7 +437,7 @@ async def get_dynamic_metadata(
 
 @router.get("/dynamic/state-machines")
 async def get_state_machines(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取所有状态机定义"""
     service = OntologyMetadataService()
@@ -447,7 +448,7 @@ async def get_state_machines(
 @router.get("/dynamic/state-machines/{entity_name}")
 async def get_entity_state_machine(
     entity_name: str,
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取单个实体的状态机定义"""
     service = OntologyMetadataService()
@@ -462,7 +463,7 @@ async def get_entity_state_machine(
 
 @router.get("/dynamic/permission-matrix")
 async def get_permission_matrix(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取权限矩阵"""
     service = OntologyMetadataService()
@@ -472,7 +473,7 @@ async def get_permission_matrix(
 
 @router.get("/dynamic/events")
 async def get_events(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取所有已注册的领域事件"""
     service = OntologyMetadataService()
@@ -482,7 +483,7 @@ async def get_events(
 @router.get("/dynamic/business-rules")
 async def get_business_rules(
     entity: Optional[str] = Query(None, description="筛选实体"),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取业务规则列表"""
     service = OntologyMetadataService()
@@ -611,7 +612,7 @@ async def validate_constraints(
 
 @router.get("/interfaces")
 async def get_interfaces(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取所有接口定义及其实现关系"""
     from core.ontology.registry import registry
@@ -622,7 +623,7 @@ async def get_interfaces(
 @router.get("/interfaces/{interface_name}")
 async def get_interface(
     interface_name: str,
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取单个接口详情"""
     from core.ontology.registry import registry
@@ -634,7 +635,7 @@ async def get_interface(
 @router.get("/interfaces/{interface_name}/implementations")
 async def get_interface_implementations(
     interface_name: str,
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取实现指定接口的所有实体"""
     from core.ontology.registry import registry
@@ -645,7 +646,7 @@ async def get_interface_implementations(
 @router.get("/entities/{entity_name}/interfaces")
 async def get_entity_interfaces(
     entity_name: str,
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """获取实体实现的所有接口"""
     from core.ontology.registry import registry
@@ -661,7 +662,7 @@ async def get_entity_interfaces(
 
 @router.get("/schema/export")
 async def export_schema(
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ONTOLOGY_READ))
 ):
     """
     导出完整本体 schema (JSON)

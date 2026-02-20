@@ -16,11 +16,16 @@ const api = axios.create({
   }
 })
 
-// 请求拦截器：添加 token
+// 请求拦截器：添加 token + 分店上下文
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
+  }
+  // 注入当前分店 ID（分店切换器选中的）
+  const branchId = localStorage.getItem('currentBranchId')
+  if (branchId) {
+    config.headers['X-Branch-Id'] = branchId
   }
   return config
 })
@@ -1245,6 +1250,12 @@ export const orgApi = {
   },
   deletePosition: async (id: number): Promise<void> => {
     await api.delete(`/system/positions/${id}`)
+  },
+
+  // Branches
+  getBranches: async (): Promise<{ id: number; name: string; code: string }[]> => {
+    const res = await api.get('/system/departments/branches')
+    return res.data
   },
 }
 

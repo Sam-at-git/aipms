@@ -62,6 +62,8 @@ class RoomService:
             raise ValueError(f"房型名称 '{data.name}' 已存在")
 
         room_type = RoomType(**data.model_dump())
+        from app.services.branch_utils import inject_branch_id
+        inject_branch_id(room_type)
         self.db.add(room_type)
         self.db.commit()
         self.db.refresh(room_type)
@@ -120,7 +122,8 @@ class RoomService:
     # ============== 房间操作 ==============
 
     def get_rooms(self, floor: Optional[int] = None, room_type_id: Optional[int] = None,
-                  status: Optional[RoomStatus] = None, is_active: Optional[bool] = True) -> List[Room]:
+                  status: Optional[RoomStatus] = None, is_active: Optional[bool] = True,
+                  branch_id: Optional[int] = None) -> List[Room]:
         """获取房间列表"""
         query = self.db.query(Room)
 
@@ -132,6 +135,8 @@ class RoomService:
             query = query.filter(Room.status == status)
         if is_active is not None:
             query = query.filter(Room.is_active == is_active)
+        if branch_id is not None:
+            query = query.filter(Room.branch_id == branch_id)
 
         return query.order_by(Room.floor, Room.room_number).all()
 
@@ -152,6 +157,8 @@ class RoomService:
             raise ValueError("房型不存在")
 
         room = Room(**data.model_dump())
+        from app.services.branch_utils import inject_branch_id
+        inject_branch_id(room)
         self.db.add(room)
         self.db.commit()
         self.db.refresh(room)
@@ -298,7 +305,8 @@ class RoomService:
             'features': room.features,
             'is_active': room.is_active,
             'current_guest': current_guest,
-            'created_at': room.created_at
+            'created_at': room.created_at,
+            'branch_name': room.branch.name if getattr(room, 'branch', None) else None
         }
 
     def get_room_status_summary(self) -> dict:

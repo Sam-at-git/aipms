@@ -15,6 +15,7 @@ def get_registration() -> EntityRegistration:
         table_name="rooms", category="master_data", is_aggregate_root=False,
         lifecycle_states=["VACANT_CLEAN", "VACANT_DIRTY", "OCCUPIED", "OUT_OF_ORDER"],
         implements=["BookableResource", "Maintainable"],
+        data_scope_type="scoped", scope_column="branch_id",
         extensions={
             "business_purpose": "可销售的核心库存单元",
             "key_attributes": ["room_number", "status", "room_type_id"],

@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.ontology import Employee
-from app.security.auth import get_current_user, require_manager
+from app.security.auth import get_current_user, require_permission
+from app.security.permissions import SYS_MESSAGE_MANAGE
 from app.system.schemas import (
     MessageSend, MessageResponse, InboxResponse,
     TemplateCreate, TemplateUpdate, TemplateResponse,
@@ -61,7 +62,7 @@ def get_unread_count(
 def send_message(
     data: MessageSend,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MESSAGE_MANAGE)),
 ):
     """发送站内消息（需要经理权限）"""
     service = MessageService(db)
@@ -104,7 +105,7 @@ def mark_all_read(
 @tpl_router.get("", response_model=List[TemplateResponse])
 def list_templates(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MESSAGE_MANAGE)),
 ):
     """获取消息模板列表"""
     service = MessageService(db)
@@ -115,7 +116,7 @@ def list_templates(
 def create_template(
     data: TemplateCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MESSAGE_MANAGE)),
 ):
     """创建消息模板"""
     service = MessageService(db)
@@ -135,7 +136,7 @@ def update_template(
     tpl_id: int,
     data: TemplateUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MESSAGE_MANAGE)),
 ):
     """更新消息模板"""
     service = MessageService(db)
@@ -149,7 +150,7 @@ def update_template(
 def delete_template(
     tpl_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MESSAGE_MANAGE)),
 ):
     """删除消息模板"""
     service = MessageService(db)
@@ -165,7 +166,7 @@ def delete_template(
 def list_announcements(
     ann_status: Optional[str] = Query(default=None, alias="status"),
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MESSAGE_MANAGE)),
 ):
     """获取公告列表（管理视角）"""
     service = MessageService(db)
@@ -186,7 +187,7 @@ def get_active_announcements(
 def create_announcement(
     data: AnnouncementCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MESSAGE_MANAGE)),
 ):
     """创建公告"""
     service = MessageService(db)
@@ -201,7 +202,7 @@ def update_announcement(
     ann_id: int,
     data: AnnouncementUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MESSAGE_MANAGE)),
 ):
     """更新公告"""
     service = MessageService(db)
@@ -219,7 +220,7 @@ def update_announcement(
 def publish_announcement(
     ann_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MESSAGE_MANAGE)),
 ):
     """发布公告"""
     service = MessageService(db)
@@ -233,7 +234,7 @@ def publish_announcement(
 def archive_announcement(
     ann_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MESSAGE_MANAGE)),
 ):
     """归档公告"""
     service = MessageService(db)

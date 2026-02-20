@@ -37,6 +37,7 @@ class PromptContext:
     message_hint: str = ""  # 用户消息（用于关键词匹配按需注入）
     allowed_entities: Optional[List[str]] = None  # None = 全部注入
     allowed_actions: Optional[List[str]] = None   # None = 全部注入
+    branch_name: Optional[str] = None  # 当前分店名称（多分店数据隔离提示）
 
     def __post_init__(self):
         if self.current_date is None:
@@ -203,6 +204,10 @@ class PromptBuilder:
                 permission_context=permission_context,
                 date_context=date_context
             )
+
+            # 注入分店上下文
+            if context.branch_name:
+                prompt += f"\n\n## 当前分店\n当前操作分店: {context.branch_name}。所有查询和操作结果仅限于此分店范围内的数据。"
 
             # 应用自定义变量替换
             if context.custom_variables:

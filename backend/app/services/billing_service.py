@@ -45,6 +45,8 @@ class BillingService:
             remark=data.remark,
             created_by=operator_id
         )
+        from app.services.branch_utils import inject_branch_id
+        inject_branch_id(payment)
         self.db.add(payment)
         self.db.flush()  # 获取 payment.id
 

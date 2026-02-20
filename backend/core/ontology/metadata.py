@@ -539,6 +539,10 @@ class EntityMetadata:
     business_rules: List[BusinessRule] = field(default_factory=list)
     state_machine: Optional[StateMachine] = None
 
+    # ========== 数据作用域 ==========
+    data_scope_type: str = "global"       # "global" | "scoped"
+    scope_column: Optional[str] = None    # SCOPED 实体的过滤列名
+
     # ========== 新增字段 (Phase 0 - Framework Enhancement) ==========
 
     # 框架增强字段

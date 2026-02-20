@@ -359,9 +359,28 @@ class HotelDomainAdapter(IDomainAdapter):
     # ========== OODA Orchestrator Support Methods ==========
 
     def build_llm_context(self, db) -> Dict[str, Any]:
-        """Build hotel-specific LLM context: room summary, room types, active stays, tasks."""
+        """Build hotel-specific LLM context: room summary, room types, active stays, tasks.
+
+        数据自动受当前 SecurityContext 的 branch_id 过滤。
+        """
         self._ensure_services()
         context = {}
+
+        # 获取当前分店上下文（用于提示 LLM）
+        branch_id = None
+        branch_name = None
+        try:
+            from app.services.branch_utils import get_current_branch_id
+            branch_id = get_current_branch_id()
+            if branch_id:
+                from app.system.models.org import SysDepartment
+                branch = db.query(SysDepartment).filter(SysDepartment.id == branch_id).first()
+                if branch:
+                    branch_name = branch.name
+        except Exception:
+            pass
+        if branch_name:
+            context["current_branch"] = branch_name
 
         # Room status summary
         summary = self.room_service.get_room_status_summary()

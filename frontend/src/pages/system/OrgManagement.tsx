@@ -13,7 +13,7 @@ export default function OrgManagement() {
   // Department form
   const [showDeptForm, setShowDeptForm] = useState(false)
   const [editingDept, setEditingDept] = useState<SysDepartment | null>(null)
-  const [deptForm, setDeptForm] = useState({ code: '', name: '', parent_id: null as number | null, sort_order: 0 })
+  const [deptForm, setDeptForm] = useState({ code: '', name: '', parent_id: null as number | null, sort_order: 0, dept_type: 'DEPARTMENT' as string })
 
   // Position form
   const [showPosForm, setShowPosForm] = useState(false)
@@ -54,13 +54,13 @@ export default function OrgManagement() {
   // ---- Department CRUD ----
   const openDeptCreate = (parentId: number | null = null) => {
     setEditingDept(null)
-    setDeptForm({ code: '', name: '', parent_id: parentId, sort_order: 0 })
+    setDeptForm({ code: '', name: '', parent_id: parentId, sort_order: 0, dept_type: 'DEPARTMENT' })
     setShowDeptForm(true)
   }
 
   const openDeptEdit = (dept: SysDepartment) => {
     setEditingDept(dept)
-    setDeptForm({ code: dept.code, name: dept.name, parent_id: dept.parent_id, sort_order: dept.sort_order })
+    setDeptForm({ code: dept.code, name: dept.name, parent_id: dept.parent_id, sort_order: dept.sort_order, dept_type: (dept as any).dept_type || 'DEPARTMENT' })
     setShowDeptForm(true)
   }
 
@@ -73,7 +73,8 @@ export default function OrgManagement() {
       } else {
         await orgApi.createDepartment({
           code: deptForm.code, name: deptForm.name, parent_id: deptForm.parent_id, sort_order: deptForm.sort_order,
-        })
+          dept_type: deptForm.dept_type,
+        } as any)
       }
       setShowDeptForm(false)
       await loadDepartments()
@@ -290,6 +291,20 @@ export default function OrgManagement() {
                   ))}
                 </select>
               </div>
+              {!editingDept && (
+                <div>
+                  <label className="block text-sm text-dark-400 mb-1">部门类型</label>
+                  <select
+                    value={deptForm.dept_type}
+                    onChange={e => setDeptForm({ ...deptForm, dept_type: e.target.value })}
+                    className="w-full bg-dark-800 border border-dark-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-primary-500"
+                  >
+                    <option value="GROUP">集团</option>
+                    <option value="BRANCH">分店</option>
+                    <option value="DEPARTMENT">部门</option>
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="block text-sm text-dark-400 mb-1">排序</label>
                 <input
@@ -394,6 +409,15 @@ function DeptTreeNode({
         <span className="flex-1 truncate" onClick={() => onSelect(node)}>
           {node.name}
         </span>
+        {(node as any).dept_type && (
+          <span className={`text-[10px] px-1 py-0.5 rounded ${
+            (node as any).dept_type === 'GROUP' ? 'bg-blue-500/20 text-blue-400' :
+            (node as any).dept_type === 'BRANCH' ? 'bg-green-500/20 text-green-400' :
+            'bg-dark-700 text-dark-400'
+          }`}>
+            {(node as any).dept_type === 'GROUP' ? '集团' : (node as any).dept_type === 'BRANCH' ? '分店' : '部门'}
+          </span>
+        )}
         <div className="hidden group-hover:flex items-center gap-0.5">
           <button onClick={() => onAddChild(node.id)} className="p-0.5 hover:bg-dark-700 rounded" title="添加子部门">
             <Plus size={12} className="text-primary-400" />

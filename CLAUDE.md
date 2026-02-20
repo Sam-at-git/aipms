@@ -39,10 +39,17 @@ npm run build                              # Production build (TS errors in buil
 ```
 
 ### Default Credentials
-- sysadmin / 123456 (system admin - full access + system management + debug panel)
-- manager / 123456 (manager - business operations, no system settings)
-- front1 / 123456 (receptionist)
-- cleaner1 / 123456 (cleaner - tasks only)
+Multi-branch chain hotel setup with two branches:
+
+| Username | Password | Role | Branch |
+|----------|----------|------|--------|
+| sysadmin | 123456 | System admin | Global (all branches) |
+| manager | 123456 | Branch manager | 杭州西湖店 |
+| sh_manager | 123456 | Branch manager | 上海外滩店 |
+| front1 | 123456 | Receptionist | 杭州西湖店 |
+| sh_front1 | 123456 | Receptionist | 上海外滩店 |
+| cleaner1 | 123456 | Cleaner | 杭州西湖店 |
+| sh_cleaner1 | 123456 | Cleaner | 上海外滩店 |
 
 ### Environment Variables
 Set via environment or `backend/.env`:
@@ -91,7 +98,7 @@ Reusable abstractions with **zero hotel-specific logic**. Enforced by architectu
 
 - **`core/ooda/`** — OODA loop phases: `observe.py` → `orient.py` → `decide.py` → `act.py` → `loop.py`
 - **`core/engine/`** — `event_bus.py`, `rule_engine.py`, `state_machine.py`, `audit.py`, `snapshot.py`
-- **`core/security/`** — `attribute_acl.py`, `context.py`, `masking.py`, `checker.py`
+- **`core/security/`** — `attribute_acl.py`, `context.py`, `masking.py`, `checker.py`, `data_scope.py` (data isolation types & interfaces)
 - **`core/reasoning/`** — `constraint_engine.py`, `planner.py`, `relationship_graph.py`
 
 ### Layer 2: `app/hotel/` — Hotel Business Domain
@@ -105,6 +112,10 @@ All hotel-specific logic.
 
 RBAC, menus, data dictionary, config, organization, messaging, scheduler — also registered via `SystemDomainAdapter(IDomainAdapter)` into the same `OntologyRegistry`.
 
+- **Organization**: 3-level hierarchy: Group → Branch → Department (`SysDepartment.dept_type`)
+- **RBAC**: Dynamic roles (`SysRole`) with permissions (`SysPermission`), data_scope levels (ALL, DEPT_AND_BELOW, DEPT, SELF)
+- **Data Scope Resolver**: `app/system/services/data_scope_resolver.py` — `BranchDataScopeResolver` resolves user branch visibility
+
 ### Shared App Infrastructure
 
 - **`app/models/ontology.py`** — SQLAlchemy ORM models (Room, Guest, Reservation, StayRecord, Bill, Task, Employee, RoomType, RatePlan, Payment)
@@ -112,7 +123,8 @@ RBAC, menus, data dictionary, config, organization, messaging, scheduler — als
 - **`app/services/`** — Business logic services + `actions/` (12 action handler modules)
 - **`app/services/llm_service.py`** — LLM integration with `_instrumented_completion()` wrapper that auto-records each call via `LLMCallContext`
 - **`app/routers/`** — FastAPI endpoints (all require JWT)
-- **`app/security/auth.py`** — JWT + role-based access
+- **`app/security/auth.py`** — JWT + dynamic RBAC (`require_permission()` decorator)
+- **`app/security/permissions.py`** — Permission code constants (e.g., `ROOM_READ`, `EMPLOYEE_WRITE`)
 
 ---
 
@@ -136,6 +148,14 @@ LLM output → SemanticQuery (dot-notation paths)
 8. Initialize hotel business rules → `init_hotel_business_rules()`
 9. Sync ActionRegistry to OntologyRegistry → `action_registry.set_ontology_registry(registry)`
 10. Initialize RBAC seed data, menus, system config
+
+### Multi-Branch Data Isolation
+- **SCOPED entities** (Room, Reservation, Task, Bill, etc.) have `branch_id` column — data is filtered per branch
+- **GLOBAL entities** (Guest) have no branch_id — shared across all branches
+- Frontend sends `X-Branch-Id` header via axios interceptor for branch context
+- `BranchSwitcher` component in sidebar: sysadmin can switch branches, branch staff see their branch only
+- `require_permission()` replaces old `require_role()` / `require_manager` decorators
+- Permission checks: sysadmin → RBAC provider → legacy role fallback
 
 ### Action Dispatch
 Handler functions accessed via `ActionRegistry.dispatch(action_name, params, context)`. All handlers use Pydantic parameter models.
@@ -297,15 +317,22 @@ All endpoints require JWT authentication (no `/api` prefix — frontend Vite pro
 
 ## Seed Data Reference (`init_data.py`)
 
-**Room layout (40 rooms):**
-- 2F: 201–205 标间, 206–210 大床房
-- 3F: 301–305 标间, 306–310 大床房
-- 4F: 401–405 标间, 406–408 大床房, 409–410 豪华间
-- 5F: 501–502 大床房, 503–510 豪华间
+**Organization:**
+- 集团总部 (GROUP) → 杭州西湖店 (BRANCH) + 上海外滩店 (BRANCH)
+- Each branch has: 前台部, 客房部, 财务部 departments
 
-**Employees:** sysadmin (系统管理员), manager (张经理), front1/front2/front3 (李前台/王前台/赵前台), cleaner1/cleaner2 (刘阿姨/陈阿姨)
+**Room layout (40 rooms, 20 per branch):**
+- 杭州西湖店: 2F 201–210, 3F 301–310 (标间/大床房)
+- 上海外滩店: 2F 201–210, 3F 301–310 (标间/大床房)
+
+**Employees:**
+- sysadmin (系统管理员, global), manager/张经理 (杭州), sh_manager/王经理 (上海)
+- front1/李前台 (杭州), sh_front1/赵前台 (上海)
+- cleaner1/刘阿姨 (杭州), sh_cleaner1/陈阿姨 (上海)
 
 **Room types:** 标间 ¥288, 大床房 ¥328, 豪华间 ¥458
+
+**Dynamic RBAC roles:** sysadmin (ALL), branch_manager (DEPT_AND_BELOW), receptionist (DEPT_AND_BELOW), cleaner (DEPT_AND_BELOW)
 
 ---
 

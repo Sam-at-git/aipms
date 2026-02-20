@@ -82,3 +82,4 @@ class SysUserRole(Base):
 
     # Relationships
     role = relationship("SysRole", back_populates="users")
+    user = relationship("Employee", back_populates="user_roles")

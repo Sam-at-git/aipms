@@ -174,7 +174,22 @@ function RolesTab() {
                     {role.is_system && <span className="text-xs bg-primary-500/20 text-primary-400 px-1.5 py-0.5 rounded">系统</span>}
                     {!role.is_active && <span className="text-xs bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded">停用</span>}
                   </div>
-                  <div className="text-xs text-dark-400 mt-0.5">{role.code} · {role.permission_count} 权限 · {role.data_scope}</div>
+                  <div className="text-xs text-dark-400 mt-0.5 flex items-center gap-1.5">
+                    <span>{role.code}</span>
+                    <span>·</span>
+                    <span>{role.permission_count} 权限</span>
+                    <span>·</span>
+                    <span className={`px-1.5 py-0.5 rounded ${
+                      role.data_scope === 'ALL' ? 'bg-blue-500/20 text-blue-400' :
+                      role.data_scope === 'SELF' ? 'bg-amber-500/20 text-amber-400' :
+                      'bg-green-500/20 text-green-400'
+                    }`}>
+                      {role.data_scope === 'ALL' ? '全部数据' :
+                       role.data_scope === 'DEPT' ? '本部门' :
+                       role.data_scope === 'DEPT_AND_BELOW' ? '本部门及下级' :
+                       role.data_scope === 'SELF' ? '仅本人' : role.data_scope}
+                    </span>
+                  </div>
                 </div>
                 <div className="flex gap-1">
                   <button onClick={(e) => { e.stopPropagation(); openEditForm(role) }} className="p-1 hover:bg-dark-700 rounded"><Pencil className="w-3.5 h-3.5 text-dark-400" /></button>
@@ -286,11 +301,17 @@ function RolesTab() {
                   onChange={e => setFormData(f => ({ ...f, data_scope: e.target.value }))}
                   className="w-full mt-1 px-3 py-2 bg-dark-800 border border-dark-700 rounded text-white text-sm"
                 >
-                  <option value="ALL">全部数据</option>
-                  <option value="DEPT">本部门</option>
-                  <option value="DEPT_AND_BELOW">本部门及下级</option>
-                  <option value="SELF">仅本人</option>
+                  <option value="ALL">全部数据（集团管理员）</option>
+                  <option value="DEPT_AND_BELOW">本分店及下级部门</option>
+                  <option value="DEPT">仅本部门</option>
+                  <option value="SELF">仅本人数据</option>
                 </select>
+                <p className="text-xs text-dark-500 mt-1">
+                  {formData.data_scope === 'ALL' ? '可查看和操作所有分店的数据' :
+                   formData.data_scope === 'DEPT_AND_BELOW' ? '可查看所属分店及其下属部门的数据' :
+                   formData.data_scope === 'DEPT' ? '只能查看所属部门的数据' :
+                   '只能查看和操作自己创建的数据'}
+                </p>
               </div>
               <div>
                 <label className="text-sm text-dark-300">排序</label>

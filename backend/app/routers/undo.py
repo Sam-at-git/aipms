@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict
 
 from app.database import get_db
-from app.security.auth import get_current_user, require_receptionist_or_manager, require_manager
+from app.security.auth import get_current_user, require_permission
+from app.security.permissions import UNDO_READ, UNDO_EXECUTE, UNDO_HISTORY
 from app.services.undo_service import UndoService
 from app.models.ontology import Employee
 
@@ -42,7 +43,7 @@ async def list_undoable_operations(
     entity_id: Optional[int] = None,
     limit: int = 20,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(get_current_user)
+    current_user: Employee = Depends(require_permission(UNDO_READ))
 ):
     """
     获取可撤销的操作列表
@@ -51,10 +52,6 @@ async def list_undoable_operations(
     - **entity_id**: 可选，筛选特定实体
     - **limit**: 返回数量限制，默认20
     """
-    # 权限检查：前台和管理员可以查看
-    if current_user.role.value not in ['manager', 'receptionist']:
-        raise HTTPException(status_code=403, detail="权限不足")
-
     undo_service = UndoService(db)
     snapshots = undo_service.get_undoable_operations(
         entity_type=entity_type,
@@ -82,17 +79,13 @@ async def list_undoable_operations(
 async def undo_operation(
     snapshot_uuid: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(get_current_user)
+    current_user: Employee = Depends(require_permission(UNDO_EXECUTE))
 ):
     """
     执行撤销操作
 
     - **snapshot_uuid**: 要撤销的操作快照UUID
     """
-    # 权限检查：前台和管理员可以撤销
-    if current_user.role.value not in ['manager', 'receptionist']:
-        raise HTTPException(status_code=403, detail="权限不足")
-
     undo_service = UndoService(db)
 
     try:
@@ -114,16 +107,13 @@ async def undo_operation(
 async def get_undo_history(
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(get_current_user)
+    current_user: Employee = Depends(require_permission(UNDO_HISTORY))
 ):
     """
     获取撤销历史（仅管理员）
 
     - **limit**: 返回数量限制，默认50
     """
-    if current_user.role.value != 'manager':
-        raise HTTPException(status_code=403, detail="权限不足，仅管理员可查看")
-
     undo_service = UndoService(db)
     snapshots = undo_service.get_undo_history(limit=limit)
 
@@ -147,16 +137,13 @@ async def get_undo_history(
 async def get_snapshot_detail(
     snapshot_uuid: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(get_current_user)
+    current_user: Employee = Depends(require_permission(UNDO_READ))
 ):
     """
     获取快照详情
 
     - **snapshot_uuid**: 快照UUID
     """
-    if current_user.role.value not in ['manager', 'receptionist']:
-        raise HTTPException(status_code=403, detail="权限不足")
-
     undo_service = UndoService(db)
     snapshot = undo_service.get_snapshot(snapshot_uuid)
 

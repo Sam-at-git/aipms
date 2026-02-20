@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.ontology import Employee, EmployeeRole
-from app.security.auth import get_current_user, require_manager
+from app.security.auth import get_current_user, require_permission
+from app.security.permissions import SYS_MENU_MANAGE
 from app.system.schemas import MenuCreate, MenuUpdate, MenuResponse
 from app.system.services.menu_service import MenuService
 
@@ -59,7 +60,7 @@ def get_user_menus(
 def create_menu(
     data: MenuCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MENU_MANAGE)),
 ):
     """创建菜单"""
     service = MenuService(db)
@@ -81,7 +82,7 @@ def update_menu(
     menu_id: int,
     data: MenuUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MENU_MANAGE)),
 ):
     """更新菜单"""
     service = MenuService(db)
@@ -98,7 +99,7 @@ def update_menu(
 def delete_menu(
     menu_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_MENU_MANAGE)),
 ):
     """删除菜单"""
     service = MenuService(db)

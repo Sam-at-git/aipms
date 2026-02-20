@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Employee, ChatMessage, DashboardStats, Room, StayRecord, Task, ConversationMessage } from '../types'
+import type { Employee, Branch, ChatMessage, DashboardStats, Room, StayRecord, Task, ConversationMessage } from '../types'
 export { useOntologyStore } from './ontologyStore'
 
 // 认证状态
@@ -7,24 +7,55 @@ interface AuthState {
   user: Employee | null
   token: string | null
   isAuthenticated: boolean
+  currentBranchId: number | null
+  availableBranches: Branch[]
+  permissions: Set<string>
   login: (user: Employee, token: string) => void
   logout: () => void
+  switchBranch: (branchId: number | null) => void
+  setBranches: (branches: Branch[]) => void
+  setPermissions: (perms: string[]) => void
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: JSON.parse(localStorage.getItem('user') || 'null'),
   token: localStorage.getItem('token'),
   isAuthenticated: !!localStorage.getItem('token'),
+  currentBranchId: JSON.parse(localStorage.getItem('currentBranchId') || 'null'),
+  availableBranches: [],
+  permissions: new Set<string>(),
   login: (user, token) => {
     localStorage.setItem('user', JSON.stringify(user))
     localStorage.setItem('token', token)
-    set({ user, token, isAuthenticated: true })
+    // 如果用户有 branch_id，自动设为当前分店
+    if (user.branch_id) {
+      localStorage.setItem('currentBranchId', String(user.branch_id))
+    }
+    set({
+      user, token, isAuthenticated: true,
+      currentBranchId: user.branch_id || null,
+      permissions: new Set(user.permissions || []),
+    })
   },
   logout: () => {
     localStorage.removeItem('user')
     localStorage.removeItem('token')
-    set({ user: null, token: null, isAuthenticated: false })
-  }
+    localStorage.removeItem('currentBranchId')
+    set({
+      user: null, token: null, isAuthenticated: false,
+      currentBranchId: null, availableBranches: [], permissions: new Set(),
+    })
+  },
+  switchBranch: (branchId) => {
+    if (branchId) {
+      localStorage.setItem('currentBranchId', String(branchId))
+    } else {
+      localStorage.removeItem('currentBranchId')
+    }
+    set({ currentBranchId: branchId })
+  },
+  setBranches: (branches) => set({ availableBranches: branches }),
+  setPermissions: (perms) => set({ permissions: new Set(perms) }),
 }))
 
 // 聊天状态

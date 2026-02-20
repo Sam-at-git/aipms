@@ -1394,9 +1394,14 @@ class OodaOrchestrator:
     def _build_llm_context(self, user: Any) -> Dict[str, Any]:
         """构建 LLM 上下文 — delegates domain-specific data to adapter"""
         context = {
-            "user_role": user.role.value,
+            "user_role": user.role.value if hasattr(user, 'role') and user.role else "",
             "user_name": user.name,
         }
+        # 注入分店上下文（如果有）
+        if hasattr(user, 'branch_id') and user.branch_id:
+            context["branch_id"] = user.branch_id
+        if hasattr(user, 'branch') and user.branch:
+            context["branch_name"] = user.branch.name
         # Merge domain-specific context from adapter
         domain_context = self.adapter.build_llm_context(self.db)
         context.update(domain_context)

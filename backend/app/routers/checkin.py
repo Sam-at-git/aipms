@@ -10,7 +10,8 @@ from app.models.schemas import (
     CheckInFromReservation, WalkInCheckIn, ExtendStay, ChangeRoom, StayRecordResponse
 )
 from app.services.checkin_service import CheckInService
-from app.security.auth import get_current_user, require_receptionist_or_manager
+from app.security.auth import get_current_user, require_receptionist_or_manager, require_permission
+from app.security.permissions import CHECKIN_EXECUTE
 
 router = APIRouter(prefix="/checkin", tags=["入住管理"])
 
@@ -56,7 +57,7 @@ def get_stay_record(
 def check_in_from_reservation(
     data: CheckInFromReservation,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(CHECKIN_EXECUTE))
 ):
     """预订入住"""
     service = CheckInService(db)
@@ -71,7 +72,7 @@ def check_in_from_reservation(
 def walk_in_check_in(
     data: WalkInCheckIn,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(CHECKIN_EXECUTE))
 ):
     """散客入住"""
     service = CheckInService(db)
@@ -87,7 +88,7 @@ def extend_stay(
     stay_record_id: int,
     data: ExtendStay,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(CHECKIN_EXECUTE))
 ):
     """续住"""
     service = CheckInService(db)
@@ -103,7 +104,7 @@ def change_room(
     stay_record_id: int,
     data: ChangeRoom,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(CHECKIN_EXECUTE))
 ):
     """换房"""
     service = CheckInService(db)

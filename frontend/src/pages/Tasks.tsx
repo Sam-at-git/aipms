@@ -12,7 +12,8 @@ const typeLabels: Record<string, string> = {
 }
 
 export default function Tasks() {
-  const { user } = useAuthStore()
+  const { user, currentBranchId } = useAuthStore()
+  const showBranch = !currentBranchId
   const [tasks, setTasks] = useState<Task[]>([])
   const [cleaners, setCleaners] = useState<{ id: number; name: string }[]>([])
   const [dirtyRooms, setDirtyRooms] = useState<Room[]>([])
@@ -180,6 +181,9 @@ export default function Tasks() {
                       </span>
                       <span className="text-sm text-dark-400">{typeLabels[task.task_type]}</span>
                       <span className="text-xs text-dark-500">优先级 {task.priority}</span>
+                      {showBranch && task.branch_name && (
+                        <span className="text-xs text-dark-500">{task.branch_name}</span>
+                      )}
                     </div>
                     {task.assignee_name && (
                       <p className="text-sm text-dark-400">

@@ -106,6 +106,8 @@ class TaskService:
             notes=data.notes,
             created_by=created_by
         )
+        from app.services.branch_utils import inject_branch_id
+        inject_branch_id(task)
         self.db.add(task)
         self.db.commit()
         self.db.refresh(task)
@@ -327,7 +329,8 @@ class TaskService:
             'notes': task.notes,
             'created_at': task.created_at,
             'started_at': task.started_at,
-            'completed_at': task.completed_at
+            'completed_at': task.completed_at,
+            'branch_name': task.branch.name if getattr(task, 'branch', None) else None
         }
 
     def delete_task(self, task_id: int) -> Task:

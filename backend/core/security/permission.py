@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Set
 import threading
 
+from core.security.data_scope import DataScopeContext
+
 
 class IPermissionProvider(ABC):
     """权限提供者接口 — app 层实现此接口以对接动态 RBAC"""
@@ -23,6 +25,10 @@ class IPermissionProvider(ABC):
     @abstractmethod
     def get_user_roles(self, user_id: int) -> List[str]:
         """获取用户所有角色编码列表"""
+
+    def get_user_data_scope(self, user_id: int) -> Optional[DataScopeContext]:
+        """获取用户的数据作用域上下文，默认返回 None（不过滤）"""
+        return None
 
 
 class PermissionProviderRegistry:

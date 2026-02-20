@@ -14,6 +14,7 @@ def get_registration() -> EntityRegistration:
         description="任务 - 清洁和维修任务管理。支持任务创建、分配、执行、完成的完整工作流。退房自动创建清洁任务，任务完成自动更新房间状态。",
         table_name="tasks", category="transactional",
         lifecycle_states=["PENDING", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "CANCELLED"],
+        data_scope_type="scoped", scope_column="branch_id",
         extensions={
             "business_purpose": "运营任务管理与工作流",
             "key_attributes": ["room_id", "task_type", "assignee_id", "status"],

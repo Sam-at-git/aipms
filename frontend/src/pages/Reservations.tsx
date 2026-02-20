@@ -3,7 +3,7 @@ import { Plus, Search, Calendar, Phone, User, RefreshCw } from 'lucide-react'
 import { reservationApi, roomApi, priceApi } from '../services/api'
 import Modal, { ModalFooter } from '../components/Modal'
 import { UndoButton } from '../components/UndoButton'
-import { useUIStore, useOntologyStore } from '../store'
+import { useUIStore, useOntologyStore, useAuthStore } from '../store'
 import type { Reservation, RoomType } from '../types'
 
 export default function Reservations() {
@@ -13,6 +13,8 @@ export default function Reservations() {
   const [searchKeyword, setSearchKeyword] = useState('')
   const { openModal, closeModal } = useUIStore()
   const { getStatusConfig } = useOntologyStore()
+  const currentBranchId = useAuthStore(s => s.currentBranchId)
+  const showBranch = !currentBranchId
 
   // 新建预订表单
   const [form, setForm] = useState({
@@ -174,6 +176,7 @@ export default function Reservations() {
                 <th className="text-left px-4 py-3 text-sm font-medium text-dark-400">预订号</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-dark-400">客人</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-dark-400">房型</th>
+                {showBranch && <th className="text-left px-4 py-3 text-sm font-medium text-dark-400">分店</th>}
                 <th className="text-left px-4 py-3 text-sm font-medium text-dark-400">入住日期</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-dark-400">离店日期</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-dark-400">金额</th>
@@ -192,6 +195,7 @@ export default function Reservations() {
                     </div>
                   </td>
                   <td className="px-4 py-3">{r.room_type_name}</td>
+                  {showBranch && <td className="px-4 py-3 text-sm text-dark-400">{r.branch_name || '-'}</td>}
                   <td className="px-4 py-3">{r.check_in_date}</td>
                   <td className="px-4 py-3">{r.check_out_date}</td>
                   <td className="px-4 py-3">¥{r.total_amount}</td>
@@ -214,7 +218,7 @@ export default function Reservations() {
               ))}
               {reservations.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-dark-500">
+                  <td colSpan={showBranch ? 9 : 8} className="px-4 py-8 text-center text-dark-500">
                     暂无预订记录
                   </td>
                 </tr>

@@ -9,7 +9,8 @@ from app.database import get_db
 from app.models.ontology import Employee
 from app.models.schemas import RatePlanCreate, RatePlanUpdate, RatePlanResponse
 from app.services.price_service import PriceService
-from app.security.auth import get_current_user, require_manager
+from app.security.auth import get_current_user, require_manager, require_permission
+from app.security.permissions import PRICE_READ, PRICE_WRITE
 
 router = APIRouter(prefix="/prices", tags=["价格管理"])
 
@@ -72,7 +73,7 @@ def get_rate_plan(
 def create_rate_plan(
     data: RatePlanCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(PRICE_WRITE))
 ):
     """创建价格策略"""
     service = PriceService(db)
@@ -100,7 +101,7 @@ def update_rate_plan(
     rate_plan_id: int,
     data: RatePlanUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(PRICE_WRITE))
 ):
     """更新价格策略"""
     service = PriceService(db)
@@ -127,7 +128,7 @@ def update_rate_plan(
 def delete_rate_plan(
     rate_plan_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(PRICE_WRITE))
 ):
     """删除价格策略"""
     service = PriceService(db)

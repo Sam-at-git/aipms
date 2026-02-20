@@ -14,6 +14,7 @@ def get_registration() -> EntityRegistration:
         description="预订信息 - 预订阶段的聚合根。管理从创建到入住或取消的完整预订生命周期，包括渠道来源、押金、特殊要求等。",
         table_name="reservations", category="transactional",
         lifecycle_states=["CONFIRMED", "CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW"],
+        data_scope_type="scoped", scope_column="branch_id",
         extensions={
             "business_purpose": "预订管理与渠道分销",
             "key_attributes": ["reservation_no", "guest_id", "check_in_date", "check_out_date", "status"],

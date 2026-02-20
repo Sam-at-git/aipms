@@ -6,10 +6,10 @@ SPEC-57: 适配使用 core/services/room_service (RoomServiceV2)
 """
 from typing import List, Optional
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models.ontology import Employee, RoomStatus
+from app.models.ontology import Employee, EmployeeRole, RoomStatus
 from app.models.schemas import (
     RoomTypeCreate, RoomTypeUpdate, RoomTypeResponse,
     RoomCreate, RoomUpdate, RoomResponse, RoomStatusUpdate
@@ -23,9 +23,24 @@ try:
 except ImportError:
     CORE_ROOM_SERVICE_AVAILABLE = False
 
-from app.security.auth import get_current_user, require_manager, require_receptionist_or_manager
+from app.security.auth import get_current_user, require_manager, require_receptionist_or_manager, require_permission
+from app.security.permissions import ROOM_READ, ROOM_WRITE, ROOM_STATUS
 
 router = APIRouter(prefix="/rooms", tags=["房间管理"])
+
+
+def _get_branch_id_from_request(request: Request, current_user: Employee) -> Optional[int]:
+    """Extract effective branch_id from X-Branch-Id header or user's branch."""
+    header_val = request.headers.get("X-Branch-Id")
+    if header_val:
+        try:
+            return int(header_val)
+        except (ValueError, TypeError):
+            pass
+    # Non-sysadmin users default to their own branch
+    if current_user.role != EmployeeRole.SYSADMIN and getattr(current_user, 'branch_id', None):
+        return current_user.branch_id
+    return None
 
 
 # 服务工厂函数 - 可以选择使用 RoomServiceV2
@@ -60,7 +75,7 @@ def list_room_types(
 def create_room_type(
     data: RoomTypeCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ROOM_WRITE))
 ):
     """创建房型"""
     service = get_room_service(db)
@@ -77,7 +92,7 @@ def update_room_type(
     room_type_id: int,
     data: RoomTypeUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ROOM_WRITE))
 ):
     """更新房型"""
     service = get_room_service(db)
@@ -93,7 +108,7 @@ def update_room_type(
 def delete_room_type(
     room_type_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ROOM_WRITE))
 ):
     """删除房型"""
     service = get_room_service(db)
@@ -108,6 +123,7 @@ def delete_room_type(
 
 @router.get("", response_model=List[RoomResponse])
 def list_rooms(
+    request: Request,
     floor: Optional[int] = None,
     room_type_id: Optional[int] = None,
     status: Optional[RoomStatus] = None,
@@ -117,7 +133,9 @@ def list_rooms(
 ):
     """获取房间列表"""
     service = get_room_service(db)
-    rooms = service.get_rooms(floor, room_type_id, status, is_active)
+    # Extract branch filter from X-Branch-Id header
+    branch_id = _get_branch_id_from_request(request, current_user)
+    rooms = service.get_rooms(floor, room_type_id, status, is_active, branch_id=branch_id)
     result = []
     for room in rooms:
         room_data = service.get_room_with_guest(room.id)
@@ -179,7 +197,7 @@ def get_room(
 def create_room(
     data: RoomCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ROOM_WRITE))
 ):
     """创建房间"""
     service = get_room_service(db)
@@ -196,7 +214,7 @@ def update_room(
     room_id: int,
     data: RoomUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ROOM_WRITE))
 ):
     """更新房间"""
     service = get_room_service(db)
@@ -213,7 +231,7 @@ def update_room_status(
     room_id: int,
     data: RoomStatusUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(ROOM_STATUS))
 ):
     """更新房间状态"""
     service = get_room_service(db)
@@ -228,7 +246,7 @@ def update_room_status(
 def delete_room(
     room_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager)
+    current_user: Employee = Depends(require_permission(ROOM_WRITE))
 ):
     """删除房间"""
     service = get_room_service(db)

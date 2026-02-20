@@ -173,7 +173,22 @@ class TestConfigAPI:
         assert len(data) == 1
         assert data[0]["value"] == "AIPMS"
 
-    def test_manager_cannot_access(self, client: TestClient, auth_headers, db_session):
+    def test_manager_cannot_access(self, client: TestClient, db_session):
         """经理无法访问系统配置"""
-        response = client.get("/system/configs", headers=auth_headers)
+        from app.models.ontology import Employee, EmployeeRole
+        from app.security.auth import get_password_hash, create_access_token
+
+        mgr = Employee(
+            username="mgr_config_test",
+            password_hash=get_password_hash("123456"),
+            name="经理",
+            role=EmployeeRole.MANAGER,
+            is_active=True,
+        )
+        db_session.add(mgr)
+        db_session.commit()
+        token = create_access_token(mgr.id, mgr.role)
+        mgr_headers = {"Authorization": f"Bearer {token}"}
+
+        response = client.get("/system/configs", headers=mgr_headers)
         assert response.status_code == 403

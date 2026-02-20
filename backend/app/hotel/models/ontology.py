@@ -11,7 +11,7 @@ from enum import Enum
 from typing import Optional, List
 from sqlalchemy import (
     Column, Integer, String, Float, DateTime, Date,
-    ForeignKey, Text, Enum as SQLEnum, Boolean, Numeric
+    ForeignKey, Text, Enum as SQLEnum, Boolean, Numeric, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -88,13 +88,17 @@ class RoomType(Base):
     属性安全等级：name(PUBLIC), base_price(INTERNAL)
     """
     __tablename__ = "room_types"
+    __table_args__ = (
+        UniqueConstraint('name', 'branch_id', name='uq_room_type_name_branch'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(50), unique=True, nullable=False)  # 房型名称
+    name = Column(String(50), nullable=False)  # 房型名称（同分店内唯一）
     description = Column(Text)                               # 描述
     base_price = Column(Numeric(10, 2), nullable=False)     # 基础价格
     max_occupancy = Column(Integer, default=2)              # 最大入住人数
     amenities = Column(Text)                                # 设施列表(JSON)
+    branch_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -102,6 +106,7 @@ class RoomType(Base):
     rooms = relationship("Room", back_populates="room_type")
     # 链接：一个房型对应多个价格策略
     rate_plans = relationship("RatePlan", back_populates="room_type")
+    branch = relationship("SysDepartment", foreign_keys=[branch_id])
 
 
 @ontology_entity(
@@ -115,14 +120,18 @@ class Room(Base):
     属性安全等级：room_number(PUBLIC), status(INTERNAL), current_price(CONFIDENTIAL)
     """
     __tablename__ = "rooms"
+    __table_args__ = (
+        UniqueConstraint('room_number', 'branch_id', name='uq_room_number_branch'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    room_number = Column(String(10), unique=True, nullable=False)  # 房间号
+    room_number = Column(String(10), nullable=False)  # 房间号（同分店内唯一）
     floor = Column(Integer, nullable=False)                        # 楼层
     room_type_id = Column(Integer, ForeignKey("room_types.id"), nullable=False)
     status = Column(SQLEnum(RoomStatus), default=RoomStatus.VACANT_CLEAN)
     features = Column(Text)                                        # 特征(如海景)
     is_active = Column(Boolean, default=True)                      # 是否启用
+    branch_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -130,6 +139,7 @@ class Room(Base):
     room_type = relationship("RoomType", back_populates="rooms")
     stay_records = relationship("StayRecord", back_populates="room")
     tasks = relationship("Task", back_populates="room")
+    branch = relationship("SysDepartment", foreign_keys=[branch_id])
 
 
 @ontology_entity(
@@ -192,6 +202,7 @@ class Reservation(Base):
     special_requests = Column(Text)                      # 特殊要求
     estimated_arrival = Column(String(10))               # 预计到店时间
     cancel_reason = Column(Text)                         # 取消原因
+    branch_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     created_by = Column(Integer, ForeignKey("employees.id"))  # 创建人
@@ -201,6 +212,7 @@ class Reservation(Base):
     room_type = relationship("RoomType")
     stay_records = relationship("StayRecord", back_populates="reservation")
     creator = relationship("Employee", foreign_keys=[created_by])
+    branch = relationship("SysDepartment", foreign_keys=[branch_id])
 
 
 @ontology_entity(
@@ -225,6 +237,7 @@ class StayRecord(Base):
     expected_check_out = Column(Date, nullable=False)    # 预计离店日期
     deposit_amount = Column(Numeric(10, 2), default=0)   # 押金
     status = Column(SQLEnum(StayRecordStatus), default=StayRecordStatus.ACTIVE)
+    branch_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     created_by = Column(Integer, ForeignKey("employees.id"))
@@ -235,6 +248,7 @@ class StayRecord(Base):
     room = relationship("Room", back_populates="stay_records")
     bill = relationship("Bill", back_populates="stay_record", uselist=False)
     creator = relationship("Employee", foreign_keys=[created_by])
+    branch = relationship("SysDepartment", foreign_keys=[branch_id])
 
 
 class Bill(Base):
@@ -252,12 +266,14 @@ class Bill(Base):
     adjustment_amount = Column(Numeric(10, 2), default=0)  # 调整金额
     adjustment_reason = Column(Text)                     # 调整原因
     is_settled = Column(Boolean, default=False)          # 是否结清
+    branch_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # 链接
     stay_record = relationship("StayRecord", back_populates="bill")
     payments = relationship("Payment", back_populates="bill")
+    branch = relationship("SysDepartment", foreign_keys=[branch_id])
 
     @property
     def balance(self) -> Decimal:
@@ -278,11 +294,13 @@ class Payment(Base):
     method = Column(SQLEnum(PaymentMethod), nullable=False)  # 支付方式
     payment_time = Column(DateTime, default=datetime.utcnow)
     remark = Column(Text)                                # 备注
+    branch_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True, index=True)
     created_by = Column(Integer, ForeignKey("employees.id"))
 
     # 链接
     bill = relationship("Bill", back_populates="payments")
     operator = relationship("Employee")
+    branch = relationship("SysDepartment", foreign_keys=[branch_id])
 
 
 @ontology_entity(
@@ -304,6 +322,7 @@ class Task(Base):
     assignee_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
     priority = Column(Integer, default=1)                # 优先级 1-5
     notes = Column(Text)                                 # 备注
+    branch_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime)                        # 开始时间
     completed_at = Column(DateTime)                      # 完成时间
@@ -313,6 +332,7 @@ class Task(Base):
     room = relationship("Room", back_populates="tasks")
     assignee = relationship("Employee", foreign_keys=[assignee_id], back_populates="assigned_tasks")
     creator = relationship("Employee", foreign_keys=[created_by])
+    branch = relationship("SysDepartment", foreign_keys=[branch_id])
 
 
 class Employee(Base):
@@ -327,10 +347,11 @@ class Employee(Base):
     password_hash = Column(String(255), nullable=False)  # 密码哈希
     name = Column(String(100), nullable=False)           # 姓名
     phone = Column(String(20))                           # 手机号
-    role = Column(SQLEnum(EmployeeRole), nullable=False)
+    role = Column(SQLEnum(EmployeeRole), nullable=False)  # 旧枚举 — 兼容保留
     is_active = Column(Boolean, default=True)            # 是否启用
     department_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True)  # 所属部门
     position_id = Column(Integer, ForeignKey("sys_position.id"), nullable=True)      # 岗位
+    branch_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True, index=True)  # 所属分店
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -338,6 +359,21 @@ class Employee(Base):
     assigned_tasks = relationship("Task", foreign_keys="Task.assignee_id", back_populates="assignee")
     department = relationship("SysDepartment", foreign_keys=[department_id])
     position = relationship("SysPosition", foreign_keys=[position_id])
+    branch = relationship("SysDepartment", foreign_keys=[branch_id])
+    user_roles = relationship("SysUserRole", back_populates="user", lazy="selectin")
+
+    @property
+    def role_codes(self):
+        """从动态 RBAC 获取角色编码列表"""
+        try:
+            if self.user_roles:
+                return [ur.role.code for ur in self.user_roles if ur.role and ur.role.is_active]
+        except Exception:
+            pass
+        # fallback
+        if self.role:
+            return [self.role.value if isinstance(self.role, EmployeeRole) else str(self.role)]
+        return []
 
     @property
     def clearance(self):
@@ -369,12 +405,14 @@ class RatePlan(Base):
     priority = Column(Integer, default=1)                # 优先级(数字越大优先级越高)
     is_weekend = Column(Boolean, default=False)          # 是否仅周末有效
     is_active = Column(Boolean, default=True)            # 是否启用
+    branch_id = Column(Integer, ForeignKey("sys_department.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     created_by = Column(Integer, ForeignKey("employees.id"))
 
     # 链接
     room_type = relationship("RoomType", back_populates="rate_plans")
+    branch = relationship("SysDepartment", foreign_keys=[branch_id])
 
 
 class SystemLog(Base):

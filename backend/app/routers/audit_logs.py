@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.ontology import Employee, SystemLog
 from app.services.audit_service import AuditService
-from app.security.auth import get_current_user, require_sysadmin
+from app.security.auth import get_current_user, require_sysadmin, require_permission
+from app.security.permissions import AUDIT_READ
 
 router = APIRouter(prefix="/audit-logs", tags=["审计日志"])
 
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/audit-logs", tags=["审计日志"])
 def get_action_summary(
     days: int = 30,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin)
+    current_user: Employee = Depends(require_permission(AUDIT_READ))
 ):
     """获取操作统计摘要"""
     service = AuditService(db)
@@ -31,7 +32,7 @@ def get_action_summary(
 def get_daily_trend(
     days: int = Query(default=30, ge=1, le=90),
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(AUDIT_READ)),
 ) -> Dict[str, Any]:
     """获取每日操作量趋势（A-2）"""
     service = AuditService(db)
@@ -49,7 +50,7 @@ def export_logs(
     format: str = Query(default="json", description="json or csv"),
     limit: int = Query(default=1000, ge=1, le=10000),
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(AUDIT_READ)),
 ):
     """导出审计日志（A-1）"""
     service = AuditService(db)
@@ -107,7 +108,7 @@ def list_logs(
     end_date: Optional[str] = None,
     limit: int = 100,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin)
+    current_user: Employee = Depends(require_permission(AUDIT_READ))
 ):
     """获取审计日志列表"""
     service = AuditService(db)
@@ -150,7 +151,7 @@ def list_logs(
 def get_log(
     log_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin)
+    current_user: Employee = Depends(require_permission(AUDIT_READ))
 ):
     """获取单条日志详情"""
     service = AuditService(db)

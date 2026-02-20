@@ -9,7 +9,8 @@ from app.models.ontology import Employee
 from app.models.schemas import CheckOutRequest, StayRecordResponse
 from app.services.checkout_service import CheckOutService
 from app.services.checkin_service import CheckInService
-from app.security.auth import get_current_user, require_receptionist_or_manager
+from app.security.auth import get_current_user, require_receptionist_or_manager, require_permission
+from app.security.permissions import CHECKOUT_EXECUTE
 
 router = APIRouter(prefix="/checkout", tags=["退房管理"])
 
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/checkout", tags=["退房管理"])
 def check_out(
     data: CheckOutRequest,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(CHECKOUT_EXECUTE))
 ):
     """退房"""
     service = CheckOutService(db)
@@ -33,7 +34,7 @@ def check_out(
 def batch_check_out(
     stay_record_ids: List[int],
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(CHECKOUT_EXECUTE))
 ):
     """批量退房"""
     service = CheckOutService(db)

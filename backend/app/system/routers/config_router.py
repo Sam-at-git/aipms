@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.ontology import Employee
-from app.security.auth import get_current_user, require_sysadmin
+from app.security.auth import get_current_user, require_permission
+from app.security.permissions import SYS_CONFIG_MANAGE
 from app.system.services.config_service import ConfigService
 
 router = APIRouter(prefix="/system/configs", tags=["系统配置"])
@@ -56,7 +57,7 @@ class ConfigResponse(BaseModel):
 def list_configs(
     group: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_CONFIG_MANAGE)),
 ):
     """获取配置列表（按分组过滤，需要 sysadmin 权限）"""
     service = ConfigService(db)
@@ -67,7 +68,7 @@ def list_configs(
 @router.get("/groups", response_model=List[str])
 def list_config_groups(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_CONFIG_MANAGE)),
 ):
     """获取配置分组列表"""
     service = ConfigService(db)
@@ -88,7 +89,7 @@ def list_public_configs(
 def get_config(
     config_key: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_CONFIG_MANAGE)),
 ):
     """获取单个配置（按 key 查找）"""
     service = ConfigService(db)
@@ -102,7 +103,7 @@ def get_config(
 def create_config(
     data: ConfigCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_CONFIG_MANAGE)),
 ):
     """创建配置项（需要 sysadmin 权限）"""
     service = ConfigService(db)
@@ -123,7 +124,7 @@ def update_config(
     config_id: int,
     data: ConfigUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_CONFIG_MANAGE)),
 ):
     """更新配置项（需要 sysadmin 权限）"""
     service = ConfigService(db)
@@ -140,7 +141,7 @@ def update_config(
 def delete_config(
     config_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_sysadmin),
+    current_user: Employee = Depends(require_permission(SYS_CONFIG_MANAGE)),
 ):
     """删除配置项（需要 sysadmin 权限，系统内置不可删除）"""
     service = ConfigService(db)

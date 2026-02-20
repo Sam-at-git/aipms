@@ -471,5 +471,6 @@ class TestRegistryStatistics:
             # Check category is a known category
             assert action["category"] in [
                 "query", "mutation", "system", "tool",
-                "webhook", "notification", "interface"
+                "webhook", "notification", "interface",
+                "front_desk", "billing", "admin",
             ]

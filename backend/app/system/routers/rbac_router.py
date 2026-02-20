@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.ontology import Employee
-from app.security.auth import get_current_user, require_manager
+from app.security.auth import get_current_user, require_permission
+from app.security.permissions import SYS_ROLE_MANAGE, SYS_PERMISSION_MANAGE, SYS_USER_MANAGE
 from app.system.schemas import (
     RoleCreate, RoleUpdate, RoleResponse, RoleDetailResponse,
     PermissionCreate, PermissionUpdate, PermissionResponse,
@@ -62,7 +63,7 @@ def get_role(
 def create_role(
     data: RoleCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_ROLE_MANAGE)),
 ):
     """创建角色"""
     service = RoleService(db)
@@ -84,7 +85,7 @@ def update_role(
     role_id: int,
     data: RoleUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_ROLE_MANAGE)),
 ):
     """更新角色"""
     service = RoleService(db)
@@ -103,7 +104,7 @@ def update_role(
 def delete_role(
     role_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_ROLE_MANAGE)),
 ):
     """删除角色"""
     service = RoleService(db)
@@ -119,7 +120,7 @@ def assign_role_permissions(
     role_id: int,
     permission_ids: List[int],
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_ROLE_MANAGE)),
 ):
     """批量设置角色权限"""
     service = RoleService(db)
@@ -161,7 +162,7 @@ def get_permission_tree(
 def create_permission(
     data: PermissionCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_ROLE_MANAGE)),
 ):
     """创建权限"""
     service = PermissionService(db)
@@ -183,7 +184,7 @@ def update_permission(
     perm_id: int,
     data: PermissionUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_ROLE_MANAGE)),
 ):
     """更新权限"""
     service = PermissionService(db)
@@ -200,7 +201,7 @@ def update_permission(
 def delete_permission(
     perm_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_ROLE_MANAGE)),
 ):
     """删除权限"""
     service = PermissionService(db)
@@ -236,7 +237,7 @@ def assign_user_roles(
     user_id: int,
     data: UserRoleAssign,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_ROLE_MANAGE)),
 ):
     """设置用户角色"""
     service = PermissionService(db)

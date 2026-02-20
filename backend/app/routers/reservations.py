@@ -11,7 +11,8 @@ from app.models.schemas import (
     ReservationCreate, ReservationUpdate, ReservationCancel, ReservationResponse
 )
 from app.services.reservation_service import ReservationService
-from app.security.auth import get_current_user, require_receptionist_or_manager
+from app.security.auth import get_current_user, require_receptionist_or_manager, require_permission
+from app.security.permissions import RESERVATION_READ, RESERVATION_WRITE, RESERVATION_CANCEL
 
 router = APIRouter(prefix="/reservations", tags=["预订管理"])
 
@@ -82,7 +83,7 @@ def get_reservation(
 def create_reservation(
     data: ReservationCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(RESERVATION_WRITE))
 ):
     """创建预订"""
     service = ReservationService(db)
@@ -99,7 +100,7 @@ def update_reservation(
     reservation_id: int,
     data: ReservationUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(RESERVATION_WRITE))
 ):
     """更新预订"""
     service = ReservationService(db)
@@ -116,7 +117,7 @@ def cancel_reservation(
     reservation_id: int,
     data: ReservationCancel,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(RESERVATION_WRITE))
 ):
     """取消预订"""
     service = ReservationService(db)
@@ -131,7 +132,7 @@ def cancel_reservation(
 def mark_no_show(
     reservation_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_receptionist_or_manager)
+    current_user: Employee = Depends(require_permission(RESERVATION_WRITE))
 ):
     """标记未到"""
     service = ReservationService(db)

@@ -5,6 +5,7 @@ import { useOntologyStore } from '../store'
 interface RoomCardProps {
   room: Room
   onClick?: (room: Room) => void
+  showBranch?: boolean
 }
 
 const statusIcons: Record<RoomStatus, typeof BedDouble> = {
@@ -21,7 +22,7 @@ const statusCssClass: Record<RoomStatus, string> = {
   out_of_order: 'room-out-of-order',
 }
 
-export default function RoomCard({ room, onClick }: RoomCardProps) {
+export default function RoomCard({ room, onClick, showBranch }: RoomCardProps) {
   const { getStatusConfig } = useOntologyStore()
   const sc = getStatusConfig('Room', room.status)
   const Icon = statusIcons[room.status] || BedDouble
@@ -40,6 +41,9 @@ export default function RoomCard({ room, onClick }: RoomCardProps) {
         <p className="font-medium">{sc.label}</p>
         {room.current_guest && (
           <p className="truncate">{room.current_guest}</p>
+        )}
+        {showBranch && room.branch_name && (
+          <p className="text-dark-500 truncate">{room.branch_name}</p>
         )}
       </div>
     </div>

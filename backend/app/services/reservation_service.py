@@ -138,6 +138,8 @@ class ReservationService:
             created_by=created_by
         )
 
+        from app.services.branch_utils import inject_branch_id
+        inject_branch_id(reservation)
         self.db.add(reservation)
         self.db.commit()
         self.db.refresh(reservation)
@@ -232,5 +234,6 @@ class ReservationService:
             'prepaid_amount': reservation.prepaid_amount,
             'special_requests': reservation.special_requests,
             'estimated_arrival': reservation.estimated_arrival,
-            'created_at': reservation.created_at
+            'created_at': reservation.created_at,
+            'branch_name': reservation.branch.name if getattr(reservation, 'branch', None) else None
         }

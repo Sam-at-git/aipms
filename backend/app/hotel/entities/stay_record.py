@@ -14,6 +14,7 @@ def get_registration() -> EntityRegistration:
         description="住宿记录 - 住宿期间的聚合根，代表一次完整的入住经历。关联客人、房间、账单，是营收管理的核心数据。",
         table_name="stay_records", category="transactional", is_aggregate_root=True,
         lifecycle_states=["ACTIVE", "CHECKED_OUT"],
+        data_scope_type="scoped", scope_column="branch_id",
         extensions={
             "business_purpose": "住宿过程管理与营收追踪",
             "key_attributes": ["guest_id", "room_id", "check_in_time", "expected_check_out", "status"],

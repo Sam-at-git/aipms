@@ -47,6 +47,8 @@ class EmployeeService:
             phone=data.phone,
             role=data.role
         )
+        from app.services.branch_utils import inject_branch_id
+        inject_branch_id(employee)
         self.db.add(employee)
         self.db.commit()
         self.db.refresh(employee)
@@ -130,7 +132,22 @@ class EmployeeService:
         if not verify_password(password, employee.password_hash):
             return None
 
-        token = create_access_token(employee.id, employee.role)
+        from app.security.auth import _get_role_codes, _get_max_data_scope, _get_branch_id
+        role_codes = _get_role_codes(employee)
+        branch_id = _get_branch_id(employee)
+        data_scope = _get_max_data_scope(employee)
+        token = create_access_token(
+            employee.id, employee.role,
+            role_codes=role_codes, branch_id=branch_id, data_scope=data_scope,
+        )
+
+        # 获取分店名称
+        branch_name = None
+        if employee.branch_id:
+            from app.system.models.org import SysDepartment
+            branch = self.db.query(SysDepartment).filter(SysDepartment.id == employee.branch_id).first()
+            if branch:
+                branch_name = branch.name
 
         return {
             'access_token': token,
@@ -142,7 +159,11 @@ class EmployeeService:
                 'phone': employee.phone,
                 'role': employee.role,
                 'is_active': employee.is_active,
-                'created_at': employee.created_at
+                'created_at': employee.created_at,
+                'branch_id': branch_id,
+                'branch_name': branch_name,
+                'role_codes': role_codes,
+                'department_id': getattr(employee, 'department_id', None),
             }
         }
 

@@ -39,6 +39,7 @@ export interface Room {
   features?: string
   is_active: boolean
   current_guest?: string
+  branch_name?: string
   created_at: string
 }
 
@@ -103,6 +104,7 @@ export interface Reservation {
   prepaid_amount: number
   special_requests?: string
   estimated_arrival?: string
+  branch_name?: string
   created_at: string
 }
 
@@ -124,6 +126,7 @@ export interface StayRecord {
   bill_total: number
   bill_paid: number
   bill_balance: number
+  branch_name?: string
 }
 
 // 账单
@@ -160,6 +163,7 @@ export interface Task {
   assignee_name?: string
   priority: number
   notes?: string
+  branch_name?: string
   created_at: string
   started_at?: string
   completed_at?: string
@@ -174,6 +178,19 @@ export interface Employee {
   role: EmployeeRole
   is_active: boolean
   created_at: string
+  department_id?: number
+  position_id?: number
+  branch_id?: number
+  branch_name?: string
+  role_codes?: string[]
+  permissions?: string[]
+}
+
+// 分店信息
+export interface Branch {
+  id: number
+  name: string
+  code: string
 }
 
 // 价格策略

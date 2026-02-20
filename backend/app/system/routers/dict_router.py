@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.ontology import Employee
-from app.security.auth import get_current_user, require_manager
+from app.security.auth import get_current_user, require_permission
+from app.security.permissions import SYS_DICT_MANAGE
 from app.system.schemas import (
     DictTypeCreate, DictTypeUpdate, DictTypeResponse,
     DictItemCreate, DictItemUpdate, DictItemResponse,
@@ -58,7 +59,7 @@ def get_dict_type(
 def create_dict_type(
     data: DictTypeCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DICT_MANAGE)),
 ):
     """创建字典类型（需要经理权限）"""
     service = DictService(db)
@@ -77,7 +78,7 @@ def update_dict_type(
     type_id: int,
     data: DictTypeUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DICT_MANAGE)),
 ):
     """更新字典类型（需要经理权限）"""
     service = DictService(db)
@@ -94,7 +95,7 @@ def update_dict_type(
 def delete_dict_type(
     type_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DICT_MANAGE)),
 ):
     """删除字典类型（需要经理权限，系统内置不可删除）"""
     service = DictService(db)
@@ -139,7 +140,7 @@ def create_dict_item(
     type_id: int,
     data: DictItemCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DICT_MANAGE)),
 ):
     """创建字典项（需要经理权限）"""
     service = DictService(db)
@@ -159,7 +160,7 @@ def update_dict_item(
     item_id: int,
     data: DictItemUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DICT_MANAGE)),
 ):
     """更新字典项（需要经理权限）"""
     service = DictService(db)
@@ -174,7 +175,7 @@ def update_dict_item(
 def delete_dict_item(
     item_id: int,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_manager),
+    current_user: Employee = Depends(require_permission(SYS_DICT_MANAGE)),
 ):
     """删除字典项（需要经理权限）"""
     service = DictService(db)

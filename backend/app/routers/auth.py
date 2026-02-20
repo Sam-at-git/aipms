@@ -69,12 +69,19 @@ def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
 @router.get("/me")
 def get_current_user_info(current_user: Employee = Depends(get_current_user)):
     """获取当前用户信息"""
+    branch_name = None
+    if current_user.branch_id and hasattr(current_user, 'branch') and current_user.branch:
+        branch_name = current_user.branch.name
     return {
         'id': current_user.id,
         'username': current_user.username,
         'name': current_user.name,
         'role': current_user.role,
-        'is_active': current_user.is_active
+        'is_active': current_user.is_active,
+        'branch_id': getattr(current_user, 'branch_id', None),
+        'branch_name': branch_name,
+        'role_codes': getattr(current_user, 'role_codes', []),
+        'department_id': getattr(current_user, 'department_id', None),
     }
 
 

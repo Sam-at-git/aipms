@@ -10,6 +10,7 @@ def get_registration() -> EntityRegistration:
         name="RoomType",
         description="房型定义 - 定义房间类型（如标准间、豪华大床房、套房等），包括基础价格、最大入住人数和设施信息。",
         table_name="room_types", category="dimension",
+        data_scope_type="scoped", scope_column="branch_id",
         extensions={
             "business_purpose": "产品定义与定价基准",
             "key_attributes": ["name", "base_price", "max_occupancy"],

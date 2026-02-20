@@ -29,6 +29,7 @@ class OrgService:
     def create_department(
         self, code: str, name: str, parent_id: Optional[int] = None,
         leader_id: Optional[int] = None, sort_order: int = 0,
+        dept_type: Optional[str] = None,
     ) -> SysDepartment:
         if self.get_department_by_code(code):
             raise ValueError(f"部门编码 '{code}' 已存在")
@@ -37,10 +38,14 @@ class OrgService:
             if not parent:
                 raise ValueError(f"父部门 ID {parent_id} 不存在")
 
-        dept = SysDepartment(
+        kwargs = dict(
             code=code, name=name, parent_id=parent_id,
             leader_id=leader_id, sort_order=sort_order,
         )
+        if dept_type:
+            from app.system.models.org import DeptType
+            kwargs["dept_type"] = DeptType(dept_type)
+        dept = SysDepartment(**kwargs)
         self.db.add(dept)
         self.db.commit()
         self.db.refresh(dept)
@@ -90,7 +95,9 @@ class OrgService:
         for d in all_depts:
             dept_map[d.id] = {
                 "id": d.id, "code": d.code, "name": d.name,
-                "parent_id": d.parent_id, "leader_id": d.leader_id,
+                "parent_id": d.parent_id,
+                "dept_type": d.dept_type.value if d.dept_type else "DEPARTMENT",
+                "leader_id": d.leader_id,
                 "sort_order": d.sort_order, "is_active": d.is_active,
                 "created_at": d.created_at, "updated_at": d.updated_at,
                 "children": [],

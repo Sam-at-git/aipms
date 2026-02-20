@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
-from app.routers import auth, rooms, reservations, checkin, checkout, tasks, billing, employees, reports, ai, prices, settings, audit_logs, guests, conversations, undo, ontology, security, debug
+from app.routers import auth, rooms, reservations, checkin, checkout, tasks, billing, employees, reports, ai, prices, settings, audit_logs, guests, conversations, undo, ontology, security, debug, benchmark
 from app.system.routers import dict_router, config_router, rbac_router, menu_router, org_router, message_router, scheduler_router
 
 
@@ -220,6 +220,7 @@ app.include_router(undo.router)
 app.include_router(ontology.router)
 app.include_router(security.router)
 app.include_router(debug.router)
+app.include_router(benchmark.router)
 app.include_router(dict_router.router)
 app.include_router(config_router.router)
 app.include_router(rbac_router.role_router)

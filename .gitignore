@@ -4,6 +4,9 @@ docs/
 # Skills (role agent definitions)
 skills/
 
+# Sam Loop working directory
+backend/.sam-loop/
+
 # Python
 __pycache__/
 *.py[cod]
